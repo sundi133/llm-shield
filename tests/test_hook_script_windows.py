@@ -204,3 +204,35 @@ def test_installed_regulated_kit_withholds_and_blocks(shell, installed):
     assert r.returncode == 0 and json.loads(r.stdout)["decision"] == "block", r
     settings = json.loads(open(installed["managed"], encoding="utf-8").read())
     assert set(settings["hooks"]) == {"PreToolUse", "PostToolUse", "UserPromptSubmit"}
+
+
+# ── the plugin's .sh under Git Bash hands over to the .ps1 (task 4) ──
+
+GIT_BASH = next((p for p in (r"C:\Program Files\Git\bin\bash.exe",
+                             r"C:\Program Files\Git\usr\bin\bash.exe") if os.path.exists(p)), None)
+PLUGIN_SH = os.path.join(ROOT, "examples", "agent-hooks", "plugin", "votal-shield-hooks",
+                         "scripts", "claude_code_hook.sh")
+
+
+@pytest.mark.skipif(not (WINDOWS and GIT_BASH), reason="Git Bash on Windows")
+@pytest.mark.parametrize("args", [[], ["--config", "CONF"]])
+def test_git_bash_hands_over_to_powershell(shield, tmp_path, args):
+    home = tmp_path / "home"
+    (home / ".votal").mkdir(parents=True)
+    conf = home / ".votal" / "hook.conf"
+    conf.write_text(f"SHIELD_URL={shield['url']}\nSHIELD_API_KEY=k1234567\n")
+    _grant_everyone_write(conf)                    # a user install, whoever owns it
+    args = [str(conf) if a == "CONF" else a for a in args]
+    env = {**os.environ, "HOME": str(home), "USERPROFILE": str(home)}
+    shield["body"] = DENY
+    r = subprocess.run([GIT_BASH, "-c", '/bin/sh "$0" "$@" --target claude-code || exit 2',
+                        PLUGIN_SH, *args], input=json.dumps(CALL).encode(),
+                       capture_output=True, env=env, timeout=60)
+    assert r.returncode == 2 and b"Blocked by Votal Shield: no" in r.stderr, r
+    h = shield["seen"][-1]
+    assert h["x-votal-hook-os"] == "windows" and h["x-votal-hook-mode"] == "user"
+    shield["body"] = b"{}"
+    r = subprocess.run([GIT_BASH, "-c", '/bin/sh "$0" "$@" --target claude-code || exit 2',
+                        PLUGIN_SH, *args], input=json.dumps(CALL).encode(),
+                       capture_output=True, env=env, timeout=60)
+    assert r.returncode == 0, r

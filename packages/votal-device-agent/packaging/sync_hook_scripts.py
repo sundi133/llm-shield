@@ -5,9 +5,9 @@ core/runtime_policy/hook_scripts/:
   PyInstaller --collect-submodules, which takes modules but not data files, so
   the scripts ship as string constants. tests/test_device_agent_hooks.py fails
   when this copy drifts.
-* the Claude Code / Cowork plugin's scripts/claude_code_hook.sh
-  (examples/agent-hooks/plugin). tests/test_agent_hooks_examples.py fails when
-  this copy drifts.
+* the Claude Code / Cowork plugin's scripts/claude_code_hook.sh and .ps1
+  (examples/agent-hooks/plugin; the .sh hands over to the .ps1 on Windows).
+  tests/test_agent_hooks_examples.py fails when these copies drift.
 
     python packages/votal-device-agent/packaging/sync_hook_scripts.py
 """
@@ -16,8 +16,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "core" / "runtime_policy" / "hook_scripts"
 OUT = ROOT / "packages" / "votal-device-agent" / "votal_device_agent" / "hook_scripts.py"
-PLUGIN_SH = (ROOT / "examples" / "agent-hooks" / "plugin" / "votal-shield-hooks" / "scripts"
-             / "claude_code_hook.sh")
+PLUGIN_SCRIPTS = ROOT / "examples" / "agent-hooks" / "plugin" / "votal-shield-hooks" / "scripts"
+PLUGIN_SH = PLUGIN_SCRIPTS / "claude_code_hook.sh"
+PLUGIN_PS1 = PLUGIN_SCRIPTS / "claude_code_hook.ps1"
 
 
 def render() -> str:
@@ -32,5 +33,6 @@ def render() -> str:
 if __name__ == "__main__":
     OUT.write_text(render(), encoding="utf-8")
     print(f"wrote {OUT}")
-    PLUGIN_SH.write_bytes((SRC / "claude_code_hook.sh").read_bytes())
-    print(f"wrote {PLUGIN_SH}")
+    for name, dest in (("claude_code_hook.sh", PLUGIN_SH), ("claude_code_hook.ps1", PLUGIN_PS1)):
+        dest.write_bytes((SRC / name).read_bytes())
+        print(f"wrote {dest}")

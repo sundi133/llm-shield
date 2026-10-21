@@ -127,6 +127,29 @@ case "$TARGET" in
     *) deny "unknown --target '$TARGET' (claude-code or codex), so this action is not allowed" ;;
 esac
 
+# Windows: Claude Code runs a hook command through Git Bash, so a plugin's
+# "/bin/sh .../claude_code_hook.sh" lands here. Hand over to the PowerShell
+# twin beside this script, which knows Windows owners and ACLs: the same
+# arguments, the same answers, the same exit codes
+# (docs/specs/hooks-plugin-production.md task 4). stdin passes through exec.
+case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*)
+        winpath() { cygpath -w "$1" 2>/dev/null || printf '%s' "$1"; }
+        case "$0" in
+            */*) PS1="${0%/*}/claude_code_hook.ps1" ;;
+            *\\*) PS1="${0%\\*}\\claude_code_hook.ps1" ;;
+            *) PS1=claude_code_hook.ps1 ;;
+        esac
+        [ -f "$PS1" ] || deny "the Windows hook claude_code_hook.ps1 is missing beside $0, so this action is not allowed"
+        if [ -n "$CONF" ]; then
+            exec powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+                -File "$(winpath "$PS1")" -Target "$TARGET" -Config "$(winpath "$CONF")"
+        fi
+        exec powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+            -File "$(winpath "$PS1")" -Target "$TARGET"
+        ;;
+esac
+
 HOOK_VERSION=1.2.0   # the plugin's version (plugin.json); tests pin them together
 MANAGED_UID=0
 MANAGED_CONF_DARWIN="/Library/Application Support/Votal/hook.conf"

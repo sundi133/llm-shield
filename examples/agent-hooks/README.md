@@ -184,6 +184,13 @@ plugins. `plugin/` is a plugin marketplace with one plugin,
 running the script it carries. It reads the same `~/.votal/hook.conf` (step 4),
 so install that first.
 
+**Windows.** The same plugin works: Claude Code runs a hook command through
+Git Bash, so the plugin's `claude_code_hook.sh` runs there and hands over to
+`claude_code_hook.ps1` beside it, which checks Windows owners and ACLs. Put the
+config at `%USERPROFILE%\.votal\hook.conf` (or the managed
+`C:\ProgramData\Votal\hook.conf`). Git for Windows is required, as it is for
+Claude Code itself.
+
 When a managed config is installed (`/Library/Application Support/Votal/hook.conf`
 on macOS, `/etc/votal/hook.conf` on Linux, `C:\ProgramData\Votal\hook.conf` on
 Windows), the script reads that one instead, whatever the hooks pass. It must be

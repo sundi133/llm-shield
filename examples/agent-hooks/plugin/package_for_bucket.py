@@ -37,7 +37,9 @@ from urllib.parse import urlparse
 HERE = Path(__file__).resolve().parent
 PLUGIN = HERE / "votal-shield-hooks"
 ROOT = HERE.parents[2]
-CANONICAL_SCRIPT = ROOT / "core" / "runtime_policy" / "hook_scripts" / "claude_code_hook.sh"
+CANONICAL_SCRIPTS = ROOT / "core" / "runtime_policy" / "hook_scripts"
+# The .sh runs everywhere; on Windows it hands over to the .ps1 beside it.
+SCRIPT_NAMES = ("claude_code_hook.sh", "claude_code_hook.ps1")
 SOURCE_MARKETPLACE = HERE / ".claude-plugin" / "marketplace.json"
 
 # A fixed timestamp and fixed modes, so the same files give the same zip and
@@ -71,11 +73,12 @@ def _plugin_files() -> list[Path]:
 
 def build_zip(dest: Path) -> bytes:
     """The plugin zip, with the plugin root at the top of the archive."""
-    script = PLUGIN / "scripts" / "claude_code_hook.sh"
-    if script.read_bytes() != CANONICAL_SCRIPT.read_bytes():
-        raise PackagingError("the plugin's claude_code_hook.sh differs from "
-                             "core/runtime_policy/hook_scripts/claude_code_hook.sh; run "
-                             "packages/votal-device-agent/packaging/sync_hook_scripts.py")
+    for name in SCRIPT_NAMES:
+        script = PLUGIN / "scripts" / name
+        if not script.is_file() or script.read_bytes() != (CANONICAL_SCRIPTS / name).read_bytes():
+            raise PackagingError(f"the plugin's {name} differs from "
+                                 f"core/runtime_policy/hook_scripts/{name}; run "
+                                 "packages/votal-device-agent/packaging/sync_hook_scripts.py")
     dest.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
         for path in _plugin_files():
