@@ -199,6 +199,19 @@ Also needed for task 0: the Claude Code docs. They are currently blocked by the
 author's own network allow-list (`code.claude.com` is not on it), so add it or
 read them outside the profile.
 
+**Results so far** (from the CI jobs that run the real Claude Code CLI,
+`tests/test_claude_code_plugin_e2e.py`):
+
+- **V4, answered for Claude Code 2.1.197 on Windows:** command hooks run in
+  Git Bash (bash 5.3), and `${CLAUDE_PLUGIN_ROOT}` expands to a forward-slash
+  path (`C:/Users/...`). The plugin's `/bin/sh` command runs there, and the
+  script hands over to its PowerShell twin.
+- **Also seen on the runner:** files an administrator creates in their own
+  profile are owned by Administrators, so the hook judges that user's own
+  `hook.conf` managed. That is consistent, since an administrator could change
+  a managed file anyway, but it means a localhost Shield (testing only) is
+  refused there.
+
 **Tasks 1 to 5:**
 
 - **Script:**

@@ -97,6 +97,12 @@ def _run(tmp_path, shield, prompt="please run the command"):
     (home / ".votal" / "hook.conf").write_text(
         f"SHIELD_URL={shield.url}\nSHIELD_API_KEY=rfy_e2e_key_0123456789\n"
         "SHIELD_AGENT=claude-code\nSHIELD_TIMEOUT=20\n")
+    if sys.platform == "win32":
+        # CI runs as an administrator, so this file is owned by Administrators
+        # and writable only by them: the hook judges it managed and refuses a
+        # localhost Shield. A file others can write is a user install.
+        subprocess.run(["icacls", str(home / ".votal" / "hook.conf"), "/grant", "*S-1-1-0:(W)"],
+                       check=True, capture_output=True)
     project = tmp_path / "project"
     project.mkdir()
     with FakeAnthropic(tool_input={"command": f"echo hello-from-tool > {MARKER}; cat {MARKER}"}) as model:
