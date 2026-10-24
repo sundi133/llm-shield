@@ -819,10 +819,17 @@ async def get_my_telemetry(
 # ───────────────────────────────────────────────────────────────────
 
 
+KEY_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+KEY_LENGTH = 64
+
+
 def _new_key(tenant_id: str) -> str:
-    """Generate a new random API key with a tenant-prefixed format."""
+    """A new random API key: 64 letters and digits (about 381 bits), the same
+    format the admin console generates. ``secrets.choice`` is uniform and from
+    the OS's secure source. Keys made before kept their tenant-prefixed form
+    and keep working; nothing reads the prefix."""
     import secrets
-    return f"{tenant_id}_{secrets.token_urlsafe(32)}"
+    return "".join(secrets.choice(KEY_ALPHABET) for _ in range(KEY_LENGTH))
 
 
 def _key_preview(api_key: str) -> str:

@@ -1169,8 +1169,9 @@ def create_admin_app() -> FastAPI:
 
     def _service_index() -> dict:
         available = {
+            # The admin console is reachable at /admin but not advertised:
+            # this index and the home page are public.
             "portals": {
-                "admin": "/admin",
                 "tenant": "/tenant",
             },
             "configuration": {
