@@ -644,13 +644,14 @@
             <tr>
               <th>Tenant</th>
               <th>Plan</th>
+              <th title="Enforce blocks what policies find; monitor records it and lets it through">Mode</th>
               <th>Input Policies</th>
               <th>Output Policies</th>
               <th>Agents</th>
               <th></th>
             </tr>
           </thead>
-          <tbody id="tenant-list"><tr><td colspan="6" class="empty-state">Loading…</td></tr></tbody>
+          <tbody id="tenant-list"><tr><td colspan="7" class="empty-state">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -1172,7 +1173,7 @@ async function loadTenants() {
     ALL_TENANTS = data.tenants || [];
     renderTenants(ALL_TENANTS);
   } catch (e) {
-    document.getElementById('tenant-list').innerHTML = `<tr><td colspan="6"><div class="toast error">${e.message}</div></td></tr>`;
+    document.getElementById('tenant-list').innerHTML = `<tr><td colspan="7"><div class="toast error">${e.message}</div></td></tr>`;
   }
 }
 
@@ -1187,7 +1188,7 @@ function filterTenants() {
 function renderTenants(tenants) {
   const tbody = document.getElementById('tenant-list');
   if (!tenants.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No tenants match your search</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No tenants match your search</td></tr>';
     return;
   }
   tbody.innerHTML = tenants.map(t => `
@@ -1197,6 +1198,9 @@ function renderTenants(tenants) {
         <div class="tenant-name">${t.name || '—'}</div>
       </td>
       <td><span class="badge badge-${t.plan || 'basic'}">${t.plan || 'basic'}</span></td>
+      <td>${t.policy_mode === 'monitor'
+        ? '<span class="badge" style="background:#fef3c7;color:#92400e;" title="Records what it would block and lets it through">monitor</span>'
+        : t.policy_mode === 'enforce' ? '<span class="badge" style="background:#dcfce7;color:#166534;">enforce</span>' : '—'}</td>
       <td class="muted">${(t.input_guardrails || []).slice(0, 3).join(', ')}${(t.input_guardrails || []).length > 3 ? '…' : ''}</td>
       <td class="muted">${(t.output_guardrails || []).slice(0, 3).join(', ')}${(t.output_guardrails || []).length > 3 ? '…' : ''}</td>
       <td>${t.agent_count || 0}</td>
