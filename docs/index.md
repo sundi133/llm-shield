@@ -95,6 +95,7 @@ permalink: /
 | Stop Claude Code on laptops from encrypting files, reading credentials or writing outside the project | [Claude Code guardrails]({{ "/claude-code-runtime-guardrails/" | relative_url }}) |
 | Roll Shield checks out to every developer laptop running Claude Code or Cowork, so developers cannot switch them off | [Claude Code rollout for production]({{ "/claude-code-production-rollout/" | relative_url }}) |
 | Create a workspace yourself and get an API key, or switch self-serve sign-up on as an operator | [Sign up and get an API key]({{ "/self-serve-signup/" | relative_url }}) |
+| Give a partner a webhook URL and see each delivery exactly as it arrived, with credentials masked | [Receive a partner's webhooks]({{ "/webhook-inbox/" | relative_url }}) |
 | Stop agents moving data between apps (Drive to public GitHub, CRM to external mail) | [Cross-App Flow Control]({{ "/cross-app-flow-control/" | relative_url }}) |
 | Enforce MCP tool allowlists at runtime (not just client-side) | [MCP Runtime Enforcement]({{ "/mcp-runtime-enforcement/" | relative_url }}) |
 | Plan an enterprise rollout / cover agents you didn't build | [Enterprise Integration Architecture]({{ "/enterprise-integration-architecture/" | relative_url }}) |

@@ -63,6 +63,9 @@ groups:
       - { title: MCP Gateway, url: /mcp-gateway/ }
       - { title: Agent Sandbox (OpenShell), url: /openshell-sandbox/ }
       - { title: Integrations, url: /integration-guide/ }
+      # The other direction: a partner calling Shield. Next to Integrations,
+      # where a reader wiring up a partner already is.
+      - { title: Receive Partner Webhooks, url: /webhook-inbox/ }
 
   - title: Deploy & Operate
     items:
