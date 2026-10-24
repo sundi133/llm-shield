@@ -400,10 +400,13 @@ def list_tenants(include_deleted: bool = False) -> list[dict]:
     for tid in sorted(tenant_ids):
         config = get_tenant(tid, include_deleted=include_deleted)
         if config:
+            from core.policy_mode import resolve_mode
             tenants.append({
                 "tenant_id": tid,
                 "name": config.get("name", ""),
                 "plan": config.get("plan", ""),
+                # As enforced: no stored mode reads as enforce (core/policy_mode).
+                "policy_mode": resolve_mode(config),
                 "input_guardrails": list(config.get("input_guardrails", {}).keys()),
                 "output_guardrails": list(config.get("output_guardrails", {}).keys()),
                 "agent_count": len(config.get("rbac", {}).get("agents", {})),
