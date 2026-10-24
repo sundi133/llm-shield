@@ -13,6 +13,8 @@ from starlette.responses import JSONResponse, Response
 from core.rbac import enforcer
 from core.dlp.devices import DEVICE_PATHS
 from storage.tenant_store import DEVICE_KEY_PREFIX, resolve_tenant_by_api_key, get_tenant
+# Top level, not in dispatch: an image missing it fails at start, not per request.
+from core.signup.trial import refusal as _trial_refusal
 from storage.rate_limiter import check_and_increment
 from storage.tenant_models import effective_quota
 from core.feature_flags import CERT_IDENTITY_ENABLED
@@ -410,6 +412,13 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                 if tenant_id and tenant_config:
                     request.state.tenant_id = tenant_id
                     request.state.tenant_config = tenant_config
+
+                    # A self-serve trial that ended, or that an operator
+                    # suspended: its keys stop here. In memory, on the config
+                    # already loaded (docs/specs/self-serve-signup.md task 5).
+                    _trial_stop = _trial_refusal(tenant_config)
+                    if _trial_stop:
+                        return JSONResponse(status_code=_trial_stop[0], content=_trial_stop[1])
 
                     # Shadow agent discovery + enforcement
                     if agent_key:

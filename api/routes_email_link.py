@@ -47,6 +47,9 @@ def _reachable_workspaces(email: str) -> list[tuple[str, str, str]]:
         role = store.member_role(tid, email)
         if not t or not role or t.get("require_sso"):
             continue
+        from core.signup.trial import SUSPENDED, status
+        if status(t) == SUSPENDED:      # an expired trial still signs in, to see why
+            continue
         out.append((tid, t.get("name") or tid, role))
     return out
 

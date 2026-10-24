@@ -1,6 +1,6 @@
 # Spec: self-serve sign-up and email-link sign-in
 
-Status: APPROVED 2026-10-24 (open mode, Resend). Tasks 1 to 4 built.
+Status: APPROVED 2026-10-24 (open mode, Resend). Tasks 1 to 5 built.
 
 ## 1. Problem and outcome
 
@@ -238,6 +238,27 @@ Found while building task 2: `core/security_headers.py` rewrote each
 `Set-Cookie` by assignment, so a response setting two cookies kept only the
 last. Sign-up's confirm sets the session and clears its nonce; fixed in
 task 2 (append, not assign), with a test.
+
+**Changed in task 5 (user decision, 2026-10-24): trials start in ENFORCE**, not
+monitor. A first trial user sends an attack and expects it blocked; monitor
+answered `"safe": true` and read like a miss. `SHIELD_SIGNUP_TRIAL_MODE=monitor`
+or the console's trial setting brings monitor back.
+
+**Built in task 5:**
+- `core/signup/trial.py`: active, expired or suspended, from the config.
+- The data plane refuses an expired (402) or suspended (403) trial's keys in
+  `ShieldMiddleware`, on the config it already holds; within the middleware's
+  60-second tenant cache.
+- `/v1/admin/signups` (list, settings, suspend, resume, convert) and the admin
+  console's **Sign-ups** page. Overrides live in `signup:settings` (operator >
+  env > default); suspending also signs out every member.
+- The portal's plan badge shows days left; an ended trial gets a card saying so.
+- Customer docs: `docs/signup-and-api-keys.md` (published at `/self-serve-signup/`).
+
+**Not covered, follow-up:** MCP routes that resolve a key with
+`resolve_tenant_by_api_key` directly (`api/routes_mcp_server.py`,
+`core/mcp/principal.py`) do not see the trial check. Covering them means a
+tenant read per MCP call, so it needs its own decision.
 
 Follow-ups, not in this spec:
 - inviting team members by email;

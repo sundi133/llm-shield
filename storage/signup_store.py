@@ -245,6 +245,21 @@ def member_role(tenant_id: str, email: str) -> Optional[str]:
         return None
 
 
+def members_of(tenant_id: str) -> list[dict]:
+    """[{email_hash, email, role, created_at}] for a tenant."""
+    r = _ts._get_redis()
+    raw = (dict(_mem_hash.get(f"tenantmembers:{tenant_id}", {})) if r is None
+           else (r.hgetall(f"tenantmembers:{tenant_id}") or {}))
+    out = []
+    for eh, rec in raw.items():
+        try:
+            d = json.loads(_decode(rec))
+        except (ValueError, TypeError):
+            continue
+        out.append({"email_hash": _decode(eh), **d})
+    return sorted(out, key=lambda m: m.get("created_at") or 0)
+
+
 def tenants_of(email: str) -> list[str]:
     eh = email_hash(email)
     r = _ts._get_redis()
@@ -258,3 +273,18 @@ def reset_for_tests() -> None:
         _mem.clear()
         _mem_hash.clear()
         _mem_set.clear()
+
+
+# ── operator overrides (the admin console's Sign-up card) ────────────
+
+SETTINGS_KEY = "signup:settings"
+
+
+def get_settings() -> dict:
+    """The operator's overrides; an absent field means "use the env default"."""
+    v = _ts.kv_get(SETTINGS_KEY)
+    return v if isinstance(v, dict) else {}
+
+
+def save_settings(settings: dict) -> None:
+    _ts.kv_set(SETTINGS_KEY, {k: v for k, v in settings.items() if v is not None})

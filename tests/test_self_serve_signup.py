@@ -100,7 +100,8 @@ def test_sign_up_confirm_land_in_the_portal_and_make_a_key(client, mail, captcha
     tid = me.json()["tenant_id"]
     assert tid.startswith("acme-corp-") and len(tid) == len("acme-corp-") + 6
     t = tenant_store.get_tenant(tid)
-    assert t["plan"] == "trial" and t["policy_mode"] == "monitor" and t["name"] == "Acme Corp"
+    # Enforce: a trial blocks what it finds (task 5; monitor only by choice).
+    assert t["plan"] == "trial" and t["policy_mode"] == "enforce" and t["name"] == "Acme Corp"
     assert t["quota"] == {"max_requests_per_day": 5000, "max_tokens_per_day": 2_000_000}
     assert abs(t["trial"]["expires_at"] - (time.time() + 30 * 86400)) < 120
     assert t["trial"]["email_domain"] == "acme-corp.example"

@@ -569,6 +569,10 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
         Admin Keys
       </div>
+      <div class="nav-item" data-tab="signups">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg>
+        Sign-ups
+      </div>
     </div>
 
     <div class="nav-section">
@@ -763,6 +767,46 @@
     </div>
 
     <!-- Audit -->
+    <!-- Self-serve sign-up (docs/specs/self-serve-signup.md, task 5). The base
+         URL and the secrets are set in the deployment, never here: this page
+         only says whether each is set. -->
+    <div id="tab-signups" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Sign-ups</div>
+        <div class="page-desc">Self-serve workspaces: whether people can sign up, trial limits, and who has</div>
+      </div>
+      <div class="card">
+        <div class="toolbar" style="justify-content:space-between;">
+          <div id="sg-status" style="font-size:13px;">Loading...</div>
+          <button class="small" id="sg-pause" onclick="toggleSignupPause()">Pause sign-ups</button>
+        </div>
+        <div id="sg-configured" style="font-size:12px;margin-top:0.5rem;"></div>
+        <div id="sg-msg"></div>
+      </div>
+      <div class="card">
+        <div style="font-weight:600;margin-bottom:0.25rem;">Trial settings</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:0.75rem;">
+          For new trials. Leave a field empty to use the deployment's value (shown). Existing workspaces keep theirs.</div>
+        <div class="grid-2">
+          <div class="field"><label>Trial length (days)</label><input type="text" inputmode="numeric" id="sg-trial_days"></div>
+          <div class="field"><label>New workspaces a day (all sign-ups)</label><input type="text" inputmode="numeric" id="sg-daily_cap"></div>
+          <div class="field"><label>Requests a day per trial</label><input type="text" inputmode="numeric" id="sg-trial_requests_per_day"></div>
+          <div class="field"><label>Tokens a day per trial</label><input type="text" inputmode="numeric" id="sg-trial_tokens_per_day"></div>
+          <div class="field"><label>A new trial's policy</label>
+            <select id="sg-trial_mode"><option value="">Deployment default</option>
+              <option value="enforce">Enforce: blocks what it finds</option>
+              <option value="monitor">Monitor: records what it would block</option></select></div>
+        </div>
+        <div class="toolbar"><button class="primary small" onclick="saveSignupSettings()">Save</button></div>
+        <div id="sg-settings-msg"></div>
+      </div>
+      <div class="card">
+        <div style="font-weight:600;margin-bottom:0.5rem;">Self-serve workspaces</div>
+        <div id="sg-list" style="font-size:13px;">Loading...</div>
+        <div id="sg-list-msg"></div>
+      </div>
+    </div>
+
     <div id="tab-audit" class="tab-pane hidden">
       <div class="page-header">
         <div class="page-title">Audit Log</div>
@@ -870,6 +914,98 @@ async function copyCreateKeys() {
   if (!v) return showError('create-msg', 'Nothing to copy');
   try { await navigator.clipboard.writeText(v); showSuccess('create-msg', 'Copied'); }
   catch (e) { showError('create-msg', 'Could not copy: select the key and copy it'); }
+}
+
+// ── Sign-ups (docs/specs/self-serve-signup.md, task 5) ───────────────
+// Organisation names and emails here were typed by the public: every value
+// goes through sgEsc.
+const SG_LIMITS = ['trial_days', 'daily_cap', 'trial_requests_per_day', 'trial_tokens_per_day'];
+let SG_PAUSED = false;
+function sgEsc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+}
+async function sgApi(path, options = {}) {
+  options.headers = { ...(options.headers || {}), 'X-Admin-Key': ADMIN_KEY, 'Content-Type': 'application/json' };
+  const r = await fetch(`${BASE_URL}${path}`, options);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const det = d.detail;
+    throw new Error(det && det.errors ? det.errors.join('; ') : (det && det.message) || det || d.error || `HTTP ${r.status}`);
+  }
+  return d;
+}
+function sgRenderSettings(s) {
+  SG_PAUSED = !!s.paused;
+  const state = s.mode !== 'open' ? 'Off: SHIELD_SELF_SIGNUP is not open'
+    : s.paused ? 'Paused: the form says so and nothing is created'
+    : s.available ? 'Open: people can sign up' : `Open but unavailable: ${sgEsc(s.unavailable_reason)}`;
+  document.getElementById('sg-status').innerHTML =
+    `<b>${state}</b> &middot; ${Number(s.today.new_workspaces) || 0} new today`;
+  document.getElementById('sg-pause').textContent = s.paused ? 'Resume sign-ups' : 'Pause sign-ups';
+  document.getElementById('sg-configured').innerHTML = Object.entries(s.configured).map(([k, ok]) =>
+    `<span style="margin-right:0.9rem;white-space:nowrap;color:${ok ? 'var(--success, #15803d)' : 'var(--danger, #b91c1c)'};">${ok ? '&#10003;' : '&#10007;'} ${sgEsc(k)}</span>`).join('');
+  for (const k of SG_LIMITS) {
+    const el = document.getElementById(`sg-${k}`);
+    el.value = s.overrides[k] != null ? s.overrides[k] : '';
+    el.placeholder = String(s.in_force[k]);
+  }
+  document.getElementById('sg-trial_mode').value = s.overrides.trial_mode || '';
+  document.getElementById('sg-trial_mode').options[0].textContent =
+    `Deployment default (${sgEsc(s.in_force.trial_mode)})`;
+}
+async function loadSignups() {
+  try { sgRenderSettings(await sgApi('/v1/admin/signups/settings')); }
+  catch (e) { showError('sg-msg', e.message); }
+  try {
+    const d = await sgApi('/v1/admin/signups?limit=200');
+    const el = document.getElementById('sg-list');
+    if (!(d.signups || []).length) { el.textContent = 'No self-serve workspaces yet.'; return; }
+    const when = t => t ? new Date(t * 1000).toLocaleDateString() : '';
+    el.innerHTML = `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-muted);">
+      <th>Workspace</th><th>Admin</th><th>Created</th><th>Trial</th><th>Policy</th><th></th></tr></thead><tbody>${
+      d.signups.map(s => `<tr data-tenant="${sgEsc(s.tenant_id)}">
+        <td><b>${sgEsc(s.name)}</b><br><span style="color:var(--text-muted);font-size:11px;">${sgEsc(s.tenant_id)}</span></td>
+        <td>${sgEsc(s.admin_email)}</td>
+        <td>${sgEsc((s.created_at || '').slice(0, 10))}</td>
+        <td>${sgEsc(s.status)}${s.expires_at ? `<br><span style="color:var(--text-muted);font-size:11px;">ends ${sgEsc(when(s.expires_at))}</span>` : ''}</td>
+        <td>${sgEsc(s.policy_mode)}</td>
+        <td style="white-space:nowrap;">${s.status === 'suspended'
+          ? `<button class="small" onclick="signupAction(this, 'resume')">Resume</button>`
+          : `<button class="small" onclick="signupAction(this, 'suspend')">Suspend</button>`}
+          <select class="sg-plan"><option value="basic">basic</option><option value="pro">pro</option><option value="enterprise">enterprise</option></select>
+          <button class="small" onclick="signupAction(this, 'convert')">Convert</button></td></tr>`).join('')}</tbody></table>`;
+  } catch (e) { showError('sg-list-msg', e.message); }
+}
+async function toggleSignupPause() {
+  try {
+    sgRenderSettings(await sgApi('/v1/admin/signups/settings',
+      { method: 'PUT', body: JSON.stringify({ paused: !SG_PAUSED }) }));
+    showSuccess('sg-msg', SG_PAUSED ? 'Sign-ups paused' : 'Sign-ups resumed');
+  } catch (e) { showError('sg-msg', e.message); }
+}
+async function saveSignupSettings() {
+  const body = {};
+  for (const k of SG_LIMITS) {
+    const v = document.getElementById(`sg-${k}`).value.trim();
+    body[k] = v === '' ? null : (/^\d+$/.test(v) ? parseInt(v, 10) : v);
+  }
+  body.trial_mode = document.getElementById('sg-trial_mode').value || null;
+  try {
+    sgRenderSettings(await sgApi('/v1/admin/signups/settings', { method: 'PUT', body: JSON.stringify(body) }));
+    showSuccess('sg-settings-msg', 'Saved. New trials use these.');
+  } catch (e) { showError('sg-settings-msg', e.message); }
+}
+async function signupAction(btn, action) {
+  const row = btn.closest('tr');
+  const tid = row.dataset.tenant;
+  const body = action === 'convert' ? { plan: row.querySelector('.sg-plan').value } : {};
+  const verb = { suspend: 'Suspend', resume: 'Resume', convert: `Convert to ${body.plan}` }[action];
+  if (!confirm(`${verb} ${tid}?`)) return;
+  try {
+    await sgApi(`/v1/admin/signups/${encodeURIComponent(tid)}/${action}`, { method: 'POST', body: JSON.stringify(body) });
+    showSuccess('sg-list-msg', `${verb}: done`);
+    loadSignups();
+  } catch (e) { showError('sg-list-msg', e.message); }
 }
 
 function showError(id, msg) {
@@ -1384,6 +1520,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'dashboard') loadDashboard();
     if (tab === 'tenants') loadTenants();
     if (tab === 'credentials') loadCredentials();
+    if (tab === 'signups') loadSignups();
   }
   if (e.target.matches('.modal-tab[data-modal-tab]')) {
     const tab = e.target.getAttribute('data-modal-tab');

@@ -162,6 +162,7 @@ except Exception:
 # sign-up module should fail the admin image's start, not quietly 404.
 from api.routes_signup import router as _signup_router
 from api.routes_email_link import router as _email_link_router
+from api.routes_signup_admin import router as _signup_admin_router
 try:
     from api.routes_admin_auth import router as _admin_auth_router
 except Exception:
@@ -1153,6 +1154,7 @@ def create_admin_app() -> FastAPI:
         app.include_router(_portal_auth_router)        # /v1/tenant/auth/*
     app.include_router(_signup_router)                 # /v1/signup/* (off unless SHIELD_SELF_SIGNUP=open)
     app.include_router(_email_link_router)             # /v1/tenant/auth/email-link/*
+    app.include_router(_signup_admin_router)           # /v1/admin/signups/* (operator)
     if _admin_auth_router:
         app.include_router(_admin_auth_router)         # /v1/admin/auth/*
     if _mcp_signin_router:

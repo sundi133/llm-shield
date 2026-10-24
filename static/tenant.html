@@ -7156,6 +7156,16 @@ async function submitSignup() {
 async function firstRun() {
   // Only a self-serve trial, and only until it has a key.
   if (!TENANT_INFO || !TENANT_INFO.trial) return;
+  if (TENANT_INFO.trial.expires_at && TENANT_INFO.trial.expires_at * 1000 < Date.now()) {
+    // Its keys are refused (402 trial_ended); the portal still opens, to say so.
+    document.querySelector('#first-run-card .card-title').textContent = 'Your trial has ended';
+    document.getElementById('first-run-sub').textContent =
+      'Your keys no longer work. Your workspace and its settings are kept: contact Votal to continue.';
+    const btn = document.querySelector('#first-run-card button');
+    if (btn) btn.classList.add('hidden');
+    document.getElementById('first-run-card').classList.remove('hidden');
+    return;
+  }
   try {
     const d = await apiCall('/v1/tenant/me/api-keys');
     const keys = d.api_keys || [];
@@ -7289,6 +7299,12 @@ function showApp() {
   document.getElementById('welcome-title').textContent = `Welcome, ${TENANT_INFO.name || TENANT_INFO.tenant_id}`;
   document.getElementById('sidebar-tenant-name').textContent = TENANT_INFO.name || TENANT_INFO.tenant_id;
   document.getElementById('sidebar-tenant-plan').innerHTML = `<span class="badge badge-${TENANT_INFO.plan}">${TENANT_INFO.plan}</span>`;
+  if (TENANT_INFO.trial && TENANT_INFO.trial.expires_at) {
+    // docs/specs/self-serve-signup.md task 5: say how long the trial has left.
+    const left = Math.ceil((TENANT_INFO.trial.expires_at * 1000 - Date.now()) / 86400000);
+    document.getElementById('sidebar-tenant-plan').innerHTML +=
+      ` <span class="muted" style="font-size:11px;">${left > 0 ? `${left} day${left === 1 ? '' : 's'} left` : 'ended'}</span>`;
+  }
   renderOverview();
   loadUsage();
   loadPolicies();

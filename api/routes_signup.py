@@ -59,18 +59,53 @@ def _int_env(name: str, default: int, lo: int = 1, hi: int = 10**12) -> int:
 
 
 def is_open() -> bool:
+    """SHIELD_SELF_SIGNUP=open. Whether sign-up is paused is separate (paused())."""
     return os.environ.get("SHIELD_SELF_SIGNUP", "off").strip().lower() == "open"
 
 
+# The operator's overrides (admin console, task 5) win over the env, which
+# wins over the built-in default. Each is (setting, env var, default, low, high).
+LIMITS = {
+    "trial_days": ("SHIELD_SIGNUP_TRIAL_DAYS", 30, 1, 365),
+    "trial_requests_per_day": ("SHIELD_SIGNUP_TRIAL_REQUESTS_PER_DAY", 5000, 1, 10**9),
+    "trial_tokens_per_day": ("SHIELD_SIGNUP_TRIAL_TOKENS_PER_DAY", 2_000_000, 1, 10**12),
+    "daily_cap": ("SHIELD_SIGNUP_DAILY_CAP", 100, 1, 100_000),
+}
+TRIAL_MODES = ("enforce", "monitor")
+
+
+def limit(name: str, overrides: Optional[dict] = None) -> int:
+    env, default, lo, hi = LIMITS[name]
+    o = (store.get_settings() if overrides is None else overrides).get(name)
+    if isinstance(o, int) and not isinstance(o, bool) and lo <= o <= hi:
+        return o
+    return _int_env(env, default, lo, hi)
+
+
+def trial_mode(overrides: Optional[dict] = None) -> str:
+    """How a new trial's policy starts. Enforce: someone trying Shield expects
+    an attack to be blocked, and "safe": true reads like a miss. Monitor only
+    by choice (SHIELD_SIGNUP_TRIAL_MODE=monitor, or the console)."""
+    o = (store.get_settings() if overrides is None else overrides).get("trial_mode")
+    if o in TRIAL_MODES:
+        return o
+    env = os.environ.get("SHIELD_SIGNUP_TRIAL_MODE", "").strip().lower()
+    return env if env in TRIAL_MODES else "enforce"
+
+
+def paused() -> bool:
+    return store.get_settings().get("paused") is True
+
+
 def trial_days() -> int:
-    return _int_env("SHIELD_SIGNUP_TRIAL_DAYS", 30, 1, 365)
+    return limit("trial_days")
 
 
 def trial_quota() -> dict:
     # The per-minute limit is the platform floor for everyone
     # (storage/tenant_models.effective_quota): trials are limited per day.
-    return {"max_requests_per_day": _int_env("SHIELD_SIGNUP_TRIAL_REQUESTS_PER_DAY", 5000),
-            "max_tokens_per_day": _int_env("SHIELD_SIGNUP_TRIAL_TOKENS_PER_DAY", 2_000_000)}
+    return {"max_requests_per_day": limit("trial_requests_per_day"),
+            "max_tokens_per_day": limit("trial_tokens_per_day")}
 
 
 def _require_open() -> None:
@@ -181,8 +216,10 @@ async def _send_verify(email: str, org: str, token: str) -> None:
 async def signup_config():
     open_ = is_open()
     email_ok = not email_unavailable_reason()
+    held = open_ and paused()
     return {"mode": "open" if open_ else "off",
-            "available": open_ and email_ok,
+            "available": open_ and email_ok and not held,
+            "paused": held,
             "email_link_available": email_ok,
             "captcha_site_key": os.environ.get("HCAPTCHA_SITE_KEY", "") if (open_ or email_ok) else ""}
 
@@ -199,6 +236,8 @@ async def signup(request: Request, body: dict = Body(...)):
     if reason:
         logger.warning("sign-up refused: %s", reason)
         raise HTTPException(status_code=503, detail="Sign-up is not available right now.")
+    if paused():
+        raise HTTPException(status_code=503, detail="Sign-ups are paused. Try again later.")
     from core.auth import _client_ip
     ip = _client_ip(request)
     email = store.normalize_email(str(body.get("email") or ""))
@@ -216,7 +255,7 @@ async def signup(request: Request, body: dict = Body(...)):
     if store.incr("ip", ip) > _int_env("SHIELD_SIGNUP_PER_IP_DAY", 3) or \
             store.incr("domain", domain) > _int_env("SHIELD_SIGNUP_PER_DOMAIN_DAY", 3):
         raise HTTPException(status_code=429, detail="Too many sign-ups today. Try tomorrow.")
-    if store.count("all") >= _int_env("SHIELD_SIGNUP_DAILY_CAP", 100):
+    if store.count("all") >= limit("daily_cap"):
         raise HTTPException(status_code=429, detail="Sign-ups are paused for today. Try tomorrow.")
 
     try:
@@ -330,7 +369,11 @@ async def verify(request: Request, token: str = Form(""), nonce: str = Form(""))
         return _page("You already have a workspace",
                      "<p>This email address has a workspace. Sign in to it.</p>"
                      "<a class=\"btn\" href=\"/tenant\">Sign in</a>", 409)
-    if store.incr("all") > _int_env("SHIELD_SIGNUP_DAILY_CAP", 100):
+    if paused():
+        store.release_email(email)
+        return _page("Sign-ups are paused",
+                     "<p>New workspaces are paused for now. Try the link again later.</p>", 503)
+    if store.incr("all") > limit("daily_cap"):
         store.release_email(email)
         return _page("Sign-ups are paused for today",
                      "<p>We have reached today's limit for new workspaces. Try tomorrow.</p>", 429)
@@ -344,7 +387,7 @@ async def verify(request: Request, token: str = Form(""), nonce: str = Form(""))
         "input_guardrails": tpl.get("input_guardrails", {}),
         "output_guardrails": tpl.get("output_guardrails", {}),
         "rbac": {"roles": {}, "agents": {}},
-        "policy_mode": "monitor",
+        "policy_mode": trial_mode(),
         "quota": trial_quota(),
         "trial": {"expires_at": now + trial_days() * 86400, "created_via": "self_signup",
                   "email_domain": email.rsplit("@", 1)[-1]},
