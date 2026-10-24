@@ -4,10 +4,20 @@ Status: DRAFT, awaiting approval.
 
 ## 1. Problem and outcome
 
-A partner's console (the "Lifecycle Webhooks" form: a Webhook URL, a Webhook
-Signing Secret, Events to Send) can send its lifecycle events to Votal. Shield
-has no endpoint that receives them, and nobody here knows yet what the partner
-sends: the event names, the payloads, or how deliveries are signed. Shield's
+A partner's console registers Shield as a **Guardrail Provider** ("Create
+Guardrail Provider"), with a "Lifecycle Webhooks" section: Deliver Webhooks, a
+Webhook URL, a Webhook Signing Secret, and Events to Send. The events offered
+(2026-10-24) are:
+
+- **API key created**;
+- **API key revoked**;
+- **API key expired**.
+
+These are the partner's own token factory keys. The webhooks are "delivered
+whether or not any router currently references this provider". Shield has no
+endpoint that receives them, and nobody here knows yet what each delivery
+carries: the key itself, a hash or only an id; the partner's customer or org;
+the expiry; and how deliveries are signed. Shield's
 own webhooks only go the other way (`core/webhook_dispatcher.py`, signed
 `X-Shield-Signature: sha256=<HMAC>`).
 
@@ -235,4 +245,15 @@ or `X-Webhook-Event` header. Display only; nothing acts on it.
 | 4 | Docs: how to connect a partner (paste the URL and secret, choose the events, send a test, read the first deliveries, set the signing scheme, then turn on `require_signature`) |
 
 **Then, phase 2 (its own spec):** acting on the partner's events, written from
-the deliveries this inbox records.
+the deliveries this inbox records. A sketch, to be confirmed against real
+payloads:
+
+| Event | Likely action in Shield |
+|---|---|
+| API key created | Record the partner key (by id or hash, never the plaintext if Shield can avoid it) and which tenant it belongs to, so traffic carrying it is attributed and governed |
+| API key revoked | Stop honouring it in Shield at once, and record why |
+| API key expired | The same as revoked, using the expiry the event carries |
+
+The inbox decides between the sketch's options: which tenant a key maps to
+(the payload's customer field, or a mapping the operator sets per inbox), and
+whether Shield needs the key itself or only its id.
