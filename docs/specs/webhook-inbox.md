@@ -42,8 +42,9 @@ Either way, the creator gets:
 They paste both into the partner's form. Every delivery is then recorded
 **exactly as it arrived**: method, path, query, every header, the body, the
 sender's address, and whether its signature verified. Credential headers and
-secret-looking body fields are masked. The console's **Inbound webhooks**
-page (portal or console) shows each delivery, so the partner's real format is
+secret-looking body fields are masked. An **Inbound webhooks** page, in the
+tenant portal for a tenant inbox and in the admin console for a platform one,
+shows each delivery, so the partner's real format is
 visible before anyone writes code that acts on it. Operators can also see any
 tenant's inboxes, read only, to help a customer debug.
 
@@ -242,7 +243,7 @@ console page below, showing only the tenant's inboxes.
 
 | Case | Behaviour |
 |---|---|
-| Redis down | Receiver 503 (the partner retries); operator routes 503 |
+| Redis down | Receiver 503 (the partner retries); tenant and operator routes 503 |
 | Empty body | Recorded, size 0 |
 | Binary body | Recorded as base64 up to 64 KB, flagged `binary` |
 | Malformed JSON with `content-type: application/json` | Recorded as text; `body_json_error` noted |
@@ -273,7 +274,7 @@ console page below, showing only the tenant's inboxes.
   - an absent header gives `absent`;
   - `require_signature` gives 401 and the delivery is still recorded;
   - comparison is constant-time (`hmac.compare_digest`).
-- **Operator:**
+- **Inbox API, for both the tenant routes and the operator routes:**
   - create returns the URL and secret once, and the list never returns either;
   - rotate-url gives the old URL 404 and the new one works;
   - rotate-secret changes verification;
@@ -290,13 +291,15 @@ console page below, showing only the tenant's inboxes.
   - deleting a tenant removes its inboxes.
 - **Retention:** trim by age and by count.
 - **Store down:** the receiver gives 503 and nothing is half-written.
-- **Console:**
-  - wired;
+- **Pages:**
+  - the tenant portal page and the admin console page are wired;
+  - the tenant page lists only the tenant's own inboxes;
   - every value from a delivery is escaped (test with `<script>` in a header,
     a body and an event name).
 - **Regression:** the image import guard, the write-scope guard, the full
   suite in a clean venv, and CI.
-- **Browser preview:**
+- **Browser preview,** done twice, once as a tenant in the portal and once as
+  an operator in the console:
   - create an inbox;
   - send a signed delivery with curl;
   - see it, with headers, the masked fields and "verified".
