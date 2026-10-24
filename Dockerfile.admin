@@ -124,6 +124,7 @@ COPY api/routes_portal_auth.py api/
 # Self-serve sign-up (docs/specs/self-serve-signup.md), imported by admin_app.py.
 COPY api/routes_signup.py api/
 COPY api/routes_email_link.py api/
+COPY api/routes_signup_admin.py api/
 COPY core/email_resend.py core/
 COPY core/policy_templates.py core/
 COPY core/signup/ core/signup/
