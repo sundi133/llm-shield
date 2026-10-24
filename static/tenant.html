@@ -2549,7 +2549,36 @@
 
 <!-- Login Screen -->
 <div id="login-screen" class="login-wrap">
-  <div class="login-card">
+  <!-- Create an account (docs/specs/self-serve-signup.md): shown instead of the
+       sign-in card, only when /v1/signup/config says sign-up is available. -->
+  <div class="login-card hidden" id="signup-card">
+    <div class="login-logo">
+      <div class="logo-icon">V</div>
+      <div>
+        <div class="logo-text">Votal Shield</div>
+        <div class="logo-sub">Create your workspace</div>
+      </div>
+    </div>
+    <div class="login-desc">Start a free trial. We email you a link to confirm.</div>
+    <div class="field">
+      <label>Work email</label>
+      <input type="text" inputmode="email" id="signup-email" placeholder="you@company.com" autocomplete="email">
+    </div>
+    <div class="field">
+      <label>Organisation</label>
+      <input type="text" id="signup-org" placeholder="Acme Corp" autocomplete="organization" maxlength="80">
+    </div>
+    <div class="field"><div id="signup-captcha"></div></div>
+    <button class="primary" style="width:100%;" id="signup-button" onclick="submitSignup()">Create workspace</button>
+    <div id="signup-error" class="toast error hidden"></div>
+    <div id="signup-sent" class="hidden" style="margin-top:1rem;padding:0.8rem;border:1px solid var(--border);
+         border-radius:8px;font-size:13px;text-align:center;"></div>
+    <div class="muted" style="text-align:center;margin-top:1.25rem;">
+      Already have a workspace? <a href="#" onclick="showSignIn(event)" style="color:var(--accent);text-decoration:none;">Sign in</a>
+    </div>
+  </div>
+
+  <div class="login-card" id="signin-card">
     <div class="login-logo">
       <div class="logo-icon">V</div>
       <div>
@@ -2578,12 +2607,35 @@
       </div>
     </div>
 
-    <!-- Fallback: API key (service/API credential, or tenants without SSO). -->
-    <div style="text-align:center;margin-top:1rem;">
+    <!-- Fallbacks: an emailed sign-in link (people in self-serve workspaces,
+         docs/specs/self-serve-signup.md), or an API key (service/API
+         credential, or tenants without SSO). Each shows only where it works. -->
+    <div style="text-align:center;margin-top:1rem;display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;">
+      <a href="#" id="link-toggle" class="hidden" onclick="revealLink(event)"
+         style="font-size:12px;color:var(--primary,#4f46e5);text-decoration:none;">
+        Email me a sign-in link
+      </a>
       <a href="#" id="key-toggle" onclick="revealKey(event)"
          style="font-size:12px;color:var(--primary,#4f46e5);text-decoration:none;">
         Use an API key instead
       </a>
+    </div>
+
+    <div id="link-block" class="hidden">
+      <div style="display:flex;align-items:center;gap:0.6rem;margin:0.9rem 0;">
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+        <span style="font-size:11px;color:var(--text-muted);">or</span>
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="text" inputmode="email" id="link-email" placeholder="you@company.com" autocomplete="email">
+      </div>
+      <div class="field"><div id="link-captcha"></div></div>
+      <button class="primary" style="width:100%;" id="link-button" onclick="sendSignInLink()">Email me a link</button>
+      <div class="cp-hint" style="text-align:center;margin-top:0.5rem;">
+        For workspaces created with Create an account. The link works once, for 15 minutes.
+      </div>
     </div>
 
     <div id="key-block" class="hidden">
@@ -2605,7 +2657,9 @@
       </div>
     </div>
     <div id="login-error" class="toast error hidden"></div>
-    <div class="muted" style="text-align: center; margin-top: 1.25rem;">Need a key? Contact your administrator</div>
+    <div id="login-sent" class="hidden" style="margin-top:1rem;padding:0.8rem;border:1px solid var(--border);
+         border-radius:8px;font-size:13px;text-align:center;"></div>
+    <div class="muted" id="login-footer" style="text-align: center; margin-top: 1.25rem;">Need a key? Contact your administrator</div>
     <div style="text-align: center; margin-top: 0.75rem;"><a href="/" style="color: var(--accent); text-decoration: none; font-size: 0.85rem;">&larr; Back to home</a></div>
   </div>
 </div>
@@ -2788,6 +2842,17 @@
         Every number here is already computed elsewhere in this portal; the only
         thing that was missing was saying it on the page people land on.
       -->
+      <!-- First run (docs/specs/self-serve-signup.md): a self-serve trial
+           with no keys yet is told the one thing to do next. -->
+      <div class="card hidden" id="first-run-card" style="margin-bottom:1rem;border-color:var(--accent);">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Make your first key</div>
+            <div class="card-subtitle" id="first-run-sub">Your workspace is ready. An app needs a key to send traffic through Votal Shield.</div>
+          </div>
+          <button class="primary small" onclick="firstRunKey()">Create a key</button>
+        </div>
+      </div>
       <div class="card" id="overview-findings-card" style="margin-bottom:1rem;">
         <div class="card-header">
           <div>
@@ -6279,6 +6344,16 @@ proxy_set_header X-Shield-Proxy-Token "&lt;SHIELD_TRUSTED_PROXY_SECRET&gt;";</pr
         </div>
       </div>
       <div class="field" style="margin-top: 0.75rem;">
+        <label style="font-size: 12px; font-weight: 600;">What is this key for?</label>
+        <select id="apikey-purpose" style="font-size: 13px;">
+          <option value="runtime" selected>An app or server: screens traffic, cannot change settings</option>
+          <option value="full">Managing this workspace's settings: full access</option>
+        </select>
+        <div style="font-size: 11px; color: var(--text-muted); margin-top: 0.25rem;">
+          Keys in apps end up in code and config files, so give them only what they need.
+        </div>
+      </div>
+      <div class="field" style="margin-top: 0.75rem;">
         <label style="font-size: 12px; font-weight: 600;">Expires after</label>
         <select id="apikey-expiry" style="font-size: 13px;">
           <option value="">Never</option>
@@ -6936,6 +7011,7 @@ async function login() {
 }
 
 initCaptcha();
+initSelfServe();
 
 // Reveal the API-key fallback. SSO is the primary path; the key form stays
 // hidden until a tenant without SSO (or a service operator) asks for it.
@@ -6946,6 +7022,160 @@ function revealKey(ev) {
   if (toggle) toggle.classList.add('hidden');
   const input = document.getElementById('api-key-input');
   if (input) input.focus();
+}
+
+// ── Self-serve: create an account, email-link sign-in, first run ──────
+// docs/specs/self-serve-signup.md. Each control shows only when the server
+// says it works (/v1/signup/config). The captcha is required and verified
+// server-side; the widgets here only collect it.
+let SIGNUP_CFG = null;
+const HC_WIDGETS = {};
+let HC_LOADING = null;
+
+async function initSelfServe() {
+  try {
+    const r = await fetch(`${BASE_URL}/v1/signup/config`);
+    if (!r.ok) return;
+    SIGNUP_CFG = await r.json();
+  } catch (e) { return; }
+  if (SIGNUP_CFG.email_link_available) document.getElementById('link-toggle').classList.remove('hidden');
+  if (SIGNUP_CFG.available) {
+    document.getElementById('login-footer').innerHTML =
+      'New to Votal Shield? <a href="#" onclick="revealSignup(event)" ' +
+      'style="color:var(--accent);text-decoration:none;">Create an account</a>';
+  }
+}
+
+function loadHcaptcha() {
+  if (window.hcaptcha && window.hcaptcha.render) return Promise.resolve();
+  if (HC_LOADING) return HC_LOADING;
+  HC_LOADING = new Promise((resolve, reject) => {
+    // initCaptcha may already be loading the same script: wait for it.
+    const started = Date.now();
+    const wait = () => (window.hcaptcha && window.hcaptcha.render) ? resolve()
+      : (Date.now() - started > 10000 ? reject(new Error('captcha did not load')) : setTimeout(wait, 100));
+    if (!document.querySelector('script[src*="js.hcaptcha.com"]')) {
+      const sc = document.createElement('script');
+      sc.src = 'https://js.hcaptcha.com/1/api.js?render=explicit';
+      sc.async = true;
+      document.head.appendChild(sc);
+    }
+    wait();
+  });
+  return HC_LOADING;
+}
+
+async function renderCaptcha(containerId) {
+  if (!SIGNUP_CFG || !SIGNUP_CFG.captcha_site_key || containerId in HC_WIDGETS) return;
+  try {
+    await loadHcaptcha();
+    HC_WIDGETS[containerId] = hcaptcha.render(containerId, { sitekey: SIGNUP_CFG.captcha_site_key, theme: 'dark' });
+  } catch (e) { /* the request is refused without it; the server says why */ }
+}
+
+function captchaToken(containerId) {
+  return containerId in HC_WIDGETS ? hcaptcha.getResponse(HC_WIDGETS[containerId]) : '';
+}
+
+function resetCaptcha(containerId) {
+  if (containerId in HC_WIDGETS) { try { hcaptcha.reset(HC_WIDGETS[containerId]); } catch (e) {} }
+}
+
+function sentBox(id, html) {
+  const el = document.getElementById(id);
+  el.innerHTML = html;
+  el.classList.remove('hidden');
+}
+
+function revealLink(ev) {
+  if (ev) ev.preventDefault();
+  document.getElementById('link-block').classList.remove('hidden');
+  document.getElementById('link-toggle').classList.add('hidden');
+  renderCaptcha('link-captcha');
+  document.getElementById('link-email').focus();
+}
+
+async function postJson(path, body) {
+  const r = await fetch(`${BASE_URL}${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || d.error || `HTTP ${r.status}`);
+  return d;
+}
+
+async function sendSignInLink() {
+  const email = document.getElementById('link-email').value.trim();
+  if (!email) return showError('login-error', 'Enter your email address');
+  const btn = document.getElementById('link-button');
+  btn.disabled = true;
+  try {
+    const d = await postJson('/v1/tenant/auth/email-link',
+                             { email, captcha_token: captchaToken('link-captcha') });
+    sentBox('login-sent', `<b>Check your email.</b><br>${escapeHtml(d.message || '')}`);
+  } catch (e) {
+    showError('login-error', e.message);
+  } finally {
+    btn.disabled = false;
+    resetCaptcha('link-captcha');
+  }
+}
+
+function revealSignup(ev) {
+  if (ev) ev.preventDefault();
+  document.getElementById('signin-card').classList.add('hidden');
+  document.getElementById('signup-card').classList.remove('hidden');
+  renderCaptcha('signup-captcha');
+  document.getElementById('signup-email').focus();
+}
+
+function showSignIn(ev) {
+  if (ev) ev.preventDefault();
+  document.getElementById('signup-card').classList.add('hidden');
+  document.getElementById('signin-card').classList.remove('hidden');
+}
+
+async function submitSignup() {
+  const email = document.getElementById('signup-email').value.trim();
+  const org = document.getElementById('signup-org').value.trim();
+  if (!email || !org) return showError('signup-error', 'Enter your work email and organisation');
+  const btn = document.getElementById('signup-button');
+  btn.disabled = true;
+  try {
+    const d = await postJson('/v1/signup', { email, org, captcha_token: captchaToken('signup-captcha') });
+    sentBox('signup-sent', `<b>Check your email.</b><br>${escapeHtml(d.message || '')}`);
+    btn.classList.add('hidden');
+  } catch (e) {
+    showError('signup-error', e.message);
+    btn.disabled = false;
+  } finally {
+    resetCaptcha('signup-captcha');
+  }
+}
+
+async function firstRun() {
+  // Only a self-serve trial, and only until it has a key.
+  if (!TENANT_INFO || !TENANT_INFO.trial) return;
+  try {
+    const d = await apiCall('/v1/tenant/me/api-keys');
+    const keys = d.api_keys || [];
+    if (keys.length) return;
+  } catch (e) { return; }
+  const end = TENANT_INFO.trial.expires_at;
+  if (end) {
+    const days = Math.max(0, Math.ceil((end * 1000 - Date.now()) / 86400000));
+    document.getElementById('first-run-sub').textContent =
+      `Your workspace is ready, on a trial for ${days} more day${days === 1 ? '' : 's'}. ` +
+      'An app needs a key to send traffic through Votal Shield.';
+  }
+  document.getElementById('first-run-card').classList.remove('hidden');
+}
+
+function firstRunKey() {
+  const nav = document.querySelector('.nav-item[data-tab="apis"]');
+  if (nav) nav.click();
+  document.getElementById('first-run-card').classList.add('hidden');
+  setTimeout(createApiKey, 150);
 }
 
 // ── SSO ────────────────────────────────────────────────────────────────
@@ -7062,6 +7292,7 @@ function showApp() {
   renderOverview();
   loadUsage();
   loadPolicies();
+  firstRun();
 
   // Initialize Votal AI platform features
   initializeVotalAIPlatform();
@@ -8528,6 +8759,7 @@ function createApiKey() {
   // place to put a secret you get exactly one chance to copy.
   document.getElementById('apikey-label').value = '';
   document.getElementById('apikey-expiry').value = '';
+  document.getElementById('apikey-purpose').value = 'runtime';
   document.getElementById('apikey-form').classList.remove('hidden');
   document.getElementById('apikey-result').classList.add('hidden');
   document.getElementById('apikey-submit').classList.remove('hidden');
@@ -8558,6 +8790,7 @@ async function submitApiKey() {
   try {
     const body = { label };
     if (days) body.expires_in_days = parseInt(days, 10);
+    if (document.getElementById('apikey-purpose').value === 'runtime') body.scope = 'runtime';
     const d = await apiCall('/v1/tenant/me/api-keys', {
       method: 'POST', body: JSON.stringify(body),
     });

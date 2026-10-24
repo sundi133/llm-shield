@@ -80,6 +80,13 @@ def _require_open() -> None:
 
 def _unavailable_reason() -> str:
     """Why open sign-up cannot run safely right now, or "" when it can."""
+    return email_unavailable_reason()
+
+
+def email_unavailable_reason() -> str:
+    """Why sign-up or email-link sign-in cannot run safely, or "" when they can.
+    Email-link sign-in uses the same checks but not SHIELD_SELF_SIGNUP: a
+    workspace created while sign-up was open must still be reachable after."""
     from api.routes_portal_auth import portal_base_url
     if not os.environ.get("HCAPTCHA_SECRET_KEY", "").strip():
         return "captcha is not configured"
@@ -167,24 +174,17 @@ async def _send_verify(email: str, org: str, token: str) -> None:
     await email_resend.send(email, "Confirm your Votal Shield workspace", text, page)
 
 
-async def _send_existing(email: str) -> None:
-    from api.routes_portal_auth import portal_base_url
-    link = f"{portal_base_url()}/tenant"
-    text, page = _email("You already have a Votal Shield workspace",
-                        "This email address already has a workspace. Sign in to it instead.",
-                        link, "Sign in")
-    await email_resend.send(email, "Your Votal Shield workspace", text, page)
-
-
 # ── routes ───────────────────────────────────────────────────────────
 
 
 @router.get("/config")
 async def signup_config():
     open_ = is_open()
+    email_ok = not email_unavailable_reason()
     return {"mode": "open" if open_ else "off",
-            "available": open_ and not _unavailable_reason(),
-            "captcha_site_key": os.environ.get("HCAPTCHA_SITE_KEY", "") if open_ else ""}
+            "available": open_ and email_ok,
+            "email_link_available": email_ok,
+            "captcha_site_key": os.environ.get("HCAPTCHA_SITE_KEY", "") if (open_ or email_ok) else ""}
 
 
 ACCEPTED = {"status": "check_your_email",
@@ -221,7 +221,10 @@ async def signup(request: Request, body: dict = Body(...)):
 
     try:
         if store.trial_of(email):
-            await _send_existing(email)
+            # Already has a workspace: a sign-in link instead (task 3), so the
+            # answer here stays the same and the person still gets in.
+            from api.routes_email_link import send_sign_in_links
+            await send_sign_in_links(email)
         else:
             token, tok_hash = store.new_token()
             store.save_pending(tok_hash, email=email, org=org, ip=ip)
@@ -252,39 +255,74 @@ def _page(title: str, body_html: str, status: int = 200) -> HTMLResponse:
                         headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
-@router.get("/verify")
-async def verify_page(token: str = ""):
-    _require_open()
-    if not token or not store.pending_is_valid(store.token_hash(token)):
-        return _page("This link has expired",
-                     "<p>It was used already, or it is more than 24 hours old.</p>"
-                     "<a class=\"btn\" href=\"/tenant\">Start again</a>", 410)
+def expired_page(hours: str) -> HTMLResponse:
+    return _page("This link has expired",
+                 f"<p>It was used already, or it is more than {hours} old.</p>"
+                 "<a class=\"btn\" href=\"/tenant\">Start again</a>", 410)
+
+
+def confirm_page(*, title: str, intro: str, action: str, token: str,
+                 cookie_name: str, cookie_path: str) -> HTMLResponse:
+    """The page an emailed link opens: it consumes nothing (email scanners
+    fetch every link), and posts the token with a nonce from a SameSite=Strict
+    cookie, so another site cannot post a token of its own."""
     nonce = secrets.token_urlsafe(24)
-    resp = _page("Create your workspace",
-                 "<p>Confirm to create your Votal Shield workspace and sign in.</p>"
-                 "<form method=\"post\" action=\"/v1/signup/verify\">"
+    resp = _page(title, f"<p>{html.escape(intro)}</p>"
+                 f"<form method=\"post\" action=\"{html.escape(action)}\">"
                  f"<input type=\"hidden\" name=\"token\" value=\"{html.escape(token)}\">"
                  f"<input type=\"hidden\" name=\"nonce\" value=\"{nonce}\">"
                  "<button type=\"submit\">Continue</button></form>")
     from api.routes_portal_auth import _cookie_secure
-    resp.set_cookie(NONCE_COOKIE, nonce, max_age=NONCE_TTL_S, httponly=True,
-                    secure=_cookie_secure(), samesite="strict", path="/v1/signup")
+    resp.set_cookie(cookie_name, nonce, max_age=NONCE_TTL_S, httponly=True,
+                    secure=_cookie_secure(), samesite="strict", path=cookie_path)
     return resp
+
+
+def nonce_ok(request: Request, cookie_name: str, nonce: str) -> bool:
+    cookie = request.cookies.get(cookie_name, "")
+    return bool(cookie and nonce and hmac.compare_digest(cookie, nonce))
+
+
+def not_from_this_page() -> HTMLResponse:
+    return _page("Open the link from your email",
+                 "<p>Continue from the page your email link opened, in the same browser.</p>",
+                 400)
+
+
+def sign_in(tenant_id: str, email: str, *, is_admin: bool, issuer: str,
+            clear_cookie: tuple[str, str]) -> RedirectResponse:
+    """A portal session for this email in this tenant, as SSO gives one."""
+    from api.routes_portal_auth import COOKIE_NAME, _cookie_secure
+    from storage.portal_sessions import create_session, session_ttl
+    session_id = create_session(tenant_id, {"sub": "email:" + store.email_hash(email),
+                                            "email": email, "name": "", "issuer": issuer},
+                                is_admin=is_admin)
+    resp = RedirectResponse("/tenant", status_code=303)
+    resp.set_cookie(COOKIE_NAME, session_id, max_age=session_ttl(), httponly=True,
+                    secure=_cookie_secure(), samesite="lax", path="/")
+    resp.delete_cookie(clear_cookie[0], path=clear_cookie[1])
+    return resp
+
+
+@router.get("/verify")
+async def verify_page(token: str = ""):
+    _require_open()
+    if not token or not store.pending_is_valid(store.token_hash(token)):
+        return expired_page("24 hours")
+    return confirm_page(title="Create your workspace",
+                        intro="Confirm to create your Votal Shield workspace and sign in.",
+                        action="/v1/signup/verify", token=token,
+                        cookie_name=NONCE_COOKIE, cookie_path="/v1/signup")
 
 
 @router.post("/verify")
 async def verify(request: Request, token: str = Form(""), nonce: str = Form("")):
     _require_open()
-    cookie = request.cookies.get(NONCE_COOKIE, "")
-    if not cookie or not nonce or not hmac.compare_digest(cookie, nonce):
-        return _page("Open the link from your email",
-                     "<p>Continue from the page your email link opened, in the same browser.</p>",
-                     400)
+    if not nonce_ok(request, NONCE_COOKIE, nonce):
+        return not_from_this_page()
     pending = store.take_pending(store.token_hash(token))
     if not pending:
-        return _page("This link has expired",
-                     "<p>It was used already, or it is more than 24 hours old.</p>"
-                     "<a class=\"btn\" href=\"/tenant\">Start again</a>", 410)
+        return expired_page("24 hours")
     email, org = pending["email"], pending["org"]
 
     tenant_id = _new_tenant_id(org)
@@ -331,14 +369,6 @@ async def verify(request: Request, token: str = Form(""), nonce: str = Form(""))
     except Exception:       # noqa: BLE001 - the tenant exists; audit is best effort here
         logger.warning("self-signup audit not written for %s", tenant_id)
 
-    from storage.portal_sessions import create_session, session_ttl
-    from api.routes_portal_auth import COOKIE_NAME, _cookie_secure
-    session_id = create_session(tenant_id, {"sub": "email:" + store.email_hash(email),
-                                            "email": email, "name": "",
-                                            "issuer": "votal-signup"}, is_admin=True)
-    resp = RedirectResponse("/tenant", status_code=303)
-    resp.set_cookie(COOKIE_NAME, session_id, max_age=session_ttl(), httponly=True,
-                    secure=_cookie_secure(), samesite="lax", path="/")
-    resp.delete_cookie(NONCE_COOKIE, path="/v1/signup")
     logger.info("self-serve tenant created: %s (%s)", tenant_id, config["trial"]["email_domain"])
-    return resp
+    return sign_in(tenant_id, email, is_admin=True, issuer="votal-signup",
+                   clear_cookie=(NONCE_COOKIE, "/v1/signup"))

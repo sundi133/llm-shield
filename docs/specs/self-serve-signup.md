@@ -1,6 +1,6 @@
 # Spec: self-serve sign-up and email-link sign-in
 
-Status: APPROVED 2026-10-24 (open mode, Resend). Tasks 1 and 2 built.
+Status: APPROVED 2026-10-24 (open mode, Resend). Tasks 1 to 4 built.
 
 ## 1. Problem and outcome
 
@@ -132,7 +132,19 @@ broke a customer's agents. Trials are limited per day instead.
 | A trial reaching another tenant's data | A trial is an ordinary tenant: the existing tenant isolation applies unchanged |
 | A runtime key lowering the guard | Unchanged: the write-scope gate applies to trial tenants as to any other |
 
-**Sign-in under `require_sso`:** an email-link session is a portal session, as
+**Built in task 3:** email-link sign-in does not depend on
+`SHIELD_SELF_SIGNUP` (a workspace made while sign-up was open stays
+reachable). A link goes only to members, one per workspace, at most 5; a
+stranger gets the same 202 and no email. Limits per IP (20) and per address
+(5) a day apply to every address alike. Membership, the tenant and
+`require_sso` are checked again on confirm. Signing up again with an address
+that already has a workspace now sends it sign-in links.
+
+**Sign-in under `require_sso` (decided in task 3):** a workspace whose operator
+set `require_sso` gets no email links; its people sign in through its identity
+provider, where its offboarding lives. So no `"idp"` value is needed.
+
+**Sign-in under `require_sso` (as first drafted):** an email-link session is a portal session, as
 SSO's is. A tenant that sets `require_sso` keeps email-link sign-in only if its
 operator allows it (decided in task 3: email links count as SSO for that check
 unless `require_sso: "idp"`).

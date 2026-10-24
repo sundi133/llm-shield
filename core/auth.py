@@ -199,9 +199,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # that is not an API key: a laptop enrolling with its MDM-issued
         # enrollment token (docs/specs/device-dlp-agent.md §6).
         if path in _SELF_AUTHENTICATED_PATHS or path == "/v1/signup" \
-                or path.startswith("/v1/signup/"):
-            # Sign-up authenticates by captcha and by the emailed one-time
-            # token, never by a key (docs/specs/self-serve-signup.md).
+                or path.startswith(("/v1/signup/", "/v1/tenant/auth/email-link")):
+            # Sign-up and email-link sign-in authenticate by captcha and by the
+            # emailed one-time token, never by a key
+            # (docs/specs/self-serve-signup.md).
             return await call_next(request)
 
         # Check if path is public

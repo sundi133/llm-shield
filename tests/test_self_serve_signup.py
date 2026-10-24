@@ -160,7 +160,9 @@ def test_one_workspace_per_email_and_the_same_answer_either_way(client, mail, ca
     _confirm(client, _token(mail))
     second = _signup(TestClient(client.app, base_url="https://testserver"))
     assert second.status_code == 202 and second.json() == first.json()
-    assert "already have" in mail[-1]["subject"].lower() or "already has" in mail[-1]["text"]
+    # The existing address gets a sign-in link to its workspace (task 3), not a
+    # second trial.
+    assert "/v1/tenant/auth/email-link/confirm?token=" in mail[-1]["text"]
     assert "/v1/signup/verify" not in mail[-1]["text"]
 
 
@@ -205,8 +207,11 @@ def test_an_email_that_cannot_be_sent_leaves_nothing(client, captcha, env):
 
 def test_off_by_default(client, env):
     env.delenv("SHIELD_SELF_SIGNUP")
-    assert client.get("/v1/signup/config").json() == {"mode": "off", "available": False,
-                                                       "captcha_site_key": ""}
+    cfg = client.get("/v1/signup/config").json()
+    assert cfg["mode"] == "off" and cfg["available"] is False
+    # Email-link sign-in does not depend on sign-up being open: workspaces made
+    # while it was open must stay reachable.
+    assert cfg["email_link_available"] is True
     assert _signup(client).status_code == 404
     assert client.get("/v1/signup/verify?token=x").status_code == 404
 
