@@ -305,6 +305,10 @@ async def get_my_tenant(request: Request):
         "output_guardrails": list(config.get("output_guardrails", {}).keys()),
         "quota": config.get("quota"),
         "agent_count": agent_count,
+        # A self-serve trial's end, for the portal's welcome panel
+        # (docs/specs/self-serve-signup.md); absent for every other tenant.
+        **({"trial": {"expires_at": config["trial"].get("expires_at")}}
+           if isinstance(config.get("trial"), dict) else {}),
     }
 
 
@@ -977,11 +981,18 @@ async def create_my_api_key(request: Request, body: dict = None):
     # runtime key, strictly less than the unscoped key minted otherwise
     # (docs/specs/hooks-plugin-production.md section 5).
     agent = (body or {}).get("agent") if body else None
+    # {"scope": "runtime"}: a key for an app, which can screen traffic and
+    # change nothing (the portal's default, docs/specs/self-serve-signup.md
+    # task 4). Runtime is the one scope accepted here: it only removes power.
+    # Any other value is ignored, as before: a caller never picks a stronger
+    # scope here (tests/test_registry_write_scope.py).
+    asked_scope = (body or {}).get("scope") if body else None
     from storage.tenant_store import SCOPE_RUNTIME, KeyInUseError
+    runtime = agent is not None or asked_scope == SCOPE_RUNTIME
     try:
         add_api_key(tenant_id, api_key, label=label,
                     expires_in_days=expires_in_days,
-                    **({"scope": SCOPE_RUNTIME, "agent": agent} if agent is not None else {}))
+                    **({"scope": SCOPE_RUNTIME, "agent": agent} if runtime else {}))
     except KeyInUseError as e:
         # Never "moves" the key: it stays with the tenant that holds it.
         raise HTTPException(status_code=409, detail=str(e))
@@ -1002,7 +1013,7 @@ async def create_my_api_key(request: Request, body: dict = None):
         "api_key": api_key,  # shown ONCE
         "preview": _key_preview(api_key),
         "warning": "Store this key immediately — it cannot be retrieved later.",
-        **({"scope": SCOPE_RUNTIME, "agent": agent} if agent is not None else {}),
+        **({"scope": SCOPE_RUNTIME, "agent": agent} if runtime else {}),
     }
 
 
