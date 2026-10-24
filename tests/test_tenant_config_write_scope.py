@@ -436,6 +436,9 @@ OPEN_BY_DESIGN = {
         ("POST", "/v1/tenant/me/agent-auth/agent-token"), ("POST", "/v1/shield/auth/revoke"),
         ("POST", "/v1/shield/breakglass"),
     },
+    "self-serve sign-up: captcha, rate limits and an emailed one-time token (docs/specs/self-serve-signup.md)": {
+        ("POST", "/v1/signup"), ("POST", "/v1/signup/verify"),
+    },
     "sign-in, OAuth and device enrollment flows": {
         ("POST", "/oauth/token"), ("POST", "/oauth/revoke"), ("POST", "/oauth/register"), ("POST", "/oauth/consent"),
         ("POST", "/connect/{tenant_id}/{route}/start"), ("POST", "/connect/{tenant_id}/{route}/disconnect"),

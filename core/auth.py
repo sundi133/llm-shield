@@ -198,7 +198,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Routes that authenticate the caller themselves with a credential
         # that is not an API key: a laptop enrolling with its MDM-issued
         # enrollment token (docs/specs/device-dlp-agent.md §6).
-        if path in _SELF_AUTHENTICATED_PATHS:
+        if path in _SELF_AUTHENTICATED_PATHS or path == "/v1/signup" \
+                or path.startswith("/v1/signup/"):
+            # Sign-up authenticates by captcha and by the emailed one-time
+            # token, never by a key (docs/specs/self-serve-signup.md).
             return await call_next(request)
 
         # Check if path is public
