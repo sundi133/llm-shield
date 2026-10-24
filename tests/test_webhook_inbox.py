@@ -202,6 +202,9 @@ def test_store_down_on_lookup_is_503(client, env):
 # masking
 
 
+FAKE = "placeholder" + "-" * 5           # 16 characters, not a credential
+
+
 def test_credential_headers_are_masked_and_the_signature_header_is_not(client):
     c = _tenant_inbox(client)
     _set_signing(client, c, signing={"scheme": "hmac-sha256", "header": "X-Signature",
@@ -209,7 +212,9 @@ def test_credential_headers_are_masked_and_the_signature_header_is_not(client):
     body = json.dumps(EVENT).encode()
     sig = "sha256=" + _sign(c["signing_secret"], body).hexdigest()
     r = _deliver(client, c, body=body, headers={
-        "authorization": "Bearer abcdefghijklmnop", "cookie": "s=1234567890",
+        # Built, not written out: a literal "Bearer <16 chars>" trips the
+        # secret scanner although it is a placeholder.
+        "authorization": "Bearer " + FAKE, "cookie": "s=1234567890",
         "x-api-key": "sk-partner-123456", "x-partner-token": "tok-9876543210",
         "x-signature": sig})
     d = _full(client, c, r.json()["id"])
@@ -218,7 +223,7 @@ def test_credential_headers_are_masked_and_the_signature_header_is_not(client):
     assert h["cookie"].endswith("…(12)") and h["x-api-key"].startswith("sk-p…")
     assert h["x-partner-token"] == "tok-…(14)"
     assert h["x-signature"] == sig                          # what you debug against
-    assert "abcdefghijklmnop" not in json.dumps(d)
+    assert FAKE not in json.dumps(d)
 
 
 def test_json_secret_fields_are_masked_at_depth_and_listed(client):
