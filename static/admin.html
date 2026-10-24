@@ -672,14 +672,21 @@
           <div class="field">
             <label>Plan</label>
             <select id="create-tenant-plan">
-              <option value="basic">Basic — 60 req/min</option>
-              <option value="pro">Pro — 300 req/min</option>
-              <option value="enterprise" selected>Enterprise — 1000 req/min</option>
+              <!-- Labels state the limits storage/tenant_models.py enforces
+                   (_PLAN_QUOTA_DEFAULTS); tests/test_admin_tenant_form.py pins
+                   them. Every plan gets the 10,000 a minute floor. -->
+              <option value="basic">Basic: 100k requests/day, 10M tokens/day</option>
+              <option value="pro">Pro: 1M requests/day, 100M tokens/day</option>
+              <option value="enterprise" selected>Enterprise: 10M requests/day, 1B tokens/day</option>
             </select>
           </div>
           <div class="field">
             <label>API Keys (comma-separated)</label>
-            <input type="text" id="create-api-keys" placeholder="acme-key-abc123" autocomplete="off">
+            <input type="text" id="create-api-keys" placeholder="acme-key-abc123" autocomplete="off" spellcheck="false">
+            <div class="toolbar" style="margin-top:0.4rem;">
+              <button class="small" type="button" onclick="fillGeneratedKey()">Generate</button>
+              <button class="small" type="button" onclick="copyCreateKeys()">Copy</button>
+            </div>
           </div>
         </div>
         <div class="field">
@@ -838,6 +845,31 @@ async function apiCall(path, options = {}) {
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.detail || data.error || `HTTP ${r.status}`);
   return data;
+}
+
+// A 64-character key of letters and digits from the browser's secure random
+// source. Bytes 248 to 255 are drawn again: 248 is 4 x 62, so every character
+// is equally likely. Generated here, it reaches Shield only on Create Tenant,
+// which stores only its hash.
+const KEY_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+function generateApiKey(length = 64) {
+  let out = '';
+  while (out.length < length) {
+    for (const b of crypto.getRandomValues(new Uint8Array(length * 2))) {
+      if (b < 248 && out.length < length) out += KEY_ALPHABET[b % 62];
+    }
+  }
+  return out;
+}
+function fillGeneratedKey() {
+  document.getElementById('create-api-keys').value = generateApiKey();
+  showSuccess('create-msg', 'Key generated. Copy it now: after Create Tenant it cannot be shown again.');
+}
+async function copyCreateKeys() {
+  const v = document.getElementById('create-api-keys').value.trim();
+  if (!v) return showError('create-msg', 'Nothing to copy');
+  try { await navigator.clipboard.writeText(v); showSuccess('create-msg', 'Copied'); }
+  catch (e) { showError('create-msg', 'Could not copy: select the key and copy it'); }
 }
 
 function showError(id, msg) {

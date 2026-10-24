@@ -89,6 +89,12 @@
     gap: 14px;
     padding: 18px 28px;
   }
+  .grid.single {
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 520px;
+    margin-left: auto;
+    margin-right: auto;
+  }
 
   .card {
     display: block;
@@ -187,20 +193,13 @@
   <main class="shell">
     <section class="hero">
       <div class="eyebrow">Votal Shield</div>
-      <h1>Choose your workspace</h1>
+      <h1>Sign in to your workspace</h1>
     </section>
 
-    <section class="grid">
-      <a class="card admin" href="/admin">
-        <div class="card-head">
-          <div class="icon">A</div>
-          <div class="chevron" aria-hidden="true">›</div>
-        </div>
-        <div class="label">For platform operators</div>
-        <div class="title">Admin Console</div>
-        <div class="copy">Manage tenants, review activity, and control the platform.</div>
-      </a>
-
+    <!-- The admin console is not listed here: operators go to /admin directly.
+         Not a security control (/admin still answers, behind its own sign-in);
+         it keeps the operator surface out of what every visitor is shown. -->
+    <section class="grid single">
       <a class="card tenant" href="/tenant">
         <div class="card-head">
           <div class="icon">T</div>
