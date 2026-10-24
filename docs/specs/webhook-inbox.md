@@ -24,7 +24,17 @@ own webhooks only go the other way (`core/webhook_dispatcher.py`, signed
 Telemetry deliberately keeps no raw requests: they carry customers' prompts
 and credentials.
 
-**Outcome.** An operator creates an **inbox** in the admin console and gets:
+**Outcome.** An inbox has an **owner**: a tenant, or the platform.
+
+- **A tenant inbox** is created by that tenant's admin in the tenant portal
+  (**Settings > Inbound webhooks**). Its deliveries belong to that tenant: the
+  tenant sees them, other tenants never do, and phase 2 acts only on that
+  tenant. This fits a partner that sets up one Guardrail Provider per
+  customer, each pointing at that customer's own inbox.
+- **A platform inbox** is created by an operator in the admin console, for a
+  partner that sends every customer's events through one provider.
+
+Either way, the creator gets:
 
 - a receiving URL;
 - a signing secret, shown once.
@@ -33,21 +43,25 @@ They paste both into the partner's form. Every delivery is then recorded
 **exactly as it arrived**: method, path, query, every header, the body, the
 sender's address, and whether its signature verified. Credential headers and
 secret-looking body fields are masked. The console's **Inbound webhooks**
-page shows each delivery, so the partner's real format is visible before
-anyone writes code that acts on it.
+page (portal or console) shows each delivery, so the partner's real format is
+visible before anyone writes code that acts on it. Operators can also see any
+tenant's inboxes, read only, to help a customer debug.
 
 **Non-goals (this spec):**
 - **Acting on events,** such as creating a tenant or revoking a key. That is
   phase 2, its own spec, written from the deliveries this records.
 - **Replaying deliveries.**
-- **Tenant-owned inboxes.** This version is platform-only, for operators.
+- **Moving an inbox** between tenants, or between a tenant and the platform.
+  Delete and create a new one.
 - **Recording Shield's guarded traffic** (`/guardrails/*` and so on). That
   stays out of the log by design.
 
 ## 2. Plane and latency contract
 
-- **Plane:** admin only (`admin_app.py`, `shield.votal.ai`). The receiving URL
-  is `https://shield.votal.ai/v1/inbound/{token}`.
+- **Plane:** admin only (`admin_app.py`, `shield.votal.ai`), for both owners.
+  The receiving URL is `https://shield.votal.ai/v1/inbound/{token}`. The tenant
+  routes below are mounted on the admin plane only, not with the rest of
+  `/v1/tenant/*` on the guardrail service.
 - **Guard path:** untouched (`/guardrails/*`, `cap/mint`, `tools/call`), so
   there is no guarded-traffic impact.
 - **Latency:** the receiver records the delivery and answers. It does no
@@ -57,8 +71,9 @@ anyone writes code that acts on it.
 
 | Key | Value | TTL |
 |---|---|---|
-| `inbox:{inbox_id}` | `{inbox_id, name, source, created_at, created_by, token_hash, signing: {scheme, header, prefix, encoding, secret}, require_signature: bool, retention_days, enabled}` | none |
-| `inboxes:index` (set) | inbox ids | none |
+| `inbox:{inbox_id}` | `{inbox_id, owner, name, source, created_at, created_by, token_hash, signing: {scheme, header, prefix, encoding, secret}, require_signature: bool, retention_days, enabled}` | none |
+| `inboxes:{owner}` (set) | inbox ids for one owner: a tenant id, or `platform` | none |
+| `inboxes:owners` (set) | owners with at least one inbox, for the operator's all-tenants view | none |
 | `inboxtoken:{sha256(token)}` | `inbox_id` | none (deleted on rotate or delete) |
 | `inbox:{inbox_id}:deliveries` (sorted set, score = received_at) | one JSON delivery per member (below) | members trimmed by age (`retention_days`, default 30, at most 90) and count (1,000); key TTL = retention |
 | `inbox:{inbox_id}:rate:{minute}` | counter | 120 s |
@@ -82,8 +97,15 @@ anyone writes code that acts on it.
 - **The signing secret is stored as is,** like the outgoing webhooks'
   (`storage/webhook_store.py`), because HMAC verification needs it. It is shown
   once at creation and never returned again.
-- **Scoping:** platform inboxes, admin only. A delivery's tenant, if any, is
-  whatever its payload says; phase 2 decides.
+- **Scoping:** `owner` is set at creation, from the caller and never from the
+  body: a tenant route always writes the caller's tenant id, the operator route
+  always writes `platform`. Every tenant route loads the inbox and checks
+  `inbox.owner == tenant_id` before anything else, and answers 404 (not 403)
+  on a mismatch, so a tenant cannot learn that another tenant's inbox id
+  exists. The receiving token maps straight to one inbox, so a URL never
+  reaches another owner's inbox.
+- **A delivery's tenant:** for a tenant inbox, that tenant. For a platform
+  inbox, whatever the payload says; phase 2 decides.
 
 ## 4. API and interface (admin plane)
 
@@ -100,7 +122,27 @@ anyone writes code that acts on it.
 | | Store unavailable: `503`, so the partner retries rather than the delivery being lost |
 | `GET /v1/inbound/{token}` | `200 {"ok": true}` and nothing recorded, for partners whose setup sends a verification GET |
 
-**Operator (admin key or admin SSO session, behind the `/v1/admin` gate):**
+**Tenant (tenant portal: an admin SSO session or a settings key; runtime keys
+are refused by `require_registry_write` for writes):**
+
+| Method and path | Purpose |
+|---|---|
+| `POST /v1/tenant/me/inboxes` `{name, source}` | Create. Returns `url` and `signing_secret` **once** |
+| `GET /v1/tenant/me/inboxes` | This tenant's inboxes, as the operator list below |
+| `PUT /v1/tenant/me/inboxes/{inbox_id}` | Change, as the operator route |
+| `POST /v1/tenant/me/inboxes/{inbox_id}/rotate-url` | As the operator route |
+| `POST /v1/tenant/me/inboxes/{inbox_id}/rotate-secret` | As the operator route |
+| `DELETE /v1/tenant/me/inboxes/{inbox_id}` | As the operator route |
+| `GET /v1/tenant/me/inboxes/{inbox_id}/deliveries?limit&cursor` | As the operator route |
+| `GET /v1/tenant/me/inboxes/{inbox_id}/deliveries/{id}` | As the operator route |
+
+The tenant's id comes from `_require_tenant(request)`, never from the path or
+body. Reads need a tenant session or key (a runtime key can read, as with the
+rest of the portal); writes go through `require_registry_write`.
+
+**Operator (admin key or admin SSO session, behind the `/v1/admin` gate).**
+These manage platform inboxes; `?owner=` lets an operator **read** a tenant's
+inboxes and deliveries (`owner=all` lists every owner):
 
 | Method and path | Purpose |
 |---|---|
@@ -114,8 +156,11 @@ anyone writes code that acts on it.
 | `GET /v1/admin/inboxes/{inbox_id}/deliveries/{id}` | One delivery in full |
 
 Admin credential scopes:
-- reads need `tenants:read`, cross-tenant;
-- writes need `tenants:write`, cross-tenant.
+- reads need `tenants:read`, cross-tenant (and `tenants:read` on that tenant
+  for `?owner=<tenant>`);
+- writes need `tenants:write`, cross-tenant, and apply to platform inboxes
+  only. An operator who needs to change a tenant's inbox uses the tenant
+  portal as that tenant, so the tenant's audit shows it.
 
 **Signature schemes** (`signing.scheme`):
 
@@ -132,7 +177,11 @@ first deliveries show which applies.
 `type`, `event`, `event_type`, `eventType`, `action`, or of an `X-Event-Type`
 or `X-Webhook-Event` header. Display only; nothing acts on it.
 
-**Admin console:** a new **Inbound webhooks** page.
+**Tenant portal:** **Settings > Inbound webhooks**, the same layout as the
+console page below, showing only the tenant's inboxes.
+
+**Admin console:** a new **Inbound webhooks** page, with an owner filter
+(Platform, a tenant, All). Tenant inboxes are read only here.
 - **Inboxes:** a list, and create, which shows the URL and secret once with
   Copy buttons and a short "paste these into the partner's Lifecycle Webhooks
   form".
@@ -164,17 +213,22 @@ or `X-Webhook-Event` header. Display only; nothing acts on it.
 - **Limits:**
   - 1 MB per body, 60 deliveries a minute per inbox;
   - 1,000 deliveries kept per inbox, at most 90 days;
-  - at most 50 inboxes.
-- **Who can read deliveries:** operators only, because they may hold partner
-  data. Reads are not audited; inbox create, change, rotate and delete are
-  (admin audit).
+  - at most 10 inboxes per tenant, and 50 platform inboxes;
+  - the per-minute limit is per inbox, so one tenant's noisy partner never
+    slows another tenant's.
+- **Who can read deliveries:** for a tenant inbox, that tenant and operators;
+  for a platform inbox, operators only, because it may hold several customers'
+  data. Reads are not audited; inbox create, change, rotate and delete are (the
+  tenant's admin audit for tenant inboxes, the platform's for platform ones).
+- **Deleting a tenant** deletes its inboxes and deliveries.
 - **Not a way into the platform:** nothing is acted on, and no outbound call is
   made from a delivery, so it cannot cause SSRF.
 
 ## 6. Packaging and deploy
 
-- **New modules:** `api/routes_inbound_webhooks.py` (receiver and operator
-  routes) and `storage/webhook_inbox_store.py`. **Both must be COPYed into
+- **New modules:** `api/routes_inbound_webhooks.py` (receiver, tenant and
+  operator routes, one router mounted only by `admin_app.py`) and
+  `storage/webhook_inbox_store.py`. **Both must be COPYed into
   `Dockerfile.admin`**; `tests/test_admin_dockerfile_imports.py` guards it.
 - **Auth middleware:** `core/auth.py` lets `/v1/inbound/` through, because
   those routes authenticate by token and signature, the same way as
@@ -196,6 +250,9 @@ or `X-Webhook-Event` header. Display only; nothing acts on it.
 | Two deliveries at the same instant | Separate ids; the sorted set holds both |
 | A rotated URL still used by the partner | 404, and the inbox's list shows "deliveries to an old URL: n" (a counter only) |
 | Retention changed | Applies from the next delivery's trim |
+| A tenant asks for another tenant's inbox id | 404, the same answer as an id that does not exist |
+| A tenant at 10 inboxes creates another | 409 with "delete one first" |
+| The tenant is deleted | Its inboxes go; their URLs answer 404 |
 | Signature header present, scheme `none` | Recorded, result `not_configured`, with the header visible so the scheme can be chosen |
 
 ## 8. Test plan (definition of done)
@@ -222,6 +279,15 @@ or `X-Webhook-Event` header. Display only; nothing acts on it.
   - rotate-secret changes verification;
   - delete removes the deliveries;
   - scope checks; audit rows for writes.
+- **Tenant isolation:**
+  - tenant A cannot list, read, change, rotate or delete tenant B's inbox, or
+    read its deliveries (404 each);
+  - `owner` in a create body is ignored;
+  - a runtime key can read but not create or change;
+  - the operator can read a tenant's inboxes with `?owner=` and cannot change
+    them;
+  - the 10-per-tenant limit;
+  - deleting a tenant removes its inboxes.
 - **Retention:** trim by age and by count.
 - **Store down:** the receiver gives 503 and nothing is half-written.
 - **Console:**
@@ -240,9 +306,9 @@ or `X-Webhook-Event` header. Display only; nothing acts on it.
 | Task | Scope |
 |---|---|
 | 1 | `storage/webhook_inbox_store.py` and the receiver `/v1/inbound/{token}`: record, mask, verify, limits; the auth exemption; `Dockerfile.admin`; tests |
-| 2 | Operator API `/v1/admin/inboxes*`: create, list, change, rotate URL and secret, delete, deliveries; audit; tests |
-| 3 | Admin console **Inbound webhooks** page: inboxes, create (URL and secret once), settings, deliveries and the delivery panel; browser-checked |
-| 4 | Docs: how to connect a partner (paste the URL and secret, choose the events, send a test, read the first deliveries, set the signing scheme, then turn on `require_signature`) |
+| 2 | Inbox API for both owners: `/v1/tenant/me/inboxes*` and `/v1/admin/inboxes*` (create, list, change, rotate URL and secret, delete, deliveries), owner checks, `?owner=` reads, limits, tenant deletion; audit; tests |
+| 3 | Tenant portal **Settings > Inbound webhooks** and admin console **Inbound webhooks** page (one shared component): inboxes, create (URL and secret once), settings, deliveries and the delivery panel; browser-checked |
+| 4 | Docs: how a tenant, or an operator, connects a partner (paste the URL and secret, choose the events, send a test, read the first deliveries, set the signing scheme, then turn on `require_signature`) |
 
 **Then, phase 2 (its own spec):** acting on the partner's events, written from
 the deliveries this inbox records. A sketch, to be confirmed against real
@@ -254,6 +320,8 @@ payloads:
 | API key revoked | Stop honouring it in Shield at once, and record why |
 | API key expired | The same as revoked, using the expiry the event carries |
 
-The inbox decides between the sketch's options: which tenant a key maps to
-(the payload's customer field, or a mapping the operator sets per inbox), and
-whether Shield needs the key itself or only its id.
+For a **tenant inbox** the tenant is already known: an event acts only on the
+tenant that owns the inbox. For a **platform inbox** the recorded deliveries
+decide which tenant a key maps to (the payload's customer field, or a mapping
+the operator sets per inbox). Either way they show whether Shield needs the
+key itself or only its id.
