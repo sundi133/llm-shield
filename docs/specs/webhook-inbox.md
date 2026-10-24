@@ -27,7 +27,7 @@ and credentials.
 **Outcome.** An inbox has an **owner**: a tenant, or the platform.
 
 - **A tenant inbox** is created by that tenant's admin in the tenant portal
-  (**Settings > Inbound webhooks**). Its deliveries belong to that tenant: the
+  (**Inbound webhooks**). Its deliveries belong to that tenant: the
   tenant sees them, other tenants never do, and phase 2 acts only on that
   tenant. This fits a partner that sets up one Guardrail Provider per
   customer, each pointing at that customer's own inbox.
@@ -76,7 +76,10 @@ tenant's inboxes, read only, to help a customer debug.
 | `inboxes:{owner}` (set) | inbox ids for one owner: a tenant id, or `platform` | none |
 | `inboxes:owners` (set) | owners with at least one inbox, for the operator's all-tenants view | none |
 | `inboxtoken:{sha256(token)}` | `inbox_id` | none (deleted on rotate or delete) |
-| `inbox:{inbox_id}:deliveries` (sorted set, score = received_at) | one JSON delivery per member (below) | members trimmed by age (`retention_days`, default 30, at most 90) and count (1,000); key TTL = retention |
+| `inboxtoken:old:{sha256(token)}` | `inbox_id` of a rotated token, to count deliveries still sent to it | 30 days |
+| `inbox:{inbox_id}:dlv` (sorted set, score = received_at) | delivery ids | members trimmed by age (`retention_days`, default 30, at most 90) and count (1,000); key TTL = retention |
+| `inbox:{inbox_id}:dlvdata` (hash) | delivery id -> one JSON delivery (below) | trimmed with the sorted set, in the same transaction |
+| `inbox:{inbox_id}:oldurl` | deliveries to a rotated URL (a counter) | none |
 | `inbox:{inbox_id}:rate:{minute}` | counter | 120 s |
 
 **One delivery:**
@@ -178,8 +181,9 @@ first deliveries show which applies.
 `type`, `event`, `event_type`, `eventType`, `action`, or of an `X-Event-Type`
 or `X-Webhook-Event` header. Display only; nothing acts on it.
 
-**Tenant portal:** **Settings > Inbound webhooks**, the same layout as the
-console page below, showing only the tenant's inboxes.
+**Tenant portal:** an **Inbound webhooks** page next to Webhooks, the same
+layout as the console page below (one shared script, `static/inbox-ui.js`),
+showing only the tenant's inboxes.
 
 **Admin console:** a new **Inbound webhooks** page, with an owner filter
 (Platform, a tenant, All). Tenant inboxes are read only here.
@@ -209,8 +213,10 @@ console page below, showing only the tenant's inboxes.
   `password`, `api_key`, `apikey`, `private_key` or `client_secret`
   (case-insensitive, at any depth) are masked the same way and listed in
   `body_masked_fields`. Lifecycle events may carry credentials, such as a
-  provisioned key. Non-JSON bodies are stored as received, up to 64 KB of text;
-  above that, truncated, with the size and sha256 kept.
+  provisioned key. The masked values are replaced in the text, so the sender's
+  formatting is kept. Every body is stored up to 64 KB; above that, truncated,
+  with the full size and sha256 kept. A gzip or deflate body is decompressed for
+  display (bounded at 1 MB); the signature is checked over the raw bytes.
 - **Limits:**
   - 1 MB per body, 60 deliveries a minute per inbox;
   - 1,000 deliveries kept per inbox, at most 90 days;
@@ -254,7 +260,7 @@ console page below, showing only the tenant's inboxes.
 | A tenant asks for another tenant's inbox id | 404, the same answer as an id that does not exist |
 | A tenant at 10 inboxes creates another | 409 with "delete one first" |
 | The tenant is deleted | Its inboxes go; their URLs answer 404 |
-| Signature header present, scheme `none` | Recorded, result `not_configured`, with the header visible so the scheme can be chosen |
+| Signature header present, scheme `none` | Recorded, result `not_configured`, with the header visible. If the inbox's secret verifies it under any common setting (SHA-256 or SHA-1, hex or base64, with or without a `name=` prefix, in any header whose name contains `sig`), the detail says which, and the page offers to save those settings |
 
 ## 8. Test plan (definition of done)
 
@@ -310,7 +316,7 @@ console page below, showing only the tenant's inboxes.
 |---|---|
 | 1 | `storage/webhook_inbox_store.py` and the receiver `/v1/inbound/{token}`: record, mask, verify, limits; the auth exemption; `Dockerfile.admin`; tests |
 | 2 | Inbox API for both owners: `/v1/tenant/me/inboxes*` and `/v1/admin/inboxes*` (create, list, change, rotate URL and secret, delete, deliveries), owner checks, `?owner=` reads, limits, tenant deletion; audit; tests |
-| 3 | Tenant portal **Settings > Inbound webhooks** and admin console **Inbound webhooks** page (one shared component): inboxes, create (URL and secret once), settings, deliveries and the delivery panel; browser-checked |
+| 3 | Tenant portal **Inbound webhooks** and admin console **Inbound webhooks** page (one shared component): inboxes, create (URL and secret once), settings, deliveries and the delivery panel; browser-checked |
 | 4 | Docs: how a tenant, or an operator, connects a partner (paste the URL and secret, choose the events, send a test, read the first deliveries, set the signing scheme, then turn on `require_signature`) |
 
 **Then, phase 2 (its own spec):** acting on the partner's events, written from

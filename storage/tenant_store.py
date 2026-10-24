@@ -359,6 +359,7 @@ def delete_tenant(tenant_id: str, soft: bool = True) -> bool:
                 del _fallback_store[k]
 
         _cache_delete(f"tenant:{tenant_id}")
+        _delete_inboxes(tenant_id)
         logger.info(f"Soft-deleted tenant: {tenant_id}")
         return True
 
@@ -383,8 +384,19 @@ def delete_tenant(tenant_id: str, soft: bool = True) -> bool:
             del _fallback_store[k]
 
     _cache_delete(f"tenant:{tenant_id}")
+    _delete_inboxes(tenant_id)
     logger.info(f"Hard-deleted tenant: {tenant_id}")
     return True
+
+
+def _delete_inboxes(tenant_id: str) -> None:
+    """A deleted tenant's webhook inboxes go with it (docs/specs/webhook-inbox.md).
+    Best effort: the receiver also refuses an inbox whose tenant is gone."""
+    try:
+        from storage.webhook_inbox_store import delete_owner
+        delete_owner(tenant_id)
+    except Exception as e:      # noqa: BLE001
+        logger.warning(f"Could not delete inboxes of {tenant_id}: {e}")
 
 
 def list_tenants(include_deleted: bool = False) -> list[dict]:

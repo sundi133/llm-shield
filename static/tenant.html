@@ -2786,6 +2786,10 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
         Webhooks
       </div>
+      <div class="nav-item" data-tab="inbound-webhooks">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
+        Inbound webhooks
+      </div>
       <div class="nav-item" data-tab="siem">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
         SIEM Integration
@@ -5324,6 +5328,17 @@ if __name__ == "__main__":
           <div class="muted">Click Search to query decisions</div>
         </div>
       </div>
+    </div>
+
+    <!-- Webhook inbox (docs/specs/webhook-inbox.md): this tenant's inboxes
+         only. The page itself is static/inbox-ui.js, shared with the admin
+         console. -->
+    <div id="tab-inbound-webhooks" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Inbound webhooks</div>
+        <div class="page-desc">Receive a partner's webhooks (for example API key created, revoked, expired) and see each delivery exactly as it arrived.</div>
+      </div>
+      <div id="tenant-inbox-root"></div>
     </div>
 
     <!-- ── Enterprise: Webhooks ────────────────────── -->
@@ -16468,6 +16483,7 @@ document.addEventListener('click', (e) => {
       console.log('Architecture tab loaded');
     }
     if (tab === 'siem') loadSIEMData();
+    if (tab === 'inbound-webhooks') loadTenantInboxes();
     if (tab === 'cross-app-flow') xfLoad();
     if (tab === 'runtime-profiles') { rpLoad(); ccLoad(); }
     if (tab === 'embodied-guard') emLoad();
@@ -17501,6 +17517,16 @@ async function loadDecisions() {
 }
 
 // ── Enterprise: Webhooks ────────────────────────
+// ── Inbound webhooks (docs/specs/webhook-inbox.md, task 3) ───────────
+let TENANT_INBOX_UI = null;
+function loadTenantInboxes() {
+  if (!TENANT_INBOX_UI) {
+    TENANT_INBOX_UI = window.InboxUI.mount({ root: document.getElementById('tenant-inbox-root'),
+      api: apiCall, base: '/v1/tenant/me/inboxes', mode: 'tenant' });
+  }
+  TENANT_INBOX_UI.load();
+}
+
 async function loadWebhooks() {
   try {
     const tid = (TENANT_INFO && TENANT_INFO.tenant_id) || 'default';
@@ -20538,5 +20564,6 @@ async function exDecide(id, approve) {
   }
 }
 </script>
+<script src="/static/inbox-ui.js"></script>
 </body>
 </html>

@@ -440,6 +440,9 @@ OPEN_BY_DESIGN = {
         ("POST", "/v1/signup"), ("POST", "/v1/signup/verify"),
         ("POST", "/v1/tenant/auth/email-link"), ("POST", "/v1/tenant/auth/email-link/confirm"),
     },
+    "a partner's webhook deliveries: addressed by a random token, proven by its signature, recorded and never acted on (docs/specs/webhook-inbox.md)": {
+        ("POST", "/v1/inbound/{token}"), ("PUT", "/v1/inbound/{token}"), ("PATCH", "/v1/inbound/{token}"),
+    },
     "sign-in, OAuth and device enrollment flows": {
         ("POST", "/oauth/token"), ("POST", "/oauth/revoke"), ("POST", "/oauth/register"), ("POST", "/oauth/consent"),
         ("POST", "/connect/{tenant_id}/{route}/start"), ("POST", "/connect/{tenant_id}/{route}/disconnect"),

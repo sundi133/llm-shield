@@ -573,6 +573,10 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/></svg>
         Sign-ups
       </div>
+      <div class="nav-item" data-tab="inboxes">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/></svg>
+        Inbound webhooks
+      </div>
     </div>
 
     <div class="nav-section">
@@ -808,6 +812,16 @@
       </div>
     </div>
 
+    <!-- Webhook inbox (docs/specs/webhook-inbox.md): platform inboxes, and any
+         tenant's, read only, with the owner filter. static/inbox-ui.js. -->
+    <div id="tab-inboxes" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">Inbound webhooks</div>
+        <div class="page-desc">Receive a partner's webhooks and see each delivery exactly as it arrived</div>
+      </div>
+      <div id="inbox-root"></div>
+    </div>
+
     <div id="tab-audit" class="tab-pane hidden">
       <div class="page-header">
         <div class="page-title">Audit Log</div>
@@ -1007,6 +1021,16 @@ async function signupAction(btn, action) {
     showSuccess('sg-list-msg', `${verb}: done`);
     loadSignups();
   } catch (e) { showError('sg-list-msg', e.message); }
+}
+
+// ── Inbound webhooks (docs/specs/webhook-inbox.md, task 3) ───────────
+let INBOX_UI = null;
+function loadInboxes() {
+  if (!INBOX_UI) {
+    INBOX_UI = window.InboxUI.mount({ root: document.getElementById('inbox-root'),
+      api: sgApi, base: '/v1/admin/inboxes', mode: 'operator' });
+  }
+  INBOX_UI.load();
 }
 
 function showError(id, msg) {
@@ -1525,6 +1549,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'tenants') loadTenants();
     if (tab === 'credentials') loadCredentials();
     if (tab === 'signups') loadSignups();
+    if (tab === 'inboxes') loadInboxes();
   }
   if (e.target.matches('.modal-tab[data-modal-tab]')) {
     const tab = e.target.getAttribute('data-modal-tab');
@@ -1555,5 +1580,6 @@ if (ADMIN_KEY) {
     .catch(() => {});
 }
 </script>
+<script src="/static/inbox-ui.js"></script>
 </body>
 </html>
