@@ -121,6 +121,12 @@ COPY api/routes_oauth.py api/
 COPY api/routes_oauth_registration.py api/
 COPY api/routes_oidc_admin.py api/
 COPY api/routes_portal_auth.py api/
+# Self-serve sign-up (docs/specs/self-serve-signup.md), imported by admin_app.py.
+COPY api/routes_signup.py api/
+COPY core/email_resend.py core/
+COPY core/policy_templates.py core/
+COPY core/signup/ core/signup/
+COPY storage/signup_store.py storage/
 # Admin-plane SSO (docs/specs/spec-sso-primary-login.md PR 5). Imported by
 # admin_app.py; also imports storage/admin_sessions.py (copied below). core/auth.py
 # lazily imports storage.admin_sessions in the middleware, so that COPY is required

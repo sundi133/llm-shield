@@ -171,6 +171,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                     patched += "; Secure"
                 if "samesite" not in low:
                     patched += "; SameSite=Strict"
-                response.headers["set-cookie"] = patched
+                # append, not assign: assigning replaces, and a response that
+                # sets two cookies (a session and a cleared one) kept only the last.
+                response.headers.append("set-cookie", patched)
 
         return response

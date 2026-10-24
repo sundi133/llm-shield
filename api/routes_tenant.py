@@ -84,24 +84,31 @@ async def create_new_tenant(request: Request, body: TenantCreateRequest):
         after={"name": config.get("name"), "plan": config.get("plan"), "api_key_count": len(api_keys)},
     )
 
-    # M2 default-deny: a new tenant is `declarative` with a VISIBLE starter
-    # allow-all to narrow (never a hidden deny-all). authz_mode is set to
-    # declarative ONLY if the starter actually publishes, so a load failure
-    # leaves the tenant legacy (safe) rather than denying every call.
+    config = finish_new_tenant(tenant_id, actor=_actor_from_request(request)) or config
+    return {"status": "created", "tenant_id": tenant_id, "config": config}
+
+
+def finish_new_tenant(tenant_id: str, *, actor: str) -> Optional[dict]:
+    """What every new tenant gets after create_tenant, however it was created
+    (here, or by self-serve sign-up). Returns the updated config, or None.
+
+    M2 default-deny: a new tenant is `declarative` with a VISIBLE starter
+    allow-all to narrow (never a hidden deny-all). authz_mode is set to
+    declarative ONLY if the starter actually publishes, so a load failure
+    leaves the tenant legacy (safe) rather than denying every call.
+    """
     try:
         from core.mcp.policy_runtime import default_new_tenant_mode
         if default_new_tenant_mode() == "declarative":
             from core.mcp.policy_lang import starter_document
             from storage import policy_snapshot_store as _psnap
             _psnap.save_draft(tenant_id, starter_document())
-            _psnap.publish(tenant_id, published_by=_actor_from_request(request),
-                           note="starter allow-all (M2)")
+            _psnap.publish(tenant_id, published_by=actor, note="starter allow-all (M2)")
             update_tenant(tenant_id, {"authz_mode": "declarative"})
-            config = get_tenant(tenant_id) or config
+            return get_tenant(tenant_id)
     except Exception:
         pass
-
-    return {"status": "created", "tenant_id": tenant_id, "config": config}
+    return None
 
 
 @router.get("/{tenant_id}")

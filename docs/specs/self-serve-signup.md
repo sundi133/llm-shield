@@ -1,6 +1,6 @@
 # Spec: self-serve sign-up and email-link sign-in
 
-Status: DRAFT, awaiting approval.
+Status: APPROVED 2026-10-24 (open mode, Resend). Tasks 1 and 2 built.
 
 ## 1. Problem and outcome
 
@@ -20,6 +20,10 @@ docs, apart from Rafay's own customers).
 5. signs in later with an emailed link: no password is stored anywhere.
 
 Customers without SSO get a sign-in that is not a shared API key.
+
+**Additive only.** SSO (OIDC) and API-key sign-in stay exactly as they are; this
+adds a way in. Shield has no SAML: a customer whose identity provider only
+speaks SAML connects through Votal's Keycloak, which brokers SAML to OIDC.
 
 **Non-goals.**
 - Payments and plan upgrades (an operator converts a trial).
@@ -208,8 +212,13 @@ Per task:
 | 1 | `core/email_resend.py` (Resend client, plain and HTML, no tracking) and `storage/signup_store.py` (pending sign-ups, tokens, rate counters, member index); unit tests |
 | 2 | Sign-up: `GET /v1/signup/config`, `POST /v1/signup`, verify GET page and POST; trial tenant with template and quotas, admin member, portal session; captcha and Resend fail closed; disposable list; `Dockerfile.admin` |
 | 3 | Email-link sign-in for members (request, confirm page, session); the `require_sso` rule |
-| 4 | Portal UI: create an account, check your email, email-link sign-in, first-run "make your first key"; browser-checked |
+| 4 | Portal UI: create an account, check your email, email-link sign-in, first-run "make your first key"; the key dialog asks what the key is for (an app gets a runtime key, the default; settings automation the current unscoped key); browser-checked |
 | 5 | Trial lifecycle: the trial-expiry check on the data plane (in memory), `GET /v1/admin/signups`, conversion clears `trial`, a trial banner in the portal; customer docs page |
+
+Found while building task 2: `core/security_headers.py` rewrote each
+`Set-Cookie` by assignment, so a response setting two cookies kept only the
+last. Sign-up's confirm sets the session and clears its nonce; fixed in
+task 2 (append, not assign), with a test.
 
 Follow-ups, not in this spec:
 - inviting team members by email;
