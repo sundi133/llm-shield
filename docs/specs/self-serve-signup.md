@@ -213,7 +213,14 @@ Per task:
 | 2 | Sign-up: `GET /v1/signup/config`, `POST /v1/signup`, verify GET page and POST; trial tenant with template and quotas, admin member, portal session; captcha and Resend fail closed; disposable list; `Dockerfile.admin` |
 | 3 | Email-link sign-in for members (request, confirm page, session); the `require_sso` rule |
 | 4 | Portal UI: create an account, check your email, email-link sign-in, first-run "make your first key"; the key dialog asks what the key is for (an app gets a runtime key, the default; settings automation the current unscoped key); browser-checked |
-| 5 | Trial lifecycle: the trial-expiry check on the data plane (in memory), `GET /v1/admin/signups`, conversion clears `trial`, a trial banner in the portal; customer docs page |
+| 5 | Trial lifecycle and operations: the trial-expiry check on the data plane (in memory); `GET /v1/admin/signups` with suspend and convert-to-paid (conversion clears `trial`); a trial banner in the portal; and a **Sign-up card in the admin console**: a read-only status of what is configured and what is missing, pause and resume sign-ups, and trial limits (days, requests and tokens a day, daily cap) stored as overrides with the env values as defaults; customer docs page |
+
+**Stays in the deployment's environment, never in the admin console:**
+`SHIELD_PORTAL_BASE_URL` (it decides where every sign-up and SSO link points;
+editable in the console, one stolen admin session could send every user and
+their one-time tokens to another domain), `RESEND_API_KEY` and
+`HCAPTCHA_SECRET_KEY`. The console shows whether each is set, never its
+value.
 
 Found while building task 2: `core/security_headers.py` rewrote each
 `Set-Cookie` by assignment, so a response setting two cookies kept only the
