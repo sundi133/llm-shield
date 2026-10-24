@@ -211,6 +211,25 @@ curl -X PUT "$API/v1/admin/tenants/rafay-cust-acme/policy-mode" \
 Customers can also do this themselves in the portal, or Rafay's console can call
 `PUT /v1/tenant/me/policy-mode` with the settings key.
 
+### 3.6 Optional: lifecycle webhooks
+
+Rafay's **Create Guardrail Provider** form can send **API key created**, **API
+key revoked** and **API key expired** events. To receive them in Shield:
+
+1. The customer's admin (or Votal, for one provider shared by every customer)
+   creates an inbox under **Inbound webhooks** and copies its URL and signing
+   secret, which are shown once.
+2. In **Lifecycle Webhooks**, turn on **Deliver Webhooks**, paste the URL into
+   **Webhook URL** and the secret into **Webhook Signing Secret**, and tick the
+   three events.
+3. Create and revoke a test key in Rafay. Both events appear under
+   **Deliveries**, with every header and the body, credentials masked.
+4. Open one, click **Use these signature settings**, then set **Unsigned
+   deliveries** to **Refuse** so only Rafay's signed deliveries are accepted.
+
+Shield records these events and does not act on them yet. The full guide is
+[Receive a partner's webhooks](/webhook-inbox/).
+
 ## 4. Rotating keys
 
 Both keys of a tenant work at the same time, so rotation has no downtime:
