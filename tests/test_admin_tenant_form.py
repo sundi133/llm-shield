@@ -59,15 +59,21 @@ def test_portal_keys_are_64_letters_and_digits():
 
 
 def test_the_public_pages_do_not_advertise_the_admin_console():
-    """Operators go to /admin directly; the home page and the public service
-    index list only the tenant portal. /admin itself is unchanged."""
+    """Operators go to /admin directly; the home page is the tenant sign-in and
+    the public service index lists only the tenant portal. /admin itself is
+    unchanged."""
     from unittest.mock import patch
     from starlette.testclient import TestClient
-    home = open(os.path.join(ROOT, "static", "index.html"), encoding="utf-8").read()
-    assert 'href="/admin"' not in home and 'href="/tenant"' in home
+    assert not os.path.exists(os.path.join(ROOT, "static", "index.html"))
     with patch("storage.tenant_store._get_redis", return_value=None):
         import admin_app
         c = TestClient(admin_app.app)
+        home = c.get("/", follow_redirects=False)
+        assert home.status_code == 302 and home.headers["location"] == "/tenant"
+        assert c.get("/?signup=done", follow_redirects=False).headers["location"] == "/tenant?signup=done"
+        assert "Sign in to the Tenant Portal" in c.get("/").text
+        for page in ("/tenant", "/admin"):
+            assert 'href="/"' not in c.get(page).text, page   # no "Back to home" loop
         index = c.get("/service-info").json()["endpoints"]
         assert index["portals"] == {"tenant": "/tenant"}, index.get("portals")
         page = c.get("/admin")

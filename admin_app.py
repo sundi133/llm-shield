@@ -1215,8 +1215,11 @@ def create_admin_app() -> FastAPI:
         return {"service": "votal-shield-admin", "endpoints": available}
 
     @app.get("/")
-    async def root():
-        return FileResponse(os.path.join(static_dir, "index.html"))
+    async def root(request: Request):
+        # The tenant sign-in is the home page; operators go to /admin directly.
+        # The query is kept so a link that lands on / still carries it.
+        q = request.url.query
+        return RedirectResponse("/tenant" + (f"?{q}" if q else ""), status_code=302)
 
     @app.get("/favicon.png")
     @app.get("/favicon.ico")
