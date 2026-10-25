@@ -166,6 +166,8 @@ from api.routes_signup_admin import router as _signup_admin_router
 # Webhook inbox (docs/specs/webhook-inbox.md): the same hard import, for the
 # same reason; a partner's deliveries would otherwise 404 with no clue why.
 from api.routes_inbound_webhooks import router as _inbound_webhooks_router
+# Password sign-in (docs/specs/password-sign-in.md): hard, like sign-up.
+from api.routes_password_auth import router as _password_auth_router
 try:
     from api.routes_admin_auth import router as _admin_auth_router
 except Exception:
@@ -1158,6 +1160,7 @@ def create_admin_app() -> FastAPI:
     app.include_router(_signup_router)                 # /v1/signup/* (off unless SHIELD_SELF_SIGNUP=open)
     app.include_router(_email_link_router)             # /v1/tenant/auth/email-link/*
     app.include_router(_signup_admin_router)           # /v1/admin/signups/* (operator)
+    app.include_router(_password_auth_router)          # /v1/tenant/auth/password*, /v1/tenant/me/password
     app.include_router(_inbound_webhooks_router)       # /v1/inbound/{token}, /v1/tenant/me/inboxes*, /v1/admin/inboxes*
     if _admin_auth_router:
         app.include_router(_admin_auth_router)         # /v1/admin/auth/*

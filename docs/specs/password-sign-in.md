@@ -32,7 +32,7 @@ whoever signed it up.
 - **Replacing SSO.** A workspace that requires SSO (operator flag
   `require_sso`, or `SHIELD_PORTAL_REQUIRE_SSO`) never offers passwords.
 - **Checking passwords against breach databases online** (Have I Been Pwned).
-  No outbound call; a bundled list of common passwords is checked instead.
+  No outbound call; built-in rules refuse the commonly guessed ones instead.
 
 ## 2. Plane and latency contract
 
@@ -51,7 +51,9 @@ per person, whichever workspaces they belong to.
 
 | Key | Value | TTL |
 |---|---|---|
-| `useracct:{email_hash}` | `{email, password: "scrypt$N$r$p$salt_b64$hash_b64", set_at, failed: n, locked_until, last_sign_in}` | none |
+| `useracct:{email_hash}` | `{email, password: "scrypt$log2N$r$p$salt_b64$hash_b64", set_at, last_sign_in, lock_count}` | none |
+| `pwdfail:{email_hash}` | wrong passwords since the last success or lockout (a single increment) | none |
+| `pwdlock:{email_hash}` | `{n, until}` while locked; the deadline is in the record because the in-memory fallback keeps keys past their TTL | the lockout |
 | `tenantmembers:{tenant_id}` (hash, exists) | adds `name`, `invited_by`, `status: invited\|active` to each member record; `role` is `admin` or `viewer` | none |
 | `pwdlink:{sha256(token)}` | `{email, purpose: invite\|reset, tenant_id, expires_at}` | invite 7 days, reset 30 minutes |
 | `pwdrate:ip:{ip_hash}:{15-min window}` | failed sign-ins from one address | 30 minutes |
@@ -73,7 +75,7 @@ per person, whichever workspaces they belong to.
 | Method and path | Purpose |
 |---|---|
 | `POST /v1/tenant/auth/password` `{email, password, tenant_id?}` | Verify. One workspace: a portal session (cookie) and `/tenant`. Several: the list of workspace names to choose from, only after the password verified; the client posts again with `tenant_id`. Wrong email or password: `401 {"error": "Email or password is incorrect"}` |
-| `POST /v1/tenant/auth/password/forgot` `{email, captcha_token?}` | `202`, always the same answer; an email goes only to a member with a password |
+| `POST /v1/tenant/auth/password/forgot` `{email, captcha_token}` | `202`, always the same answer; an email goes only to a member of a workspace that accepts passwords, with a password or not, so someone who has only used SSO links can set their first |
 | `GET /v1/tenant/auth/password/set?token=` | A page to choose a password (invite or reset); consumes nothing |
 | `POST /v1/tenant/auth/password/set` `{token, password}` | Set it, sign out every other session, sign in |
 
@@ -98,8 +100,13 @@ Writes go through `require_registry_write`. A workspace keeps at least one
 admin: removing or demoting the last one is refused.
 
 **Password rules** (NIST SP 800-63B): 12 to 128 characters, any characters,
-no composition rules, not on the bundled list of 10,000 common passwords,
-not the email address or the workspace's name. Rejected with the reason.
+no composition rules. Refused, with the reason: one or two distinct
+characters, a part repeated over and over, a commonly guessed word padded
+with digits and symbols (`Password1234!`, `Summer2024!!!`), a keyboard row or
+a sequence (`qwertyuiopas`, `123456789012`), the email's name part, or a
+workspace's name. (Built-in rules instead of a downloaded list: with a
+12-character minimum, almost every entry in the usual 10,000-password lists
+is already too short. A full breached-password list can be added later.)
 
 **Guessing limits:**
 - **Per account:** after 5 wrong passwords in a row, locked for 15 minutes,
@@ -162,9 +169,8 @@ confirm page (optional; the emailed link keeps working).
 
 - **New modules:** `api/routes_password_auth.py` (sign-in, forgot, set,
   change), `api/routes_people.py` (People), `storage/user_accounts.py`
-  (accounts, hashing, lockout, links), `core/signup/common_passwords.txt`
-  (10,000 common passwords, from SecLists, MIT licence). All must be COPYed
-  into `Dockerfile.admin` (`core/signup/` is already copied whole);
+  (accounts, hashing, lockout, links). Each must be COPYed into
+  `Dockerfile.admin`;
   `tests/test_admin_dockerfile_imports.py` guards it.
 - **Auth middleware:** `/v1/tenant/auth/password` is self-authenticating,
   like `/v1/tenant/auth/email-link`; listed in OPEN_BY_DESIGN with the reason.

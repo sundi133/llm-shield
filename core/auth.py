@@ -200,12 +200,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # enrollment token (docs/specs/device-dlp-agent.md §6).
         if path in _SELF_AUTHENTICATED_PATHS or path == "/v1/signup" \
                 or path.startswith(("/v1/signup/", "/v1/tenant/auth/email-link",
-                                    "/v1/inbound/")):
+                                    "/v1/tenant/auth/password", "/v1/inbound/")):
             # Sign-up and email-link sign-in authenticate by captcha and by the
             # emailed one-time token, never by a key
             # (docs/specs/self-serve-signup.md). A webhook inbox is addressed
             # by the random token in its URL and proven by the partner's
-            # signature (docs/specs/webhook-inbox.md).
+            # signature (docs/specs/webhook-inbox.md). Password sign-in
+            # authenticates by the password itself (docs/specs/password-sign-in.md).
             return await call_next(request)
 
         # Check if path is public

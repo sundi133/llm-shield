@@ -440,6 +440,10 @@ OPEN_BY_DESIGN = {
         ("POST", "/v1/signup"), ("POST", "/v1/signup/verify"),
         ("POST", "/v1/tenant/auth/email-link"), ("POST", "/v1/tenant/auth/email-link/confirm"),
     },
+    "password sign-in: proven by the password, rate limited and locked out; reset and set by an emailed one-time link; a person changes their own password with the current one, whatever their role (docs/specs/password-sign-in.md)": {
+        ("POST", "/v1/tenant/auth/password"), ("POST", "/v1/tenant/auth/password/forgot"),
+        ("POST", "/v1/tenant/auth/password/set"), ("POST", "/v1/tenant/me/password"),
+    },
     "a partner's webhook deliveries: addressed by a random token, proven by its signature, recorded and never acted on (docs/specs/webhook-inbox.md)": {
         ("POST", "/v1/inbound/{token}"), ("PUT", "/v1/inbound/{token}"), ("PATCH", "/v1/inbound/{token}"),
     },

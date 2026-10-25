@@ -301,16 +301,18 @@ def expired_page(hours: str) -> HTMLResponse:
 
 
 def confirm_page(*, title: str, intro: str, action: str, token: str,
-                 cookie_name: str, cookie_path: str) -> HTMLResponse:
+                 cookie_name: str, cookie_path: str, extra_html: str = "",
+                 status: int = 200) -> HTMLResponse:
     """The page an emailed link opens: it consumes nothing (email scanners
     fetch every link), and posts the token with a nonce from a SameSite=Strict
-    cookie, so another site cannot post a token of its own."""
+    cookie, so another site cannot post a token of its own. `extra_html` is
+    trusted markup placed in the form, above the button."""
     nonce = secrets.token_urlsafe(24)
     resp = _page(title, f"<p>{html.escape(intro)}</p>"
                  f"<form method=\"post\" action=\"{html.escape(action)}\">"
                  f"<input type=\"hidden\" name=\"token\" value=\"{html.escape(token)}\">"
                  f"<input type=\"hidden\" name=\"nonce\" value=\"{nonce}\">"
-                 "<button type=\"submit\">Continue</button></form>")
+                 f"{extra_html}<button type=\"submit\">Continue</button></form>", status)
     from api.routes_portal_auth import _cookie_secure
     resp.set_cookie(cookie_name, nonce, max_age=NONCE_TTL_S, httponly=True,
                     secure=_cookie_secure(), samesite="strict", path=cookie_path)
@@ -343,22 +345,53 @@ def sign_in(tenant_id: str, email: str, *, is_admin: bool, issuer: str,
     return resp
 
 
+def _password_field(error: str = "") -> str:
+    """The optional password on the confirm page (docs/specs/password-sign-in.md,
+    task 2): empty keeps today's emailed-link sign-in."""
+    from api.routes_password_auth import enabled
+    if not enabled():
+        return ""
+    from storage.user_accounts import MIN_LENGTH
+    return ((f"<p style=\"color:#b91c1c\">{html.escape(error)}</p>" if error else "") +
+            "<p><label>Password (optional, so you can sign in with it next time)<br>"
+            f"<input type=\"password\" name=\"password\" minlength=\"{MIN_LENGTH}\" "
+            "maxlength=\"128\" autocomplete=\"new-password\" style=\"width:100%;padding:8px;box-sizing:border-box\">"
+            "</label></p>")
+
+
+def _verify_page(token: str, error: str = "", status: int = 200) -> HTMLResponse:
+    return confirm_page(title="Create your workspace",
+                        intro="Confirm to create your Votal Shield workspace and sign in.",
+                        action="/v1/signup/verify", token=token,
+                        cookie_name=NONCE_COOKIE, cookie_path="/v1/signup",
+                        extra_html=_password_field(error), status=status)
+
+
 @router.get("/verify")
 async def verify_page(token: str = ""):
     _require_open()
     if not token or not store.pending_is_valid(store.token_hash(token)):
         return expired_page("24 hours")
-    return confirm_page(title="Create your workspace",
-                        intro="Confirm to create your Votal Shield workspace and sign in.",
-                        action="/v1/signup/verify", token=token,
-                        cookie_name=NONCE_COOKIE, cookie_path="/v1/signup")
+    return _verify_page(token)
 
 
 @router.post("/verify")
-async def verify(request: Request, token: str = Form(""), nonce: str = Form("")):
+async def verify(request: Request, token: str = Form(""), nonce: str = Form(""),
+                 password: str = Form("")):
     _require_open()
     if not nonce_ok(request, NONCE_COOKIE, nonce):
         return not_from_this_page()
+    if password:
+        # Checked before the token is used, so a refused password costs nothing.
+        from api.routes_password_auth import enabled
+        from storage.user_accounts import password_problem
+        peeked = store._peek(f"signup:pending:{store.token_hash(token)}")
+        if not peeked:
+            return expired_page("24 hours")
+        problem = password_problem(password, email=peeked["email"], names=(peeked["org"],)) \
+            if enabled() else ""
+        if problem:
+            return _verify_page(token, problem, 422)
     pending = store.take_pending(store.token_hash(token))
     if not pending:
         return expired_page("24 hours")
@@ -403,6 +436,11 @@ async def verify(request: Request, token: str = Form(""), nonce: str = Form(""))
     from api.routes_tenant import finish_new_tenant
     finish_new_tenant(tenant_id, actor=f"self-signup:{email}")
     store.add_member(tenant_id, email, "admin")
+    if password:
+        from api.routes_password_auth import enabled
+        if enabled():
+            from storage.user_accounts import set_password
+            set_password(email, password)
 
     try:
         from storage.admin_audit import log_admin_action
