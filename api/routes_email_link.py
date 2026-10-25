@@ -138,5 +138,6 @@ async def confirm_link(request: Request, token: str = Form(""), nonce: str = For
     if not match:
         return expired_page("15 minutes")
     logger.info("email-link sign-in: tenant=%s", tenant_id)
+    store.mark_joined(tenant_id, email)
     return sign_in(tenant_id, email, is_admin=match[2] == "admin", issuer="votal-email-link",
                    clear_cookie=(NONCE_COOKIE, COOKIE_PATH))

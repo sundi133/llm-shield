@@ -221,9 +221,11 @@ def trial_of(email: str) -> Optional[str]:
 # ── members: who may sign in to which tenant by email ────────────────
 
 
-def add_member(tenant_id: str, email: str, role: str = "admin") -> None:
+def add_member(tenant_id: str, email: str, role: str = "admin", **extra) -> None:
+    """Add or replace a member. `extra` (name, invited_by, status) is stored
+    with the record (docs/specs/password-sign-in.md, task 3)."""
     eh = email_hash(email)
-    rec = json.dumps({"email": normalize_email(email), "role": role, "created_at": _now()})
+    rec = json.dumps({"email": normalize_email(email), "role": role, "created_at": _now(), **extra})
     r = _ts._get_redis()
     if r is None:
         with _lock:
@@ -232,6 +234,54 @@ def add_member(tenant_id: str, email: str, role: str = "admin") -> None:
         return
     r.hset(f"tenantmembers:{tenant_id}", eh, rec)
     r.sadd(f"membertenants:{eh}", tenant_id)
+
+
+def get_member(tenant_id: str, eh: str) -> Optional[dict]:
+    """A member by email hash, or None."""
+    r = _ts._get_redis()
+    raw = _decode(_mem_hash.get(f"tenantmembers:{tenant_id}", {}).get(eh) if r is None
+                  else r.hget(f"tenantmembers:{tenant_id}", eh))
+    try:
+        rec = json.loads(raw) if raw else None
+    except ValueError:
+        return None
+    return {"email_hash": eh, **rec} if isinstance(rec, dict) else None
+
+
+def update_member(tenant_id: str, eh: str, **fields) -> Optional[dict]:
+    rec = get_member(tenant_id, eh)
+    if not rec:
+        return None
+    rec.pop("email_hash", None)
+    rec.update(fields)
+    data = json.dumps(rec)
+    r = _ts._get_redis()
+    if r is None:
+        with _lock:
+            _mem_hash.setdefault(f"tenantmembers:{tenant_id}", {})[eh] = data
+    else:
+        r.hset(f"tenantmembers:{tenant_id}", eh, data)
+    return {"email_hash": eh, **rec}
+
+
+def mark_joined(tenant_id: str, email: str) -> None:
+    """An invited member who has signed in, or chosen a password, has joined."""
+    eh = email_hash(email)
+    m = get_member(tenant_id, eh)
+    if m and m.get("status") == "invited":
+        update_member(tenant_id, eh, status="active", invite_link=None)
+
+
+def remove_member(tenant_id: str, eh: str) -> bool:
+    r = _ts._get_redis()
+    if r is None:
+        with _lock:
+            gone = _mem_hash.get(f"tenantmembers:{tenant_id}", {}).pop(eh, None) is not None
+            _mem_set.get(f"membertenants:{eh}", set()).discard(tenant_id)
+        return gone
+    gone = bool(r.hdel(f"tenantmembers:{tenant_id}", eh))
+    r.srem(f"membertenants:{eh}", tenant_id)
+    return gone
 
 
 def member_role(tenant_id: str, email: str) -> Optional[str]:

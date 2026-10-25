@@ -180,6 +180,7 @@ async def password_sign_in(request: Request, body: dict = Body(...)):
             return {"choose_workspace": [{"tenant_id": t, "name": n} for t, n, _ in reachable]}
 
         accounts.record_success(email)
+        members.mark_joined(chosen[0], email)
         _, cookie = _session(chosen[0], email, chosen[2])
     except HTTPException:
         raise
@@ -281,6 +282,8 @@ async def set_password(request: Request, token: str = Form(""), nonce: str = For
     if not accounts.take_link(token):            # used in the meantime
         return expired_page("30 minutes")
     accounts.set_password(email, password)
+    if link.get("tenant_id"):
+        members.mark_joined(link["tenant_id"], email)
     ended = _end_sessions(email)
     _audit("password_set", tenant_id=link.get("tenant_id", ""), purpose=link.get("purpose"),
            sessions_ended=ended, email_hash=members.email_hash(email))
