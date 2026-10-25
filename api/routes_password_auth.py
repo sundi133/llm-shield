@@ -294,6 +294,7 @@ async def set_password(request: Request, token: str = Form(""), nonce: str = For
         return signup._page("Password saved", "<p>Your password is saved, but no workspace "
                             "you belong to accepts password sign-in right now.</p>"
                             "<a class=\"btn\" href=\"/tenant\">Sign in another way</a>")
+    accounts.record_success(email)               # choosing it signs them in
     return signup.sign_in(chosen[0], email, is_admin=chosen[2] == "admin", issuer=ISSUER,
                           clear_cookie=(NONCE_COOKIE, COOKIE_PATH))
 

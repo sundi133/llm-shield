@@ -14,7 +14,7 @@ SIDEBAR = HTML[HTML.index('<aside class="sidebar">'):HTML.index("</aside>")]
 
 GROUPS = {
     "AI Assets": ["ai-inventory", "agents", "tool-policies", "aibom"],
-    "Identity & Access": ["agent-identity", "agent-authentication"],
+    "Identity & Access": ["agent-identity", "agent-authentication", "people"],
     "Runtime Protection": ["policies", "mcp-gateway", "model-routing", "runtime-profiles",
                            "device-dlp", "cross-app-flow", "embodied-guard"],
     "Security Operations": ["workflow-controls", "activity", "telemetry", "guardrail-metrics",
@@ -44,7 +44,7 @@ def test_the_groups_in_order():
 
 def test_every_page_is_listed_exactly_once_and_has_a_pane():
     tabs = re.findall(r'data-tab="([^"]+)"', SIDEBAR)
-    assert len(tabs) == len(set(tabs)) == 28
+    assert len(tabs) == len(set(tabs)) == 29
     for tab in tabs:
         assert f'id="tab-{tab}"' in HTML, tab
 

@@ -2588,6 +2588,48 @@
     </div>
     <div class="login-desc">Sign in to the Tenant Portal</div>
 
+    <!-- Email and password (docs/specs/password-sign-in.md, task 4). Shown
+         only when /v1/tenant/auth/password/config says passwords are on;
+         every other way in below is unchanged. -->
+    <div id="pw-block" class="hidden">
+      <div class="field">
+        <label>Email</label>
+        <input type="text" inputmode="email" id="pw-email" placeholder="you@company.com" autocomplete="username">
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" id="pw-password" autocomplete="current-password"
+               onkeydown="if (event.key === 'Enter') passwordSignIn()">
+      </div>
+      <div class="field"><div id="pw-captcha"></div></div>
+      <div id="pw-choose" class="hidden" style="margin-bottom:0.75rem;"></div>
+      <button class="primary" style="width:100%;" id="pw-button" onclick="passwordSignIn()">Sign in</button>
+      <div style="text-align:right;margin-top:0.4rem;">
+        <a href="#" id="forgot-toggle" class="hidden" onclick="revealForgot(event)"
+           style="font-size:12px;color:var(--primary,#4f46e5);text-decoration:none;">Forgot password?</a>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.6rem;margin:0.9rem 0;">
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+        <span style="font-size:11px;color:var(--text-muted);">or</span>
+        <div style="flex:1;height:1px;background:var(--border);"></div>
+      </div>
+    </div>
+
+    <div id="forgot-block" class="hidden">
+      <div class="field">
+        <label>Email</label>
+        <input type="text" inputmode="email" id="forgot-email" placeholder="you@company.com" autocomplete="email">
+      </div>
+      <div class="field"><div id="forgot-captcha"></div></div>
+      <button class="primary" style="width:100%;" id="forgot-button" onclick="sendPasswordReset()">Email me a reset link</button>
+      <div class="cp-hint" style="text-align:center;margin-top:0.5rem;">
+        Also sets a first password, if you have never had one. The link works once, for 30 minutes.
+      </div>
+      <div style="text-align:center;margin-top:0.6rem;">
+        <a href="#" onclick="hideForgot(event)" style="font-size:12px;color:var(--primary,#4f46e5);text-decoration:none;">Back to sign in</a>
+      </div>
+    </div>
+
     <!-- SSO is the PRIMARY human login. The API-key form is a labelled fallback
          below; the API key itself is unchanged and stays a machine/API
          credential (it still authenticates the guard path) — it is only demoted
@@ -2717,6 +2759,10 @@
         Authentication &amp; Permissions
         <span id="nav-badge-authz" class="nav-badge"></span>
       </div>
+      <div class="nav-item" data-tab="people">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        People
+      </div>
     </div>
 
     <div class="nav-section">
@@ -2837,6 +2883,8 @@
         <div class="name" id="sidebar-tenant-name">—</div>
         <div id="sidebar-tenant-plan">—</div>
       </div>
+      <button id="change-password-button" class="hidden" onclick="openChangePassword()"
+              style="margin-bottom:0.4rem;">Change password</button>
       <button onclick="logout()">Sign Out</button>
     </div>
   </aside>
@@ -5350,6 +5398,42 @@ if __name__ == "__main__":
       </div>
     </div>
 
+    <!-- People (docs/specs/password-sign-in.md, tasks 3 and 4): who can sign
+         in to this workspace and as what. Writes are refused for viewers by
+         the server; the controls here are only disabled to match. -->
+    <div id="tab-people" class="tab-pane hidden">
+      <style>#pp-list th, #pp-list td { padding: 0.45rem 0.6rem 0.45rem 0; vertical-align: middle; }</style>
+      <div class="page-header">
+        <div class="page-title">People</div>
+        <div class="page-desc">Invite people to this workspace. Each chooses their own password from an emailed link; admins can change settings, viewers can look.</div>
+      </div>
+      <div class="card" id="pp-invite-card">
+        <div style="font-weight:600;margin-bottom:0.25rem;">Invite someone</div>
+        <div id="pp-invite-note" style="font-size:12px;color:var(--text-muted);margin-bottom:0.75rem;"></div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <input id="pp-email" type="text" inputmode="email" placeholder="name@company.com" style="flex:2;min-width:200px;">
+          <input id="pp-name" type="text" placeholder="Name (optional)" maxlength="100" style="flex:1;min-width:140px;">
+          <select id="pp-role"><option value="viewer">Viewer</option><option value="admin">Admin</option></select>
+          <button class="primary small" id="pp-invite-button" onclick="invitePerson()">Invite</button>
+        </div>
+        <div id="pp-msg" class="toast hidden"></div>
+      </div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+          <div style="font-weight:600;">People</div>
+          <button class="small" onclick="loadPeople()">Refresh</button>
+        </div>
+        <div id="pp-list" style="font-size:13px;">Loading...</div>
+      </div>
+      <div class="card">
+        <div style="font-weight:600;margin-bottom:0.25rem;">Sign-in methods</div>
+        <label style="display:flex;gap:0.5rem;align-items:center;font-size:13px;">
+          <input type="checkbox" id="pp-passwords" onchange="savePasswordSetting()"> Allow email and password sign-in
+        </label>
+        <div id="pp-methods-note" style="font-size:12px;color:var(--text-muted);margin-top:0.4rem;"></div>
+      </div>
+    </div>
+
     <!-- Webhook inbox (docs/specs/webhook-inbox.md): this tenant's inboxes
          only. The page itself is static/inbox-ui.js, shared with the admin
          console. -->
@@ -6362,6 +6446,22 @@ proxy_set_header X-Shield-Proxy-Token "&lt;SHIELD_TRUSTED_PROXY_SECRET&gt;";</pr
 </div>
 
 <!-- Agent Modal (Add/Edit) -->
+<!-- Change password (docs/specs/password-sign-in.md, task 4). -->
+<div id="pw-change-modal" class="hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 2rem;">
+  <div style="background: var(--bg-2); border-radius: 12px; border: 1px solid var(--border); width: 100%; max-width: 420px; padding: 1.25rem 1.5rem;">
+    <div style="font-size: 16px; font-weight: 700;">Change password</div>
+    <div style="font-size: 12px; color: var(--text-muted); margin: 0.25rem 0 1rem;">Saving signs you out everywhere else. This browser stays signed in.</div>
+    <div class="field"><label>Current password</label><input type="password" id="pwc-current" autocomplete="current-password"></div>
+    <div class="field"><label>New password</label><input type="password" id="pwc-new" autocomplete="new-password" minlength="12"></div>
+    <div class="field"><label>Type it again</label><input type="password" id="pwc-new2" autocomplete="new-password"></div>
+    <div id="pwc-msg" class="toast error hidden"></div>
+    <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1rem;">
+      <button class="small" onclick="closeChangePassword()">Cancel</button>
+      <button class="primary small" id="pwc-save" onclick="saveChangePassword()">Save</button>
+    </div>
+  </div>
+</div>
+
 <div id="apikey-modal" class="hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 100; display: flex; align-items: center; justify-content: center; padding: 2rem;">
   <div style="background: var(--bg-2); border-radius: 12px; border: 1px solid var(--border); width: 100%; max-width: 520px;">
     <div style="padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border);">
@@ -7047,6 +7147,7 @@ async function login() {
 
 initCaptcha();
 initSelfServe();
+initPasswordSignIn();
 
 // Reveal the API-key fallback. SSO is the primary path; the key form stays
 // hidden until a tenant without SSO (or a service operator) asks for it.
@@ -7101,10 +7202,11 @@ function loadHcaptcha() {
 }
 
 async function renderCaptcha(containerId) {
-  if (!SIGNUP_CFG || !SIGNUP_CFG.captcha_site_key || containerId in HC_WIDGETS) return;
+  const siteKey = (SIGNUP_CFG && SIGNUP_CFG.captcha_site_key) || (PW_CFG && PW_CFG.captcha_site_key);
+  if (!siteKey || containerId in HC_WIDGETS) return;
   try {
     await loadHcaptcha();
-    HC_WIDGETS[containerId] = hcaptcha.render(containerId, { sitekey: SIGNUP_CFG.captcha_site_key, theme: 'dark' });
+    HC_WIDGETS[containerId] = hcaptcha.render(containerId, { sitekey: siteKey, theme: 'dark' });
   } catch (e) { /* the request is refused without it; the server says why */ }
 }
 
@@ -7154,6 +7256,102 @@ async function sendSignInLink() {
     btn.disabled = false;
     resetCaptcha('link-captcha');
   }
+}
+
+// ── Email and password (docs/specs/password-sign-in.md, task 4) ─────
+// The form shows only when the server says passwords are on. A wrong email
+// and a wrong password get the same answer; after a few failures from this
+// address the server asks for the captcha, which is rendered then.
+let PW_CFG = null;
+
+async function initPasswordSignIn() {
+  try {
+    const r = await fetch(`${BASE_URL}/v1/tenant/auth/password/config`);
+    if (!r.ok) return;
+    PW_CFG = await r.json();
+  } catch (e) { return; }
+  if (!PW_CFG.enabled) return;
+  document.getElementById('pw-block').classList.remove('hidden');
+  if (PW_CFG.reset_available) document.getElementById('forgot-toggle').classList.remove('hidden');
+}
+
+async function passwordSignIn(tenantId) {
+  const email = document.getElementById('pw-email').value.trim();
+  const password = document.getElementById('pw-password').value;
+  if (!email || !password) return showError('login-error', 'Enter your email and password');
+  const btn = document.getElementById('pw-button');
+  btn.disabled = true;
+  try {
+    const body = { email, password, captcha_token: captchaToken('pw-captcha') };
+    if (tenantId) body.tenant_id = tenantId;
+    const r = await fetch(`${BASE_URL}/v1/tenant/auth/password`, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d.signed_in) {
+      // The session cookie is set; boot() finds it, as after SSO.
+      localStorage.removeItem('votal_tenant_key');
+      window.location.href = d.redirect || '/tenant';
+      return;
+    }
+    if (r.ok && d.choose_workspace) {
+      const box = document.getElementById('pw-choose');
+      box.innerHTML = '<div style="font-size:12px;color:var(--text-muted);margin-bottom:0.4rem;">Choose a workspace</div>' +
+        d.choose_workspace.map(w => `<button class="small" style="width:100%;margin-bottom:0.3rem;"
+           data-tenant="${pwEsc(w.tenant_id)}" onclick="passwordSignIn(this.dataset.tenant)">${pwEsc(w.name)}</button>`).join('');
+      box.classList.remove('hidden');
+      return;
+    }
+    if (r.status === 403 && d.error === 'captcha_required') {
+      await renderCaptcha('pw-captcha');
+      return showError('login-error', d.detail || 'Solve the captcha to try again');
+    }
+    resetCaptcha('pw-captcha');
+    showError('login-error', d.detail || d.error || `Sign-in failed (HTTP ${r.status})`);
+  } catch (e) {
+    showError('login-error', 'Connection error: ' + e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function revealForgot(ev) {
+  if (ev) ev.preventDefault();
+  document.getElementById('pw-block').classList.add('hidden');
+  document.getElementById('forgot-block').classList.remove('hidden');
+  const typed = document.getElementById('pw-email').value.trim();
+  if (typed) document.getElementById('forgot-email').value = typed;
+  renderCaptcha('forgot-captcha');
+  document.getElementById('forgot-email').focus();
+}
+
+function hideForgot(ev) {
+  if (ev) ev.preventDefault();
+  document.getElementById('forgot-block').classList.add('hidden');
+  document.getElementById('pw-block').classList.remove('hidden');
+}
+
+async function sendPasswordReset() {
+  const email = document.getElementById('forgot-email').value.trim();
+  if (!email) return showError('login-error', 'Enter your email address');
+  const btn = document.getElementById('forgot-button');
+  btn.disabled = true;
+  try {
+    const d = await postJson('/v1/tenant/auth/password/forgot',
+                             { email, captcha_token: captchaToken('forgot-captcha') });
+    sentBox('login-sent', `<b>Check your email.</b><br>${pwEsc(d.message || '')}`);
+  } catch (e) {
+    showError('login-error', e.message);
+  } finally {
+    btn.disabled = false;
+    resetCaptcha('forgot-captcha');
+  }
+}
+
+function pwEsc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 function revealSignup(ev) {
@@ -7282,9 +7480,14 @@ async function loadSession() {
     SESSION = null;
   }
   renderSessionBadge();
+  // Only someone who signed in with Shield itself has a Shield password to
+  // change; SSO passwords live at the identity provider, keys have none.
+  const own = SESSION && SESSION.method === 'sso' && SHIELD_ISSUERS.includes(SESSION.issuer);
+  document.getElementById('change-password-button').classList.toggle('hidden', !own);
 }
 
 let SESSION = null;
+const SHIELD_ISSUERS = ['votal-password', 'votal-email-link', 'votal-signup'];
 
 function renderSessionBadge() {
   const el = document.getElementById('session-badge');
@@ -16504,6 +16707,7 @@ document.addEventListener('click', (e) => {
     }
     if (tab === 'siem') loadSIEMData();
     if (tab === 'inbound-webhooks') loadTenantInboxes();
+    if (tab === 'people') loadPeople();
     if (tab === 'cross-app-flow') xfLoad();
     if (tab === 'runtime-profiles') { rpLoad(); ccLoad(); }
     if (tab === 'embodied-guard') emLoad();
@@ -17537,6 +17741,154 @@ async function loadDecisions() {
 }
 
 // ── Enterprise: Webhooks ────────────────────────
+// ── People (docs/specs/password-sign-in.md, task 4) ──────────────────
+// Emails and names were typed by people: every value goes through pwEsc.
+// The server refuses a viewer's writes; the controls are disabled to match.
+let PP_DATA = null;
+
+function ppCanEdit() {
+  // A key's scope and an SSO admin are the server's to judge; only a signed-in
+  // viewer is known here to be read only.
+  return !(SESSION && SESSION.method === 'sso' && SESSION.is_admin === false);
+}
+
+function ppMsg(text, ok) {
+  const el = document.getElementById('pp-msg');
+  el.className = ok ? 'toast success' : 'toast error';
+  el.textContent = text;
+  el.classList.remove('hidden');
+  if (ok) setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+async function loadPeople() {
+  const list = document.getElementById('pp-list');
+  try {
+    const [d, m] = await Promise.all([apiCall('/v1/tenant/me/people'), apiCall('/v1/tenant/me/sign-in-methods')]);
+    PP_DATA = d;
+    ppRender(d, m);
+  } catch (e) { list.textContent = e.message; }
+}
+
+function ppRender(d, m) {
+  const edit = ppCanEdit();
+  const when = t => t ? new Date(t * 1000).toLocaleString() : '';
+  document.getElementById('pp-invite-card').classList.toggle('hidden', !edit);
+  document.getElementById('pp-invite-button').disabled = !d.invites_available;
+  document.getElementById('pp-invite-note').textContent = !d.invites_available
+    ? 'Invites need email to be set up on this deployment (ask your Votal administrator).'
+    : d.passwords_available
+      ? 'They get an email with a link to choose their password. It works once, for 7 days.'
+      : 'This workspace does not use passwords, so the email tells them how to sign in instead.';
+  const admins = d.people.filter(p => p.role === 'admin').length;
+  const list = document.getElementById('pp-list');
+  if (!d.people.length) { list.textContent = 'Nobody yet.'; }
+  else list.innerHTML = `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-muted);">
+    <th>Person</th><th>Role</th><th>Status</th><th>Password</th><th>Last sign-in</th><th></th></tr></thead><tbody>${
+    d.people.map(p => {
+      const last = p.role === 'admin' && admins <= 1;
+      return `<tr data-eh="${pwEsc(p.email_hash)}" style="border-top:1px solid var(--border);">
+        <td><b>${pwEsc(p.name || p.email)}</b>${p.name ? `<br><span style="color:var(--text-muted);font-size:11px;">${pwEsc(p.email)}</span>` : ''}</td>
+        <td>${edit ? `<select onchange="ppRole(this)" ${last ? 'disabled title="The last admin"' : ''}>
+              <option value="admin" ${p.role === 'admin' ? 'selected' : ''}>Admin</option>
+              <option value="viewer" ${p.role === 'viewer' ? 'selected' : ''}>Viewer</option></select>`
+            : pwEsc(p.role)}</td>
+        <td>${p.status === 'invited' ? '<span style="color:var(--warning,#b45309);">Invited</span>' : 'Active'}</td>
+        <td>${p.has_password ? 'Set' : '<span style="color:var(--text-muted);">None</span>'}</td>
+        <td>${pwEsc(when(p.last_sign_in)) || '<span style="color:var(--text-muted);">never</span>'}</td>
+        <td style="white-space:nowrap;">${edit ? `${p.status === 'invited' ? '<button class="small" onclick="ppResend(this)">Resend</button> ' : ''}
+            <button class="small danger" onclick="ppRemove(this)" ${last ? 'disabled' : ''}>Remove</button>` : ''}</td></tr>`;
+    }).join('')}</tbody></table>`;
+  const box = document.getElementById('pp-passwords');
+  box.checked = !!m.passwords;
+  box.disabled = !edit || m.require_sso || !m.deployment_allows_passwords;
+  document.getElementById('pp-methods-note').textContent =
+    m.require_sso ? 'This workspace signs in with SSO only, so passwords are not offered.'
+    : !m.deployment_allows_passwords ? 'Password sign-in is switched off on this deployment.'
+    : m.passwords ? 'People can sign in with their email and password, as well as every other way.'
+    : 'Password sign-in is off for this workspace; people use SSO, an emailed link or an API key.';
+}
+
+async function invitePerson() {
+  const email = document.getElementById('pp-email').value.trim();
+  if (!email) return ppMsg('Enter their email address');
+  const btn = document.getElementById('pp-invite-button');
+  btn.disabled = true;
+  try {
+    await apiCall('/v1/tenant/me/people', { method: 'POST', body: JSON.stringify({
+      email, name: document.getElementById('pp-name').value.trim(),
+      role: document.getElementById('pp-role').value }) });
+    document.getElementById('pp-email').value = '';
+    document.getElementById('pp-name').value = '';
+    ppMsg(`Invite sent to ${email}`, true);
+    await loadPeople();
+  } catch (e) { ppMsg(e.message); }
+  finally { btn.disabled = PP_DATA ? !PP_DATA.invites_available : false; }
+}
+
+function ppEh(el) { return el.closest('tr').dataset.eh; }
+
+async function ppRole(sel) {
+  try {
+    await apiCall(`/v1/tenant/me/people/${encodeURIComponent(ppEh(sel))}`,
+                  { method: 'PUT', body: JSON.stringify({ role: sel.value }) });
+    ppMsg('Role changed. It applies at their next sign-in.', true);
+  } catch (e) { ppMsg(e.message); }
+  await loadPeople();
+}
+
+async function ppResend(btn) {
+  try {
+    await apiCall(`/v1/tenant/me/people/${encodeURIComponent(ppEh(btn))}/resend`, { method: 'POST' });
+    ppMsg('A new invite is on its way. The earlier link no longer works.', true);
+  } catch (e) { ppMsg(e.message); }
+}
+
+async function ppRemove(btn) {
+  const who = btn.closest('tr').querySelector('b').textContent;
+  if (!confirm(`Remove ${who} from this workspace? They are signed out of it at once.`)) return;
+  try {
+    await apiCall(`/v1/tenant/me/people/${encodeURIComponent(ppEh(btn))}`, { method: 'DELETE' });
+    ppMsg(`${who} removed`, true);
+  } catch (e) { ppMsg(e.message); }
+  await loadPeople();
+}
+
+async function savePasswordSetting() {
+  const box = document.getElementById('pp-passwords');
+  try {
+    await apiCall('/v1/tenant/me/sign-in-methods', { method: 'PUT', body: JSON.stringify({ passwords: box.checked }) });
+    ppMsg(box.checked ? 'Password sign-in is on' : 'Password sign-in is off', true);
+  } catch (e) { ppMsg(e.message); }
+  await loadPeople();
+}
+
+// ── Change password (docs/specs/password-sign-in.md, task 4) ─────────
+function openChangePassword() {
+  for (const id of ['pwc-current', 'pwc-new', 'pwc-new2']) document.getElementById(id).value = '';
+  document.getElementById('pwc-msg').classList.add('hidden');
+  document.getElementById('pw-change-modal').classList.remove('hidden');
+  document.getElementById('pwc-current').focus();
+}
+
+function closeChangePassword() {
+  document.getElementById('pw-change-modal').classList.add('hidden');
+}
+
+async function saveChangePassword() {
+  const current = document.getElementById('pwc-current').value;
+  const next = document.getElementById('pwc-new').value;
+  if (next !== document.getElementById('pwc-new2').value) return showError('pwc-msg', 'The two new passwords are not the same');
+  const btn = document.getElementById('pwc-save');
+  btn.disabled = true;
+  try {
+    await apiCall('/v1/tenant/me/password', { method: 'POST',
+      body: JSON.stringify({ current_password: current, new_password: next }) });
+    closeChangePassword();
+    showToast('Password changed. You were signed out everywhere else.', 'success');
+  } catch (e) { showError('pwc-msg', e.message); }
+  finally { btn.disabled = false; }
+}
+
 // ── Inbound webhooks (docs/specs/webhook-inbox.md, task 3) ───────────
 let TENANT_INBOX_UI = null;
 function loadTenantInboxes() {

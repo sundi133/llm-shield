@@ -117,6 +117,7 @@ def test_an_admin_invites_and_the_invitee_joins_as_a_viewer(client, mail, tid):
     _as(client, tid, ADMIN, is_admin=True)
     row = next(x for x in client.get("/v1/tenant/me/people").json()["people"] if x["email"] == NEW)
     assert row["status"] == "active" and row["has_password"] is True and row["name"] == "Lee Park"
+    assert row["last_sign_in"]                         # choosing the password signed them in
 
 
 def test_an_invite_link_works_once(client, mail, tid):
