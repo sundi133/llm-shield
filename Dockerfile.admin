@@ -132,6 +132,10 @@ COPY storage/signup_store.py storage/
 # Webhook inbox (docs/specs/webhook-inbox.md), imported by admin_app.py.
 COPY api/routes_inbound_webhooks.py api/
 COPY storage/webhook_inbox_store.py storage/
+# Password sign-in (docs/specs/password-sign-in.md), imported by admin_app.py.
+COPY api/routes_password_auth.py api/
+COPY api/routes_people.py api/
+COPY storage/user_accounts.py storage/
 # Admin-plane SSO (docs/specs/spec-sso-primary-login.md PR 5). Imported by
 # admin_app.py; also imports storage/admin_sessions.py (copied below). core/auth.py
 # lazily imports storage.admin_sessions in the middleware, so that COPY is required

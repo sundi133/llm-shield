@@ -200,12 +200,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # enrollment token (docs/specs/device-dlp-agent.md §6).
         if path in _SELF_AUTHENTICATED_PATHS or path == "/v1/signup" \
                 or path.startswith(("/v1/signup/", "/v1/tenant/auth/email-link",
-                                    "/v1/inbound/")):
+                                    "/v1/tenant/auth/password", "/v1/inbound/")):
             # Sign-up and email-link sign-in authenticate by captcha and by the
             # emailed one-time token, never by a key
             # (docs/specs/self-serve-signup.md). A webhook inbox is addressed
             # by the random token in its URL and proven by the partner's
-            # signature (docs/specs/webhook-inbox.md).
+            # signature (docs/specs/webhook-inbox.md). Password sign-in
+            # authenticates by the password itself (docs/specs/password-sign-in.md).
             return await call_next(request)
 
         # Check if path is public
@@ -664,12 +665,30 @@ def caller_key_scope(request) -> "tuple":
         return None, False
 
 
+# Sessions that Shield's own sign-in issued, as opposed to an identity
+# provider's: the ones whose viewer role Shield enforces in every mode.
+SHIELD_ISSUERS = frozenset({"votal-password", "votal-email-link", "votal-signup"})
+
+
 def _require_scoped_write(request, tenant_id: str, action: str, *, mode: str,
                           env_name: str, record) -> None:
     """The write gate, shared by registry and configuration writes: `mode` is
     the gate's off/warn/enforce, `env_name` the setting named in refusals,
     `record` what warn mode writes. See require_registry_write."""
     from fastapi import HTTPException
+
+    # A viewer who signed in with Shield's own sign-in (password, emailed link,
+    # sign-up) is refused in EVERY mode, `off` included: the role is
+    # Shield's to enforce, and a viewer role that only bit under `enforce`
+    # would be decorative on most deployments. SSO sessions keep the
+    # behaviour below unchanged (docs/specs/password-sign-in.md section 5).
+    principal = portal_principal(request)
+    if principal is not None and not principal.get("is_admin") \
+            and principal.get("issuer") in SHIELD_ISSUERS:
+        raise HTTPException(
+            status_code=403,
+            detail=(f"{principal.get('email') or principal.get('sub')} is a viewer in "
+                    f"this workspace, so cannot {action}. Ask a workspace admin."))
 
     if mode == MODE_OFF:
         return
