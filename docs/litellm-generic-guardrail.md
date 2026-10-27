@@ -2,6 +2,7 @@
 title: LiteLLM guardrail (config only)
 layout: default
 nav_order: 30
+has_children: true
 permalink: /litellm-generic-guardrail/
 description: Put Votal Shield in front of every model behind a LiteLLM proxy with a few lines of config. Uses LiteLLM's Generic Guardrail API, so there is no plugin code to install.
 ---
@@ -49,6 +50,10 @@ after each model call. There is no plugin file to copy into your LiteLLM image.
 `api_base` is your Shield data plane address. LiteLLM adds
 `/beta/litellm_basic_guardrail_api` to it. A complete example with every
 option below is in `config/litellm_generic_guardrail.example.yaml`.
+
+For a step-by-step procedure with a check after every step, including
+on-premises TLS and agent role setup, follow the
+[integration runbook]({{ "/litellm-runbook/" | relative_url }}).
 
 In the LiteLLM UI, choose **Generic Guardrail API** when adding a guardrail and
 enter the same values.
@@ -114,6 +119,12 @@ Clients then send `x-agent-key` (the agent's name in your Shield registry) and
   LiteLLM reads `os.environ/` only for `api_key` and `api_base`. Values under
   `headers` are sent as written, so keep a config that contains one out of
   source control.
+
+  This applies to prompts. For the tool calls LiteLLM sends, Shield uses the
+  role LiteLLM forwards in whichever role-binding mode, and a tool call with
+  no role is checked as role `user`. Set `x-user-role` in a component your
+  users do not control; see the
+  [runbook]({{ "/litellm-runbook/" | relative_url }}#what-role-authorization-does-not-cover).
 
 Shield records the LiteLLM user, team, key alias, model and call id with each
 call, so you can trace a decision back to the LiteLLM request.
