@@ -182,6 +182,28 @@ as well as the tenant key:
 
 The header value is sent as written (see the note on `headers` above).
 
+## Shield on your own infrastructure (sovereign LLM)
+
+When Shield and its guardrail model run on servers you operate (on premises
+or in your own private cloud), there is no RunPod proxy in front of Shield, so
+there is no bearer token to add. Point `api_base` at your Shield data plane and
+use the tenant key, the same as hosted Shield:
+
+```yaml
+        api_base: https://shield.internal.example.com
+        api_key: os.environ/VOTAL_API_KEY
+```
+
+Leave out the `Authorization` header shown for RunPod. Prompts, responses and
+tool calls then go only between LiteLLM and your own Shield, and never leave
+your network.
+
+If Shield's certificate is signed by an internal CA, set `SSL_CERT_FILE` for
+LiteLLM to that CA bundle. See
+[Step 2.4 of the runbook]({{ "/litellm-runbook/" | relative_url }}#step-24-internal-tls-on-premises).
+To install Shield itself, see the
+[on-premises deployment guide]({{ "/on-premises-deployment-guide/" | relative_url }}).
+
 ## Limits
 
 - **Prompts are blocked, not redacted.** Shield redacts responses and tool
