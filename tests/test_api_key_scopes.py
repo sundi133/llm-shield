@@ -304,3 +304,111 @@ def test_an_unknown_enforcement_value_reads_as_off(me_client, monkeypatch):
     monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforced")   # typo
     ts.add_api_key(TENANT, LEGACY_KEY)
     assert _scope_of(me_client, LEGACY_KEY)["enforcement"] == "off"
+
+
+# ── configuration writes, and who is signed in ───────────────────────────
+#
+# /me/key-scope decides which controls the portal offers. It used to look at
+# SHIELD_REGISTRY_WRITE_SCOPE only and at the key only, so under
+# SHIELD_CONFIG_WRITE_SCOPE=enforce an unscoped key was told it could write
+# configuration (every toggle then failed with a 403), and a signed-in
+# administrator, who has no key, was told they could not write the registry.
+
+
+@pytest.fixture
+def clean_modes(monkeypatch):
+    monkeypatch.delenv("SHIELD_REGISTRY_WRITE_SCOPE", raising=False)
+    monkeypatch.delenv("SHIELD_CONFIG_WRITE_SCOPE", raising=False)
+
+
+def _signed_in(monkeypatch, *, is_admin, issuer="votal-password"):
+    import core.auth as auth
+    monkeypatch.setattr(auth, "portal_principal", lambda request: {
+        "kind": "user", "tenant_id": TENANT, "sub": "email:x", "email": "p@acme.test",
+        "is_admin": is_admin, "issuer": issuer})
+
+
+def _session_scope(client):
+    """A signed-in person: no key at all, only the session."""
+    return client.get("/v1/tenant/me/key-scope").json()
+
+
+def test_config_write_is_reported(me_client, clean_modes):
+    ts.add_api_key(TENANT, LEGACY_KEY)
+    body = _scope_of(me_client, LEGACY_KEY)
+    assert body["config_write"] is True
+    assert body["config_enforcement"] == "off"
+
+
+def test_an_unscoped_key_loses_config_write_under_config_enforce(me_client, clean_modes, monkeypatch):
+    """The reported bug: the toggle was offered, then refused with a 403."""
+    monkeypatch.setenv("SHIELD_CONFIG_WRITE_SCOPE", "enforce")
+    ts.add_api_key(TENANT, LEGACY_KEY)
+    body = _scope_of(me_client, LEGACY_KEY)
+    assert body["config_enforcement"] == "enforce"
+    assert body["config_write"] is False
+    # The two gates are separate switches; one does not report the other.
+    assert body["enforcement"] == "off" and body["registry_write"] is True
+
+
+def test_an_admin_key_keeps_config_write_under_config_enforce(me_client, clean_modes, monkeypatch):
+    monkeypatch.setenv("SHIELD_CONFIG_WRITE_SCOPE", "enforce")
+    ts.add_api_key(TENANT, ADMIN_KEY, scope="admin")
+    assert _scope_of(me_client, ADMIN_KEY)["config_write"] is True
+
+
+def test_a_signed_in_admin_can_write_under_enforce(me_client, clean_modes, monkeypatch):
+    """No key, so no key scope: the old answer was 'cannot write'."""
+    monkeypatch.setenv("SHIELD_REGISTRY_WRITE_SCOPE", "enforce")
+    monkeypatch.setenv("SHIELD_CONFIG_WRITE_SCOPE", "enforce")
+    _signed_in(monkeypatch, is_admin=True)
+    body = _session_scope(me_client)
+    assert body["registry_write"] is True
+    assert body["config_write"] is True
+
+
+def test_a_signed_in_viewer_cannot_write_even_under_off(me_client, clean_modes, monkeypatch):
+    """Shield's own sign-in enforces the viewer role in every mode."""
+    _signed_in(monkeypatch, is_admin=False)
+    body = _session_scope(me_client)
+    assert body["registry_write"] is False
+    assert body["config_write"] is False
+
+
+@pytest.mark.parametrize("mode", ["off", "warn", "enforce"])
+@pytest.mark.parametrize("caller", ["legacy", "runtime", "admin", "sso_admin",
+                                    "sso_member", "password_viewer"])
+def test_config_write_matches_the_gate(me_client, clean_modes, monkeypatch, mode, caller):
+    """Whatever the endpoint reports, the write route does. One test for every
+    caller and mode, so the two cannot drift."""
+    from fastapi import HTTPException
+    from starlette.requests import Request as StarletteRequest
+
+    import core.auth as auth
+
+    monkeypatch.setenv("SHIELD_CONFIG_WRITE_SCOPE", mode)
+    keys = {"legacy": (LEGACY_KEY, None), "runtime": (RUNTIME_KEY, "runtime"),
+            "admin": (ADMIN_KEY, "admin")}
+    if caller in keys:
+        key, scope = keys[caller]
+        ts.add_api_key(TENANT, key, scope=scope) if scope else ts.add_api_key(TENANT, key)
+        reported = _scope_of(me_client, key)["config_write"]
+        headers = [(b"x-api-key", key.encode())]
+        key_hash = ts._hash_key(key)
+    else:
+        _signed_in(monkeypatch, is_admin=caller == "sso_admin",
+                   issuer="votal-password" if caller == "password_viewer" else "okta")
+        reported = _session_scope(me_client)["config_write"]
+        headers, key_hash = [], ""
+
+    request = StarletteRequest({"type": "http", "method": "POST", "path": "/x",
+                                "headers": headers, "query_string": b""})
+    request.state.tenant_id = TENANT
+    request.state.api_key_hash = key_hash
+    monkeypatch.setattr(auth, "_record_config_warning", lambda *a, **k: None)
+    try:
+        auth.require_config_write(request, TENANT, "enable a custom policy")
+        enforced = True
+    except HTTPException:
+        enforced = False
+    assert reported is enforced

@@ -258,6 +258,7 @@
   .slider:before { position: absolute; content: ""; height: 12px; width: 12px; left: 2px; bottom: 2px; background-color: var(--text-dim); border-radius: 50%; transition: .2s; }
   .switch input:checked + .slider { background-color: var(--accent); border-color: var(--accent); }
   .switch input:checked + .slider:before { transform: translateX(16px); background: #fff; }
+  .switch input:disabled + .slider { opacity: 0.5; cursor: not-allowed; }
 
   .toast { margin-top: 0.75rem; padding: 0.6rem 0.85rem; border-radius: var(--radius-sm); font-size: 12.5px; border: 1px solid transparent; }
   .toast.error { background: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.3); color: #fca5a5; }
@@ -2890,6 +2891,11 @@
   </aside>
 
   <main class="main">
+    <!-- Shown when this session can view but not change configuration. -->
+    <div id="config-readonly-banner" class="hidden"
+         style="margin-bottom:1rem;padding:0.75rem 1rem;border-radius:8px;font-size:13px;
+                background:var(--warn-bg,#fef3c7);color:var(--warn,#92400e);
+                display:flex;gap:0.75rem;align-items:center;justify-content:space-between;"></div>
     <!-- Overview -->
     <div id="tab-overview" class="tab-pane">
       <div class="page-header">
@@ -3162,7 +3168,7 @@
         <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
           <button class="small" onclick="loadPolicies()">Refresh</button>
           <button class="small" onclick="copyFullPoliciesJSON()">Copy Full Config</button>
-          <button class="primary small" onclick="savePolicies()">Save Changes</button>
+          <button data-config-write class="primary small" onclick="savePolicies()">Save Changes</button>
         </div>
       </div>
 
@@ -3170,7 +3176,7 @@
         <span>You have unsaved changes</span>
         <div style="display: flex; gap: 0.5rem;">
           <button class="small" onclick="discardPolicyChanges()">Discard</button>
-          <button class="primary small" onclick="savePolicies()">Save Changes</button>
+          <button data-config-write class="primary small" onclick="savePolicies()">Save Changes</button>
         </div>
       </div>
 
@@ -3195,8 +3201,8 @@
             <div class="card-subtitle">Applied to incoming user prompts</div>
           </div>
           <div style="display: flex; gap: 0.5rem;">
-            <button class="small" onclick="openAddPolicy('input')">+ Add Guardrail</button>
-            <button class="primary small" onclick="showCreateCustomPolicyModal('input')">+ Custom Policy</button>
+            <button data-config-write class="small" onclick="openAddPolicy('input')">+ Add Guardrail</button>
+            <button data-config-write class="primary small" onclick="showCreateCustomPolicyModal('input')">+ Custom Policy</button>
           </div>
         </div>
         <div id="input-policies" class="policy-grid"></div>
@@ -3209,7 +3215,7 @@
               <div style="font-size: 12px; color: var(--text-dim);">Natural language (evaluated by LLM) or Sigma rules (deterministic)</div>
             </div>
             <div style="display: flex; gap: 0.5rem; align-items: center;">
-              <button class="small" onclick="importSigmaPolicies('input')" title="Import Sigma rules (.yml) as input policies">Import Sigma</button>
+              <button data-config-write class="small" onclick="importSigmaPolicies('input')" title="Import Sigma rules (.yml) as input policies">Import Sigma</button>
               <button class="small" onclick="exportSigmaPolicies('input')" title="Download input policies as Sigma rules">Export Sigma</button>
               <span id="custom-input-count" class="badge badge-basic" style="font-size: 10px;">0 policies</span>
             </div>
@@ -3230,8 +3236,8 @@
             <div class="card-subtitle">Applied to LLM responses before returning to users</div>
           </div>
           <div style="display: flex; gap: 0.5rem;">
-            <button class="small" onclick="openAddPolicy('output')">+ Add Guardrail</button>
-            <button class="primary small" onclick="showCreateCustomPolicyModal('output')">+ Custom Policy</button>
+            <button data-config-write class="small" onclick="openAddPolicy('output')">+ Add Guardrail</button>
+            <button data-config-write class="primary small" onclick="showCreateCustomPolicyModal('output')">+ Custom Policy</button>
           </div>
         </div>
         <div id="output-policies" class="policy-grid"></div>
@@ -3244,7 +3250,7 @@
               <div style="font-size: 12px; color: var(--text-dim);">Natural language (evaluated by LLM) or Sigma rules (deterministic)</div>
             </div>
             <div style="display: flex; gap: 0.5rem; align-items: center;">
-              <button class="small" onclick="importSigmaPolicies('output')" title="Import Sigma rules (.yml) as output policies">Import Sigma</button>
+              <button data-config-write class="small" onclick="importSigmaPolicies('output')" title="Import Sigma rules (.yml) as output policies">Import Sigma</button>
               <button class="small" onclick="exportSigmaPolicies('output')" title="Download output policies as Sigma rules">Export Sigma</button>
               <span id="custom-output-count" class="badge badge-basic" style="font-size: 10px;">0 policies</span>
             </div>
@@ -7533,7 +7539,6 @@ function showApp() {
   setTimeout(() => { if (typeof exBadgeLoad === 'function') exBadgeLoad(); }, 800);
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.remove('hidden');
-  loadSession();
   document.getElementById('welcome-title').textContent = `Welcome, ${TENANT_INFO.name || TENANT_INFO.tenant_id}`;
   document.getElementById('sidebar-tenant-name').textContent = TENANT_INFO.name || TENANT_INFO.tenant_id;
   document.getElementById('sidebar-tenant-plan').innerHTML = `<span class="badge badge-${TENANT_INFO.plan}">${TENANT_INFO.plan}</span>`;
@@ -7543,6 +7548,12 @@ function showApp() {
     document.getElementById('sidebar-tenant-plan').innerHTML +=
       ` <span class="muted" style="font-size:11px;">${left > 0 ? `${left} day${left === 1 ? '' : 's'} left` : 'ended'}</span>`;
   }
+  // Once per sign-in, before anyone reaches for a control: which writes this
+  // session may make, and the banner that says so when it may not.
+  Promise.all([loadSession(), loadKeyScope()]).then(() => {
+    renderConfigReadOnlyBanner();
+    applyKeyScopeToControls();
+  });
   renderOverview();
   loadUsage();
   loadPolicies();
@@ -9529,6 +9540,34 @@ function canWriteRegistry() {
   return !KEY_SCOPE || KEY_SCOPE.registry_write !== false;
 }
 
+// Policies, guardrails, tools, MCP servers, destinations and secrets
+// (SHIELD_CONFIG_WRITE_SCOPE). Missing on an older Shield: assume allowed.
+function canWriteConfig() {
+  return !KEY_SCOPE || KEY_SCOPE.config_write !== false;
+}
+
+function renderConfigReadOnlyBanner() {
+  const el = document.getElementById('config-readonly-banner');
+  if (!el) return;
+  if (canWriteConfig()) {
+    el.classList.add('hidden');
+    el.innerHTML = '';
+    return;
+  }
+  const viaKey = !(SESSION && SESSION.method === 'sso');
+  const scope = KEY_SCOPE && KEY_SCOPE.scope;
+  const why = viaKey
+    ? `You are signed in with ${scope ? `a ${escapeHtml(scope)}-scoped` : 'an unscoped'} API key, `
+      + 'and only workspace administrators can change configuration here.'
+    : 'You are signed in without administrator rights in this workspace.';
+  const fix = viaKey
+    ? 'To make changes, sign out and sign in with your email or SSO as an administrator, or use an admin-scoped API key.'
+    : 'Ask a workspace admin to make you an admin.';
+  el.innerHTML = `<span><strong>Read only.</strong> ${why} ${fix}</span>`
+    + (viaKey ? '<button class="small" onclick="logout()" style="flex-shrink:0;">Sign out</button>' : '');
+  el.classList.remove('hidden');
+}
+
 function renderKeyScopeBadge() {
   const el = document.getElementById('key-scope-badge');
   if (!el) return;
@@ -9553,16 +9592,34 @@ function renderKeyScopeBadge() {
 }
 
 function applyKeyScopeToControls() {
-  if (canWriteRegistry()) return;
   // Disable rather than hide. A control that vanishes reads as a bug; one
   // that is visibly disabled and says why reads as a policy.
-  document.querySelectorAll('[data-registry-write]').forEach(b => {
+  const disable = (selector, title) => document.querySelectorAll(selector).forEach(b => {
     b.disabled = true;
     b.style.opacity = '0.5';
     b.style.cursor = 'not-allowed';
-    b.title = 'Requires an admin-scoped API key '
-            + '(SHIELD_REGISTRY_WRITE_SCOPE=enforce)';
+    b.title = title;
   });
+  if (!canWriteRegistry()) {
+    disable('[data-registry-write]',
+            'Requires an admin-scoped API key (SHIELD_REGISTRY_WRITE_SCOPE=enforce)');
+  }
+  if (!canWriteConfig()) {
+    disable('[data-config-write]', 'Only workspace administrators can change configuration');
+  }
+}
+
+// The server says why a write was refused (a viewer, a key that is not
+// admin-scoped); a bare status code hides the one thing the user can act on.
+async function responseError(response, fallback) {
+  const data = await response.json().catch(() => ({}));
+  const detail = typeof data.detail === 'string' ? data.detail : (data.error || '');
+  return new Error(detail || `${fallback} (HTTP ${response.status})`);
+}
+
+// A signed-in session has no key; send the header only when there is one.
+function keyHeaders(extra = {}) {
+  return API_KEY ? { ...extra, 'X-API-Key': API_KEY } : extra;
 }
 
 async function approveAgent(agentId, toolCount) {
@@ -18892,14 +18949,16 @@ let EDITING_POLICY_ID = null;
 let EDITING_POLICY_FORMAT = 'natural_language';
 
 async function loadCustomPolicies() {
-  if (!API_KEY) return;
+  // No key-only guard here: a session signed in by SSO, password or emailed
+  // link has no API key and must still see its policies.
+  if (!API_KEY && !TENANT_INFO) return;
 
   try {
     const response = await fetch(`${BASE_URL}/v1/tenant/me/policies/custom`, {
-      headers: { 'X-API-Key': API_KEY }
+      headers: keyHeaders(), credentials: 'same-origin'
     });
 
-    if (!response.ok) throw new Error(`Failed to load policies: ${response.status}`);
+    if (!response.ok) throw await responseError(response, 'Failed to load policies');
 
     const data = await response.json();
     CUSTOM_POLICIES = data.policies || [];
@@ -18914,7 +18973,7 @@ async function loadCustomPolicies() {
 
   } catch (error) {
     console.error('Error loading custom policies:', error);
-    showToast('Failed to load custom policies', 'error');
+    showToast(error.message || 'Failed to load custom policies', 'error');
   }
 }
 
@@ -18985,7 +19044,8 @@ function renderCustomPoliciesForStage(stage, policies) {
     <div class="custom-policy-card">
       <div class="custom-policy-toggle">
         <label class="switch">
-          <input type="checkbox" ${policy.enabled ? 'checked' : ''}
+          <input type="checkbox" ${policy.enabled ? 'checked' : ''} data-config-write
+                 ${canWriteConfig() ? '' : 'disabled title="Only workspace administrators can change configuration"'}
                  onchange="toggleCustomPolicy('${policy.policy_id}', this.checked)">
           <span class="slider"></span>
         </label>
@@ -19009,7 +19069,7 @@ function renderCustomPoliciesForStage(stage, policies) {
 
       <div class="custom-policy-actions">
         <button class="small" onclick="editCustomPolicy('${policy.policy_id}')">Edit</button>
-        <button class="small danger" onclick="deleteCustomPolicy('${policy.policy_id}', '${escapeHtml(policy.name)}')">Delete</button>
+        <button class="small danger" data-config-write ${canWriteConfig() ? '' : 'disabled title="Only workspace administrators can change configuration"'} onclick="deleteCustomPolicy('${policy.policy_id}', '${escapeHtml(policy.name)}')">Delete</button>
       </div>
     </div>
   `;
@@ -19264,10 +19324,10 @@ async function deleteCustomPolicy(policyId, policyName) {
   try {
     const response = await fetch(`${BASE_URL}/v1/tenant/me/policies/custom/${policyId}`, {
       method: 'DELETE',
-      headers: { 'X-API-Key': API_KEY }
+      headers: keyHeaders(), credentials: 'same-origin'
     });
 
-    if (!response.ok) throw new Error(`Failed to delete policy: ${response.status}`);
+    if (!response.ok) throw await responseError(response, 'Failed to delete policy');
 
     showToast('Policy deleted successfully', 'success');
     loadCustomPolicies();
@@ -19277,7 +19337,7 @@ async function deleteCustomPolicy(policyId, policyName) {
 
   } catch (error) {
     console.error('Error deleting policy:', error);
-    showToast('Failed to delete policy', 'error');
+    showToast(error.message || 'Failed to delete policy', 'error');
   }
 }
 
@@ -19289,10 +19349,10 @@ async function toggleCustomPolicy(policyId, enabled) {
 
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'X-API-Key': API_KEY }
+      headers: keyHeaders(), credentials: 'same-origin'
     });
 
-    if (!response.ok) throw new Error(`Failed to toggle policy: ${response.status}`);
+    if (!response.ok) throw await responseError(response, 'Failed to toggle policy');
 
     showToast(`Policy ${enabled ? 'enabled' : 'disabled'} successfully`, 'success');
     loadCustomPolicies();
@@ -19302,7 +19362,7 @@ async function toggleCustomPolicy(policyId, enabled) {
 
   } catch (error) {
     console.error('Error toggling policy:', error);
-    showToast('Failed to toggle policy', 'error');
+    showToast(error.message || 'Failed to toggle policy', 'error');
     // Revert the toggle
     const checkbox = document.querySelector(`input[onchange*="${policyId}"]`);
     if (checkbox) checkbox.checked = !enabled;
