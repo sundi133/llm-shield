@@ -806,6 +806,24 @@ def require_config_write(request, tenant_id: str = "",
                           env_name=CONFIG_WRITE_ENV, record=_record_config_warning)
 
 
+def scoped_write_allowed(request, tenant_id: str, mode: str) -> bool:
+    """Whether a write behind the gate would be let through, for a caller that
+    only needs to know (the portal deciding which controls to offer).
+
+    Runs the gate itself rather than a copy of its rules, so the answer cannot
+    drift from what the write route will do: signed-in admins and viewers, the
+    sandbox tenant, admin callers and key scopes all decide it the same way.
+    Warn mode allows and records nothing here, since nothing was attempted.
+    """
+    from fastapi import HTTPException
+    try:
+        _require_scoped_write(request, tenant_id, "write", mode=mode,
+                              env_name="", record=lambda *a, **k: None)
+    except HTTPException:
+        return False
+    return True
+
+
 def _record_config_warning(request, tenant_id: str, scope, action: str) -> None:
     """Warn mode's record for configuration writes (never raises)."""
     try:

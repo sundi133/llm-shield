@@ -1620,8 +1620,9 @@ async def get_my_key_scope(request: Request):
     "unscoped" for every Authorization: Bearer caller regardless of their
     actual scope.
     """
-    _require_tenant(request)
+    tenant_id = _require_tenant(request)
 
+    from core.auth import config_write_mode, registry_write_mode, scoped_write_allowed
     from storage.tenant_store import key_scope, key_scope_by_hash
 
     key_hash = getattr(request.state, "api_key_hash", "") or ""
@@ -1630,19 +1631,20 @@ async def get_my_key_scope(request: Request):
     else:
         scope = key_scope(request.headers.get("X-API-Key", "").strip())
 
-    # Read from the process, never from the request. Enforcement itself lands
-    # in a later change; reporting it now means the portal does not need a
-    # second round trip when it does.
-    import os
-    mode = (os.environ.get("SHIELD_REGISTRY_WRITE_SCOPE", "off") or "off").strip().lower()
-    if mode not in ("off", "warn", "enforce"):
-        mode = "off"
-
-    # Unscoped keys still write while enforcement is off or warning. Saying
-    # otherwise would have the portal hide controls that in fact work.
-    registry_write = mode != "enforce" or scope == "admin"
-
-    return {"scope": scope, "registry_write": registry_write, "enforcement": mode}
+    # Modes come from the process, never from the request. Each *_write is the
+    # write gate's own answer for this caller, so a signed-in administrator,
+    # a viewer and an unscoped key under enforce all get what the write route
+    # will actually do. Unscoped keys still write under off and warn; saying
+    # otherwise would have the portal disable controls that in fact work.
+    mode = registry_write_mode()
+    config_mode = config_write_mode()
+    return {
+        "scope": scope,
+        "registry_write": scoped_write_allowed(request, tenant_id, mode),
+        "enforcement": mode,
+        "config_write": scoped_write_allowed(request, tenant_id, config_mode),
+        "config_enforcement": config_mode,
+    }
 
 
 # ── Deployment posture ───────────────────────────────────────────────────
