@@ -1,6 +1,6 @@
 # Spec: policy scopes (global + per-team I/O policies selected by a request header)
 
-Status: **implemented**, tasks 1 to 5 on branch `feat/policy-scopes`. Task 0 (parent-tenant doc drift) and 0b (regex_pattern / length_limit settings bug) are separate and still open.
+Status: **implemented**, tasks 0 to 5 on branch `feat/policy-scopes`. Task 0b (guardrails ignoring tenant settings) is on its own branch, `fix/guardrail-per-request-settings`.
 Customer guide: `docs/team-policies.md` (`/team-policies/`).
 
 ## 1. Problem & outcome
@@ -46,7 +46,7 @@ the global rule blocks is blocked for every value, including no header at all.
 - ICAP / SWG traffic (browser requests do not carry the customer's header).
 - Per-scope metrics dashboards. v1 has the audit field and the discovered-values
   list.
-- Parent/child tenants. Those stay unbuilt; see task 0 for the doc drift.
+- Enforcing parent/child tenants. The parent routes exist (`/v1/admin/tenants/{id}/parent`, `/effective-policies`) but only record a hierarchy and report a merged view of data protection policies; nothing enforces them and they never covered I/O guardrails. Task 0 corrects the docs that said otherwise.
 
 ## 2. Plane & latency contract
 
@@ -326,7 +326,7 @@ existing tenants. The new response field is additive.
 | Huge config | Rejected on save by the limits in section 3. |
 | Global policy edited | Next cache reload produces a new config object; memo recomputes once per rule. |
 | Value with 2,000 distinct values already seen | Counted in `(overflow)`; matching is unaffected. |
-| Guardrail that reads its settings once at construction | **Pre-existing bug, found while writing this spec.** `regex_pattern` (`guardrails/input/regex_pattern.py:18`) and `length_limit` (`guardrails/input/length_limit.py:17`) copy `self.settings` in `__init__`, on the shared singleton, so per-request tenant settings (`patterns`, `max_chars`) are ignored today, for global tenant policies as well as scopes. Fixed separately (task 0b); until then, `preview` flags these guardrails as "settings not applied per tenant". |
+| Guardrail that reads its settings once at construction | **Pre-existing bug, found while writing this spec.** `regex_pattern` (`guardrails/input/regex_pattern.py:18`) and `length_limit` (`guardrails/input/length_limit.py:17`) copy `self.settings` in `__init__`, on the shared singleton, so per-request tenant settings (`patterns`, `max_chars`) are ignored today, for global tenant policies as well as scopes. Fixed separately (task 0b, branch `fix/guardrail-per-request-settings`), which found three more guardrails with the same bug: `sentiment`, `rate_limiter`, `system_prompt_leak`. |
 
 ## 8. Test plan (Definition of Done)
 
@@ -539,9 +539,13 @@ keywords need different actions.
 
 ## 9. Tasks (one PR each, in order)
 
-0. **Docs fix (independent, small).** `docs/enterprise-features.md` section 6,
-   `docs/faq.md:140` and `docs/guardrails.md:88` describe parent-tenant routes
-   that do not exist. Remove the claims or mark them as not available.
+0. **Docs fix (independent, small). Done.** `docs/enterprise-features.md`
+   section 6, `docs/faq.md`, `docs/guardrails.md` and `README.md` said parent
+   tenants enforce a baseline children "cannot weaken". The routes exist (an
+   earlier search for them was wrong), but nothing on the request path reads
+   the merge, and it covers data protection policies, not I/O guardrails.
+   The docs now call parent tenants reporting only and point to team policies
+   for an enforced baseline.
    - **0b. Bug fix (independent).** Make `regex_pattern` and `length_limit` read
      settings per request (section 7), with a test that two tenants with
      different `patterns` / `max_chars` get different results.

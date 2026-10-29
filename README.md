@@ -477,22 +477,28 @@ curl -X POST "http://localhost:8080/v1/shield/policies/staging/bundle/import?con
 # → {"summary": {"policies_imported": 12, "agents_imported": 5, "policies_skipped": 0}}
 ```
 
-#### Policy Inheritance — Org-Wide Baselines
+#### Team Policies: Org-Wide Baselines Teams Can't Weaken
+
+One tenant keeps a global input and output policy; each team adds to it,
+picked by a request header you choose. A team can only tighten the global
+policy, and it is enforced on every guarded request.
 
 ```bash
-# Set org-global as parent of team-alpha
-curl -X PUT http://localhost:8080/v1/admin/tenants/team-alpha/parent \
-  -H "X-Admin-Key: $ADMIN_KEY" \
-  -d '{"parent_tenant_id": "org-global"}'
+# Name the header that identifies a team
+curl -X PUT http://localhost:8080/v1/tenant/me/policy-scopes/settings \
+  -H "X-API-Key: $TENANT_KEY" -H "Content-Type: application/json" \
+  -d '{"enabled": true, "selectors": [{"header": "X-Org-Id"}]}'
 
-# team-alpha now inherits all org-global policies
-# They can ADD restrictions but CANNOT weaken them (block→allow is rejected)
-
-# See the merged effective policies
-curl http://localhost:8080/v1/admin/tenants/team-alpha/effective-policies \
-  -H "X-Admin-Key: $ADMIN_KEY"
-# → {"count": 8, "inherited_count": 5, "policies": [...]}
+# Every team matching eng-* also blocks "payroll", on top of the global policy
+curl -X PUT http://localhost:8080/v1/tenant/me/policy-scopes/rules/engineering \
+  -H "X-API-Key: $TENANT_KEY" -H "Content-Type: application/json" \
+  -d '{"match": {"glob": ["eng-*"]}, "input_guardrails": {"keyword_blocklist":
+       {"enabled": true, "action": "block", "settings": {"keywords": ["payroll"]}}}}'
 ```
+
+See [docs/team-policies.md](docs/team-policies.md). (Parent tenants,
+`/v1/admin/tenants/{id}/parent`, only record a hierarchy and report a merged
+view; they are not enforced.)
 
 #### Data Taint Tracking — Stop Sensitive Data Leaking Across Tools
 
@@ -707,7 +713,7 @@ All enterprise features are **opt-in** — disabled by default. Enable via confi
 | Webhook Notifications | Push events to Slack/PagerDuty/SIEM on blocks, tool disables, policy changes |
 | Policy Versioning | Auto-version every policy change, rollback to any version |
 | Policy Export/Import | Export all policies as JSON bundle, import via CI/CD (policy-as-code) |
-| Cross-Tenant Inheritance | Org-level baseline policies that child tenants cannot weaken |
+| Team Policies | One global I/O policy per tenant plus a policy per team, picked by a request header; teams can tighten it, never weaken it |
 
 See [docs/enterprise-features.md](docs/enterprise-features.md) for setup and usage.
 
