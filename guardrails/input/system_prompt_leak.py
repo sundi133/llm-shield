@@ -34,6 +34,30 @@ _DEFAULT_PATTERNS = [
 ]
 
 
+_DEFAULT_COMPILED = [re.compile(p) for p in _DEFAULT_PATTERNS]
+
+# extra_patterns compiled once per distinct list (see regex_pattern.py).
+_extra_cache: dict[tuple, list] = {}
+_CACHE_MAX = 512
+
+
+def _compiled_extra(extra) -> list:
+    key = tuple(p for p in (extra or []) if isinstance(p, str))
+    hit = _extra_cache.get(key)
+    if hit is not None:
+        return hit
+    out = []
+    for p in key:
+        try:
+            out.append(re.compile(p))
+        except re.error:
+            pass
+    if len(_extra_cache) >= _CACHE_MAX:
+        _extra_cache.clear()
+    _extra_cache[key] = out
+    return out
+
+
 class SystemPromptLeakGuardrail(BaseGuardrail):
     """Detect attempts to extract or leak the system prompt.
 
@@ -47,20 +71,13 @@ class SystemPromptLeakGuardrail(BaseGuardrail):
     tier = "fast"
     stage = "input"
 
-    def __init__(self):
-        extra = self.settings.get("extra_patterns", [])
-        all_patterns = _DEFAULT_PATTERNS + extra
-        self._compiled = []
-        for p in all_patterns:
-            try:
-                self._compiled.append(re.compile(p))
-            except re.error:
-                pass
-
     async def check(
         self, content: str, context: Optional[dict] = None
     ) -> GuardrailResult:
-        for pattern in self._compiled:
+        # extra_patterns is read per check, so a tenant's own patterns apply
+        # (they used to be fixed at startup).
+        compiled = _DEFAULT_COMPILED + _compiled_extra(self.setting("extra_patterns", []))
+        for pattern in compiled:
             match = pattern.search(content)
             if match:
                 return GuardrailResult(

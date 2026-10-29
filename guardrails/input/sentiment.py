@@ -17,9 +17,8 @@ class SentimentGuardrail(BaseGuardrail):
     stage = "input"
 
     def __init__(self):
-        settings = self.settings
-        self._min_polarity: float = settings.get("min_polarity", -0.8)
-        self._action: str = settings.get("action", "warn")
+        # Only whether textblob is installed is decided at startup. The
+        # thresholds are read per check, so a tenant's own values apply.
         self._available = True
 
         try:
@@ -47,14 +46,15 @@ class SentimentGuardrail(BaseGuardrail):
         polarity = blob.sentiment.polarity
         subjectivity = blob.sentiment.subjectivity
 
+        min_polarity = self.setting("min_polarity", -0.8)
         details = {
             "polarity": round(polarity, 4),
             "subjectivity": round(subjectivity, 4),
-            "min_polarity_threshold": self._min_polarity,
+            "min_polarity_threshold": min_polarity,
         }
 
-        if polarity < self._min_polarity:
-            action = self._action
+        if polarity < min_polarity:
+            action = self.setting("action", "warn")
             return GuardrailResult(
                 passed=action not in ("block",),
                 action=action,

@@ -11,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from core.rbac import enforcer
+from guardrails.base import _request_tenant
 from core.dlp.devices import DEVICE_PATHS
 from storage.tenant_store import DEVICE_KEY_PREFIX, resolve_tenant_by_api_key, get_tenant
 # Top level, not in dispatch: an image missing it fails at start, not per request.
@@ -410,6 +411,9 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                 request.state.role_name = None
 
             # Resolve tenant from API key with caching
+            # Cleared first so nothing from an earlier request on this context
+            # can ever be read as this request's tenant.
+            _request_tenant.set(None)
             request.state.tenant_id = None
             request.state.tenant_config = None
             request.state.policy_scope = None
@@ -430,6 +434,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                 if tenant_id and tenant_config:
                     request.state.tenant_id = tenant_id
                     request.state.tenant_config = tenant_config
+                    _request_tenant.set(tenant_id)
 
                     # A self-serve trial that ended, or that an operator
                     # suspended: its keys stop here. In memory, on the config

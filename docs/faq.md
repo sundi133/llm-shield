@@ -244,7 +244,7 @@ Yes — multi-tenancy is first-class, not bolted on. Every guardrail run, every 
 
 ### Are there per-tenant rate limits and quotas?
 
-Yes. The `rate_limiter` guardrail enforces a sliding window per client; admin-defined quotas cap total usage. Both are tracked in Redis.
+Yes. The `rate_limiter` guardrail enforces a sliding window per client within each tenant (`max_requests` per `window_seconds`). It never enforces less than 1,000 requests a minute: a lower setting is raised to that, scaled to the window. Admin-defined quotas cap total usage. Both are tracked in Redis.
 
 ---
 

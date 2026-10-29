@@ -31,7 +31,7 @@ LLM Shield ships **22 guardrails** organized into a two-tier parallel pipeline: 
 | `pii_detection` | LLM classifier for PII (phone, email, SSN, credit card, IP, names, addresses); fails open on a model error |
 | `language_detection` | Blocks non-allowed languages |
 | `sentiment` | Flags extremely negative input |
-| `rate_limiter` | Per-client sliding window rate limiting |
+| `rate_limiter` | Per-client sliding window rate limiting, per tenant; never lower than 1,000 requests a minute |
 
 ## Input — Slow Tier (LLM-based)
 

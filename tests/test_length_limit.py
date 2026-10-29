@@ -57,7 +57,8 @@ async def test_exceeds_token_limit():
         # If tiktoken is available, it will encode and count tokens
         # The text "one two three four five six seven" should exceed 5 tokens
         result = await guard.check("one two three four five six seven eight nine ten")
-        if guard._max_tokens is not None:
+        from guardrails.input.length_limit import _encoder
+        if _encoder("cl100k_base") is not None:
             # tiktoken was available
             assert not result.passed
             assert result.action == "block"
