@@ -1,44 +1,57 @@
 """Regex pattern matching guardrail."""
 
+import json
+import logging
 import re
 from typing import Optional
 
 from core.models import GuardrailResult
 from guardrails.base import BaseGuardrail
 
+logger = logging.getLogger(__name__)
+
+# Compiled pattern lists keyed by the exact settings that produced them, so a
+# tenant's patterns compile once, not per request. Bounded: a deployment with
+# more distinct pattern sets than this recompiles, it doesn't grow.
+_compiled_cache: dict[str, list[dict]] = {}
+_CACHE_MAX = 512
+
+
+def _compile(raw_patterns: list) -> list[dict]:
+    key = json.dumps(raw_patterns, sort_keys=True, default=str)
+    hit = _compiled_cache.get(key)
+    if hit is not None:
+        return hit
+    compiled_list: list[dict] = []
+    for entry in raw_patterns or []:
+        if not isinstance(entry, dict):
+            continue
+        pattern_str = entry.get("pattern", "")
+        try:
+            compiled_list.append({
+                "compiled": re.compile(pattern_str, re.IGNORECASE),
+                "pattern": pattern_str,
+                "description": entry.get("description", ""),
+                "action": entry.get("action", "block"),
+            })
+        except (re.error, TypeError):
+            logger.warning(f"Invalid regex pattern skipped: {pattern_str}")
+    if len(_compiled_cache) >= _CACHE_MAX:
+        _compiled_cache.clear()
+    _compiled_cache[key] = compiled_list
+    return compiled_list
+
 
 class RegexPatternGuardrail(BaseGuardrail):
-    """Matches input against a configurable list of regex patterns."""
+    """Matches input against a configurable list of regex patterns.
+
+    ``patterns`` is read on every check (see ``BaseGuardrail.setting``), so a
+    tenant's own patterns apply; it used to be fixed at startup.
+    """
 
     name = "regex_pattern"
     tier = "fast"
     stage = "input"
-
-    def __init__(self):
-        settings = self.settings
-        raw_patterns: list[dict] = settings.get("patterns", [])
-        self._patterns: list[dict] = []
-
-        for entry in raw_patterns:
-            pattern_str = entry.get("pattern", "")
-            description = entry.get("description", "")
-            action = entry.get("action", "block")
-            try:
-                compiled = re.compile(pattern_str, re.IGNORECASE)
-                self._patterns.append(
-                    {
-                        "compiled": compiled,
-                        "pattern": pattern_str,
-                        "description": description,
-                        "action": action,
-                    }
-                )
-            except re.error:
-                import logging
-
-                logging.getLogger(__name__).warning(
-                    f"Invalid regex pattern skipped: {pattern_str}"
-                )
 
     async def check(
         self, content: str, context: Optional[dict] = None
@@ -47,7 +60,7 @@ class RegexPatternGuardrail(BaseGuardrail):
         worst_action = "pass"
         action_priority = {"pass": 0, "log": 1, "warn": 2, "block": 3}
 
-        for entry in self._patterns:
+        for entry in _compile(self.setting("patterns", [])):
             match = entry["compiled"].search(content)
             if match:
                 matched_patterns.append(

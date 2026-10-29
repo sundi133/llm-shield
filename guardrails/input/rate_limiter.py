@@ -18,31 +18,35 @@ class RateLimiterGuardrail(BaseGuardrail):
     stage = "input"
 
     def __init__(self):
-        settings = self.settings
-        self._max_requests: int = settings.get("max_requests", 100)
-        self._window_seconds: int = settings.get("window_seconds", 60)
         self._store = _state_store
 
     async def check(
         self, content: str, context: Optional[dict] = None
     ) -> GuardrailResult:
         context = context or {}
+        # Read per check, so a tenant's own limits apply (they used to be fixed
+        # at startup).
+        max_requests = self.setting("max_requests", 100)
+        window_seconds = self.setting("window_seconds", 60)
         client_id = context.get("client_id") or context.get("agent_key") or "anonymous"
-        rate_key = f"rate_limit:{client_id}"
+        # Per tenant: two tenants' "anonymous" callers (or a shared agent name)
+        # must not spend one budget, now that each can set its own limit.
+        tenant_id = context.get("tenant_id")
+        rate_key = f"rate_limit:{tenant_id}:{client_id}" if tenant_id else f"rate_limit:{client_id}"
 
-        current_count = self._store.increment(rate_key, self._window_seconds)
+        current_count = self._store.increment(rate_key, window_seconds)
 
-        if current_count > self._max_requests:
+        if current_count > max_requests:
             return GuardrailResult(
                 passed=False,
                 action="block",
                 guardrail_name=self.name,
-                message=f"Rate limit exceeded for '{client_id}': {current_count}/{self._max_requests} requests in {self._window_seconds}s window.",
+                message=f"Rate limit exceeded for '{client_id}': {current_count}/{max_requests} requests in {window_seconds}s window.",
                 details={
                     "client_id": client_id,
                     "current_count": current_count,
-                    "max_requests": self._max_requests,
-                    "window_seconds": self._window_seconds,
+                    "max_requests": max_requests,
+                    "window_seconds": window_seconds,
                 },
             )
 
@@ -50,10 +54,10 @@ class RateLimiterGuardrail(BaseGuardrail):
             passed=True,
             action="pass",
             guardrail_name=self.name,
-            message=f"Rate OK ({current_count}/{self._max_requests}).",
+            message=f"Rate OK ({current_count}/{max_requests}).",
             details={
                 "client_id": client_id,
                 "current_count": current_count,
-                "max_requests": self._max_requests,
+                "max_requests": max_requests,
             },
         )
