@@ -12,6 +12,7 @@ the tenant left out still reads the server's value (``BaseGuardrail.setting``).
 """
 
 import ast
+import uuid
 import asyncio
 from pathlib import Path
 
@@ -300,8 +301,11 @@ def test_rate_budgets_are_per_tenant_through_guardrails_input(monkeypatch):
     mw._tenant_cache.clear()
     row = {"rate_limiter": {"enabled": True, "action": "block",
                             "settings": {"max_requests": 34, "window_seconds": W}}}
-    ts.create_tenant("rt-a", {"name": "A", "input_guardrails": row}, api_keys=["sk-rt-tenant-a-01"])
-    ts.create_tenant("rt-b", {"name": "B", "input_guardrails": row}, api_keys=["sk-rt-tenant-b-01"])
+    # Made up per run: literal key strings in tests read as leaked secrets to
+    # secret scanners.
+    key_a, key_b = "sk-rt-a-" + uuid.uuid4().hex, "sk-rt-b-" + uuid.uuid4().hex
+    ts.create_tenant("rt-a", {"name": "A", "input_guardrails": row}, api_keys=[key_a])
+    ts.create_tenant("rt-b", {"name": "B", "input_guardrails": row}, api_keys=[key_b])
 
     monkeypatch.setattr(cs, "config", cs.config)
     cfg = cs.config if cs.config is not None else cs.load_config()
@@ -317,9 +321,9 @@ def test_rate_budgets_are_per_tenant_through_guardrails_input(monkeypatch):
 
     try:
         # Tenant A spends its whole budget while claiming to be B.
-        assert {send("sk-rt-tenant-a-01", tenant_id="rt-b") for _ in range(34)} == {"pass"}
-        assert send("sk-rt-tenant-a-01") == "block"
-        assert send("sk-rt-tenant-b-01") == "pass"      # B's budget untouched
+        assert {send(key_a, tenant_id="rt-b") for _ in range(34)} == {"pass"}
+        assert send(key_a) == "block"
+        assert send(key_b) == "pass"      # B's budget untouched
     finally:
         ts._fallback_store.clear()
         ts._cache.clear()
