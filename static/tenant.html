@@ -267,6 +267,19 @@
   .hidden { display: none !important; }
   .muted { color: var(--text-muted); font-size: var(--type-meta); }
 
+  /* Team policies (policy scopes) */
+  .ps-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+  .ps-chips .ps-chip { border-radius: 999px; padding: 0.35rem 0.85rem; display: inline-flex; align-items: center; gap: 0.4rem; }
+  .ps-chips .ps-chip .ps-chip-hint { font-size: 11px; font-weight: 400; color: var(--text-muted); }
+  .ps-chips .ps-chip.primary .ps-chip-hint { color: rgba(255, 255, 255, 0.8); }
+  .ps-chips .ps-chip-sep { width: 1px; height: 20px; background: var(--border); margin: 0 0.2rem; }
+  .ps-chips .ps-chip-new { border-style: dashed; color: var(--accent); background: transparent; }
+  .ps-panel { margin-top: 1rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
+  .ps-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+  .ps-hint { font-size: 11.5px; color: var(--text-muted); margin-top: 0.35rem; line-height: 1.45; }
+  .ps-live-row { display: flex; align-items: flex-start; gap: 0.75rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+  .ps-live-row .switch { flex: none; margin: 0.1rem 0 0; }
+
   .wf-hero {
     position: relative;
     overflow: hidden;
@@ -3186,32 +3199,65 @@
       <div id="ps-bar" class="card hidden" style="margin-bottom:1rem;">
         <div class="card-header">
           <div>
-            <div class="card-title">Editing policy for</div>
+            <div class="card-title">Editing policy for <span id="ps-status" class="badge" style="margin-left:0.4rem;vertical-align:middle;"></span></div>
             <div class="card-subtitle" id="ps-bar-sub">A request header picks the team. A team policy can only add to the global policy, never weaken it.</div>
           </div>
           <div style="display:flex;gap:0.5rem;">
-            <button class="small" onclick="psToggleSettings()">Team settings</button>
+            <button class="small" id="ps-settings-btn" onclick="psToggleSettings()" style="white-space:nowrap;">Team settings</button>
           </div>
         </div>
-        <div id="ps-chips" style="display:flex;flex-wrap:wrap;gap:0.4rem;"></div>
+        <div id="ps-chips" class="ps-chips"></div>
+        <div id="ps-new" class="hidden ps-panel">
+          <div style="font-size:13px;font-weight:600;margin-bottom:0.75rem;">New team rule</div>
+          <div class="ps-grid">
+            <div>
+              <label for="ps-new-name">Team name</label>
+              <input type="text" id="ps-new-name" placeholder="Engineering" maxlength="64" oninput="psNewNameInput()"
+                     onkeydown="if(event.key==='Enter')psNewCreate();if(event.key==='Escape')psNewCancel();">
+              <div class="ps-hint">A label for you. <span id="ps-new-id"></span></div>
+            </div>
+            <div>
+              <label for="ps-new-values" id="ps-new-values-label">Header values for this team</label>
+              <input type="text" id="ps-new-values" placeholder="eng, engineering"
+                     oninput="this.dataset.touched='1';psNewCheck()"
+                     onkeydown="if(event.key==='Enter')psNewCreate();if(event.key==='Escape')psNewCancel();">
+              <div class="ps-hint">Requests carrying any of these values get this team's policy. Comma-separated; case is ignored. You can add patterns such as eng-* next.</div>
+            </div>
+          </div>
+          <div id="ps-new-noheader" class="hidden ps-hint" style="color:var(--warning, #f59e0b);margin-top:0.75rem;">
+            No team header is set yet, so no request will match this rule. Name your header in Team settings too.
+          </div>
+          <div id="ps-new-error" class="hidden" style="margin-top:0.75rem;font-size:12px;color:var(--danger);"></div>
+          <div style="margin-top:1rem;display:flex;justify-content:flex-end;gap:0.5rem;">
+            <button class="small" onclick="psNewCancel()">Cancel</button>
+            <button data-config-write class="primary small" id="ps-new-create" onclick="psNewCreate()" disabled>Create team rule</button>
+          </div>
+        </div>
         <div id="ps-warnings" class="hidden" style="margin-top:0.75rem;font-size:12px;color:var(--warning, #f59e0b);"></div>
-        <div id="ps-settings" class="hidden" style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--border);">
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0.75rem;font-size:12.5px;">
-            <label>Team headers, first one present wins
-              <input id="ps-headers" placeholder="X-Team-Id, X-Org-Id" style="width:100%;">
-              <span class="muted" style="font-size:11px;">To rename a header, put the new one first and keep the old one until it goes quiet in Discovered values.</span>
-            </label>
-            <label>When no team header is sent
-              <select id="ps-missing" style="width:100%;">
+        <div id="ps-settings" class="hidden ps-panel">
+          <div class="ps-grid">
+            <div>
+              <label for="ps-headers">Team header</label>
+              <input type="text" id="ps-headers" placeholder="X-Org-Id">
+              <div class="ps-hint">The header your callers send to say which team they are. List several, comma-separated, to accept the first one present (useful when renaming a header).</div>
+            </div>
+            <div>
+              <label for="ps-missing">When no team header is sent</label>
+              <select id="ps-missing">
                 <option value="global">Use the global policy</option>
                 <option value="reject">Refuse the request (403)</option>
               </select>
-            </label>
-            <label style="display:flex;align-items:center;gap:0.5rem;">
-              <input type="checkbox" id="ps-enabled"> Apply team policies to live traffic
-            </label>
+            </div>
           </div>
-          <div style="margin-top:0.75rem;display:flex;gap:0.5rem;">
+          <div class="ps-live-row">
+            <label class="switch"><input type="checkbox" id="ps-enabled"><span class="slider"></span></label>
+            <div>
+              <div style="font-size:13px;font-weight:500;">Apply team policies to live traffic</div>
+              <div class="ps-hint" style="margin-top:0.1rem;">While off, you can build and test team rules with Try it; live requests keep getting the global policy.</div>
+            </div>
+          </div>
+          <div style="margin-top:1rem;display:flex;justify-content:flex-end;gap:0.5rem;">
+            <button class="small" onclick="psToggleSettings()">Close</button>
             <button data-config-write class="primary small" onclick="psSaveSettings()">Save team settings</button>
           </div>
         </div>
@@ -3229,13 +3275,17 @@
               <button data-config-write class="small" id="ps-delete-rule" onclick="psDeleteRule()" style="color:var(--danger);">Delete team rule</button>
             </div>
           </div>
-          <div id="ps-match" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0.75rem;font-size:12.5px;">
-            <label>Exact values
-              <input id="ps-match-exact" placeholder="team-a, teama" oninput="psMatchChanged()" style="width:100%;">
-            </label>
-            <label>Patterns, for values you haven't seen yet
-              <input id="ps-match-glob" placeholder="eng-*" oninput="psMatchChanged()" style="width:100%;">
-            </label>
+          <div id="ps-match" class="ps-grid">
+            <div>
+              <label for="ps-match-exact">Header values for this team</label>
+              <input type="text" id="ps-match-exact" placeholder="team-a, teama" oninput="psMatchChanged()">
+              <div class="ps-hint">Comma-separated. Case and surrounding spaces are ignored.</div>
+            </div>
+            <div>
+              <label for="ps-match-glob">Patterns <span class="muted" style="font-weight:400;">(optional)</span></label>
+              <input type="text" id="ps-match-glob" placeholder="eng-*" oninput="psMatchChanged()">
+              <div class="ps-hint">Use * as a wildcard to catch values you haven't seen yet, such as eng-*.</div>
+            </div>
           </div>
         </div>
         <div class="card">
@@ -3291,7 +3341,7 @@
         </div>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
           <select id="ps-try-header" style="width:auto;min-width:140px;"></select>
-          <input id="ps-try-value" placeholder="TeamA" style="flex:1;min-width:160px;" onkeydown="if(event.key==='Enter')psTry()">
+          <input type="text" id="ps-try-value" placeholder="TeamA" style="flex:1;min-width:160px;" onkeydown="if(event.key==='Enter')psTry()">
           <button class="small" onclick="psTry()">Test</button>
         </div>
         <div id="ps-try-result" style="margin-top:0.75rem;font-size:12.5px;"></div>
@@ -8839,31 +8889,54 @@ function psRule(id) {
 function psRenderChips() {
   const s = PS.policy_scopes;
   const chip = (id, label, extra) => `
-    <button class="small ${PS_VIEW === id ? 'primary' : ''}" data-ps-view="${psEsc(id)}"
-            onclick="psSelect(this.dataset.psView)">${label}${extra ? ` <span class="muted" style="font-size:10.5px;">${extra}</span>` : ''}</button>`;
+    <button class="small ps-chip ${PS_VIEW === id ? 'primary' : ''}" data-ps-view="${psEsc(id)}"
+            onclick="psSelect(this.dataset.psView)">${label}${extra || ''}</button>`;
+  const hint = text => text ? `<span class="ps-chip-hint">${text}</span>` : '';
   const rules = (s.rules || []).map(r => {
     const m = r.match || {};
-    const hint = [...(m.exact || []), ...(m.glob || [])].slice(0, 3).join(', ');
-    return chip(r.id, psEsc(r.id), psEsc(hint));
+    const values = [...(m.exact || []), ...(m.glob || [])];
+    // The rule name usually is its one value; repeating it adds nothing.
+    const shown = values.length === 1 && values[0] === r.id ? '' : values.slice(0, 3).join(', ') + (values.length > 3 ? ', …' : '');
+    return chip(r.id, psEsc(r.id), hint(psEsc(shown)));
   });
   if (PS_NEW_RULE && PS_VIEW !== 'global' && !psRule(PS_VIEW) && PS_VIEW !== 'unmatched') {
-    rules.push(chip(PS_VIEW, psEsc(PS_VIEW), 'unsaved'));
+    rules.push(chip(PS_VIEW, psEsc(PS_VIEW), ' <span class="badge badge-warn" style="padding:0.05rem 0.4rem;font-size:10px;">Unsaved</span>'));
   }
   document.getElementById('ps-chips').innerHTML = [
-    chip('global', 'Global (everyone)'),
+    chip('global', 'Global', hint('everyone')),
+    '<span class="ps-chip-sep"></span>',
     ...rules,
-    chip('unmatched', 'Unmatched values', s.unmatched ? '' : 'global only'),
-    `<button data-config-write class="small" onclick="psNewRule()"${psW()}>+ Team rule</button>`,
+    chip('unmatched', 'Other values', hint(s.unmatched ? 'custom' : 'same as global')),
+    `<button data-config-write class="small ps-chip ps-chip-new" onclick="psNewRule()"${psW()}>+ New team rule</button>`,
   ].join('');
   const sub = document.getElementById('ps-bar-sub');
+  const status = document.getElementById('ps-status');
   const headers = (s.selectors || []).map(x => x.header);
-  sub.textContent = headers.length
-    ? `Team header: ${headers.join(', then ')}. ${s.enabled ? 'Live.' : 'Not applied to live traffic yet; turn it on in Team settings.'}`
-    : 'Name the request header that identifies a team to get started.';
+  if (!headers.length) {
+    status.className = 'badge badge-basic';
+    status.textContent = 'Not set up';
+    sub.textContent = 'Step 1: name the header your callers send to identify their team, then save. Team rules come next.';
+  } else if (!s.enabled || PS.kill_switch) {
+    status.className = 'badge badge-warn';
+    status.textContent = 'Not live';
+    sub.textContent = `Teams are picked by the ${headers.join(' or ')} header. Live requests still get the global policy until you turn on "Apply team policies to live traffic" in Team settings.`;
+  } else {
+    status.className = 'badge badge-success';
+    status.textContent = 'Live';
+    sub.textContent = `Teams are picked by the ${headers.join(' or ')} header. A team policy can only add to the global policy, never weaken it.`;
+  }
+  psSyncSettingsButton();
 }
 
 function psToggleSettings() {
   document.getElementById('ps-settings').classList.toggle('hidden');
+  psNewCancel();
+  psSyncSettingsButton();
+}
+
+function psSyncSettingsButton() {
+  const open = !document.getElementById('ps-settings').classList.contains('hidden');
+  document.getElementById('ps-settings-btn').textContent = open ? 'Hide team settings' : 'Team settings';
 }
 
 async function psSaveSettings() {
@@ -8882,6 +8955,11 @@ async function psSaveSettings() {
     })).policy_scopes;
     psShow('Team settings saved. Live traffic picks them up within a minute.', true);
     await loadPolicyScopes();
+    // Once a header is named, the panel has done its job; the status badge says the rest.
+    if ((PS.policy_scopes.selectors || []).length) {
+      document.getElementById('ps-settings').classList.add('hidden');
+      psSyncSettingsButton();
+    }
   } catch (e) { psShowError(e); }
 }
 
@@ -8913,20 +8991,72 @@ function psSelect(view, force) {
   if (team) psRenderTeam();
 }
 
+function psSlug(text) {
+  return (text || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+}
+
+// Opens the inline "New team rule" form; value comes from Discovered values.
 function psNewRule(value) {
-  const suggested = (value || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
-  const id = (prompt('Name this team rule (lowercase letters, digits, - and _):', suggested) || '').trim().toLowerCase();
-  if (!id) return;
-  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) || id === 'global' || id === 'unmatched') {
-    return alert('Use lowercase letters, digits, - and _, starting with a letter or digit.');
-  }
-  if (psRule(id)) return psSelect(id);
+  const form = document.getElementById('ps-new');
+  document.getElementById('ps-settings').classList.add('hidden');
+  psSyncSettingsButton();
+  form.classList.remove('hidden');
+  const name = document.getElementById('ps-new-name');
+  const values = document.getElementById('ps-new-values');
+  name.value = value ? psSlug(value) : '';
+  values.value = value || '';
+  values.dataset.touched = value ? '1' : '';
+  const headers = ((PS && PS.policy_scopes.selectors) || []).map(x => x.header);
+  document.getElementById('ps-new-values-label').textContent =
+    headers.length ? `${headers.join(' or ')} values for this team` : 'Header values for this team';
+  document.getElementById('ps-new-noheader').classList.toggle('hidden', headers.length > 0);
+  psNewCheck();
+  form.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  name.focus();
+}
+
+function psNewCancel() {
+  document.getElementById('ps-new').classList.add('hidden');
+}
+
+// Values follow the name until the user edits them, so "eng" needs typing once.
+function psNewNameInput() {
+  const values = document.getElementById('ps-new-values');
+  if (!values.dataset.touched) values.value = psSlug(document.getElementById('ps-new-name').value);
+  psNewCheck();
+}
+
+function psNewCheck() {
+  const raw = document.getElementById('ps-new-name').value.trim();
+  const id = psSlug(raw);
+  const err = document.getElementById('ps-new-error');
+  const values = document.getElementById('ps-new-values').value.split(',').map(x => x.trim()).filter(Boolean);
+  let msg = '';
+  if (raw && !id) msg = 'Use letters or digits in the name.';
+  else if (id === 'global' || id === 'unmatched') msg = `"${id}" is reserved. Pick another name.`;
+  else if (id && psRule(id)) msg = `A team rule named "${id}" already exists. Pick it above to edit it.`;
+  // Same characters core/policy_scopes.py accepts in a header value (_VALUE_RE).
+  const bad = values.find(v => !/^[a-z0-9._:@\/-]{1,64}$/.test(v.toLowerCase()));
+  if (!msg && bad) msg = `"${bad}" can't be a header value: use letters, digits and . _ : @ / - (no spaces).`;
+  err.textContent = msg;
+  err.classList.toggle('hidden', !msg);
+  const idHint = document.getElementById('ps-new-id');
+  idHint.textContent = id && id !== raw ? `Saved as "${id}".` : '';
+  document.getElementById('ps-new-create').disabled = !id || !!msg || !values.length;
+  return msg ? null : { id, values };
+}
+
+function psNewCreate() {
+  const ok = psNewCheck();
+  if (!ok || !ok.id) return;
   if (PS_DIRTY && !confirm('Discard unsaved changes to this team policy?')) return;
   if (POLICIES_DIRTY && PS_VIEW === 'global' && !confirm('Discard unsaved changes to the global policy?')) return;
-  PS_DRAFT = { match: { exact: value ? [value] : [id], glob: [] }, input_guardrails: {}, output_guardrails: {} };
+  psNewCancel();
+  PS_DRAFT = { match: { exact: ok.values, glob: [] }, input_guardrails: {}, output_guardrails: {} };
   PS_NEW_RULE = true;
-  psSelect(id, true);
+  psSelect(ok.id, true);
   psMarkDirty();
+  psShow(`Team "${psEsc(ok.id)}" created as a draft. Make its guardrails stricter below, then Save Changes.`, true);
 }
 
 function psLocal(key) {
@@ -8949,13 +9079,14 @@ function psMatchChanged() {
 
 function psRenderTeam() {
   const unmatched = PS_VIEW === 'unmatched';
-  document.getElementById('ps-team-title').textContent = unmatched ? 'Unmatched values' : `Team rule: ${PS_VIEW}`;
+  const header = ((PS && PS.policy_scopes.selectors) || []).map(x => x.header).join(' or ') || 'team';
+  document.getElementById('ps-team-title').textContent = unmatched ? 'Other values' : `Team rule: ${PS_VIEW}`;
   document.getElementById('ps-team-sub').textContent = unmatched
-    ? 'Applies to any header value no team rule matches, including values you have never seen. Requests with no header get the global policy.'
-    : 'Requests whose team header matches below get the global policy plus these additions.';
+    ? `Applies to any ${header} value no team rule matches, including values you have never seen. Requests with no header get the global policy.`
+    : `Requests whose ${header} header matches below get the global policy plus the additions you make further down.`;
   document.getElementById('ps-match').classList.toggle('hidden', unmatched);
   document.getElementById('ps-delete-rule').classList.toggle('hidden', PS_NEW_RULE);
-  document.getElementById('ps-delete-rule').textContent = unmatched ? 'Clear unmatched policy' : 'Delete team rule';
+  document.getElementById('ps-delete-rule').textContent = unmatched ? 'Clear policy for other values' : 'Delete team rule';
   if (!unmatched && document.activeElement?.id !== 'ps-match-exact' && document.activeElement?.id !== 'ps-match-glob') {
     document.getElementById('ps-match-exact').value = (PS_DRAFT.match.exact || []).join(', ');
     document.getElementById('ps-match-glob').value = (PS_DRAFT.match.glob || []).join(', ');
@@ -9047,7 +9178,7 @@ function psLists(stage, name, g, l) {
           <a href="#" data-stage="${stage}" data-name="${psEsc(name)}" data-key="${k}" data-item="${psEsc(x)}"
              onclick="event.preventDefault();psListRemove(this.dataset.stage,this.dataset.name,this.dataset.key,this.dataset.item)"
              style="margin-left:0.25rem;">×</a></span>`).join(' ')}
-        <input placeholder="Add for this team" data-stage="${stage}" data-name="${psEsc(name)}" data-key="${k}" style="font-size:11px;width:150px;"
+        <input type="text" placeholder="Add for this team, Enter" data-stage="${stage}" data-name="${psEsc(name)}" data-key="${k}" style="font-size:11.5px;width:180px;padding:0.25rem 0.5rem;"
                onkeydown="if(event.key==='Enter'){psListAdd(this.dataset.stage,this.dataset.name,this.dataset.key,this.value);}"${psW()}>
       </div>`);
   });
@@ -9188,7 +9319,7 @@ async function psSaveTeam() {
 
 async function psDeleteRule() {
   if (PS_VIEW === 'unmatched') {
-    if (!confirm('Clear the unmatched policy? Unmatched values will get the global policy only.')) return;
+    if (!confirm('Clear the policy for other values? They will get the global policy only.')) return;
     PS_DRAFT.input_guardrails = {};
     PS_DRAFT.output_guardrails = {};
     return psSaveTeam();
@@ -9217,7 +9348,7 @@ async function psLoadDiscovered() {
         <thead><tr class="muted" style="text-align:left;"><th>Value</th><th>Header</th><th>Requests</th><th>Last seen</th><th>Policy now</th><th></th></tr></thead>
         <tbody>${data.values.map(r => {
           const reserved = r.value.startsWith('(');
-          const policy = r.matched_rule === null ? '' : r.matched_rule === 'global' ? 'Global' : r.matched_rule === 'unmatched' ? 'Unmatched' : psEsc(r.matched_rule);
+          const policy = r.matched_rule === null ? '' : r.matched_rule === 'global' ? 'Global' : r.matched_rule === 'unmatched' ? 'Other values' : psEsc(r.matched_rule);
           const action = reserved || (r.matched_rule !== 'global' && r.matched_rule !== 'unmatched') ? ''
             : `<button data-config-write class="small" data-value="${psEsc(r.value)}" onclick="psNewRule(this.dataset.value)" style="font-size:10px;"${psW()}>Create rule</button>`;
           return `<tr style="border-top:1px solid var(--border);">
@@ -9268,8 +9399,8 @@ async function psLoadKeys() {
     const allowed = bindings[k.prefix] || [];
     return `<tr style="border-top:1px solid var(--border);">
       <td style="padding-right:0.75rem;">${label}</td><td>${keyText}</td>
-      <td style="padding:0.35rem 0;"><input id="ps-bind-${i}" value="${psEsc(allowed.join(', '))}"
-          placeholder="${allowed.length ? '' : 'any team' + (hint ? ` (e.g. ${psEsc(hint)})` : '')}" style="width:100%;font-size:11.5px;"${psW()}></td>
+      <td style="padding:0.35rem 0;"><input type="text" id="ps-bind-${i}" value="${psEsc(allowed.join(', '))}"
+          placeholder="${allowed.length ? '' : 'any team' + (hint ? ` (e.g. ${psEsc(hint)})` : '')}" style="font-size:12px;padding:0.35rem 0.6rem;"${psW()}></td>
       <td style="white-space:nowrap;padding-left:0.5rem;">
         <button data-config-write class="small" data-prefix="${psEsc(k.prefix)}" data-input="ps-bind-${i}"
                 onclick="psSaveBinding(this.dataset.prefix, this.dataset.input)" style="font-size:10px;"${psW()}>${allowed.length ? 'Save' : 'Lock'}</button>
@@ -9330,7 +9461,7 @@ async function psTry() {
       el.innerHTML = `<span class="badge" style="background:rgba(239,68,68,0.15);color:var(--danger);">Refused (403)</span> ${r.outcome === 'reject_missing' ? 'This tenant requires a team header.' : 'This key may not use that team.'}`;
       return;
     }
-    const label = r.rule === 'global' ? 'the global policy' : r.rule === 'unmatched' ? 'the unmatched policy' : `team rule ${psEsc(r.rule)}`;
+    const label = r.rule === 'global' ? 'the global policy' : r.rule === 'unmatched' ? 'the policy for other values' : `team rule ${psEsc(r.rule)}`;
     const rows = ['input', 'output'].map(stage => {
       const eff = r.effective[stage + '_guardrails'] || {};
       const names = Object.keys(eff).filter(n => eff[n].enabled !== false && n !== 'tool_allowlist');

@@ -129,3 +129,16 @@ def test_team_keys_card():
     assert "expected_version" in save
     assert "method: 'DELETE'" in _fn("psRemoveBinding", SCRIPT)
     assert "psLoadKeys()" in _fn("loadPolicyScopes", SCRIPT)
+
+
+def test_new_team_rule_is_an_inline_form():
+    # A browser prompt() can't show the header values or explain an error.
+    assert not re.search(r"\bprompt\(", SCRIPT)
+    for el in ('id="ps-new"', 'id="ps-new-name"', 'id="ps-new-values"', 'id="ps-new-create"'):
+        assert el in PANE, el
+    create = _fn("psNewCreate", SCRIPT)
+    assert "PS_NEW_RULE = true" in create and "ok.values" in create
+    check = _fn("psNewCheck", SCRIPT)
+    assert "'global'" in check and "'unmatched'" in check and "psRule(id)" in check
+    # Discovered values still opens it prefilled.
+    assert "onclick=\"psNewRule(this.dataset.value)\"" in SCRIPT
