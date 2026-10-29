@@ -11,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from core.rbac import enforcer
+from guardrails.base import _request_tenant
 from core.dlp.devices import DEVICE_PATHS
 from storage.tenant_store import DEVICE_KEY_PREFIX, resolve_tenant_by_api_key, get_tenant
 # Top level, not in dispatch: an image missing it fails at start, not per request.
@@ -18,7 +19,6 @@ from core.signup.trial import refusal as _trial_refusal
 from storage.rate_limiter import check_and_increment
 from storage.tenant_models import effective_quota
 from core.feature_flags import CERT_IDENTITY_ENABLED
-from guardrails.base import _request_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -394,11 +394,11 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                 request.state.role_name = None
 
             # Resolve tenant from API key with caching
-            request.state.tenant_id = None
-            request.state.tenant_config = None
             # Cleared first so nothing from an earlier request on this context
             # can ever be read as this request's tenant.
             _request_tenant.set(None)
+            request.state.tenant_id = None
+            request.state.tenant_config = None
             store_degraded = False
             api_key = _extract_api_key(request)
             if api_key:
