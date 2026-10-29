@@ -12,6 +12,7 @@ from core.models import GuardrailResult, PipelineResult
 from core.pipeline import run_pipeline
 from core.run_context import resolve_run_id
 from core.policy_mode import resolve_mode, apply_to_response as apply_policy_mode
+from core.policy_scopes import request_scope
 from core.tenant_pipeline import REPLACE, run_tenant_pipeline
 from guardrails.base import _request_configs
 from guardrails.registry import get_by_stage, get_guardrail
@@ -356,6 +357,11 @@ async def classify(request: Request, body: dict):
     blocked = root_action == "block"
     guardrail_results = result.get("guardrail_results", [])
     triggered = [gr["guardrail"] for gr in guardrail_results if not gr.get("passed")]
+    # Which team policy ran (docs/specs/policy-scopes.md). Absent for tenants
+    # without policy scopes, so their responses are unchanged.
+    _policy_scope = request_scope(request)
+    if _policy_scope is not None:
+        result["policy_scope"] = _policy_scope
 
     await audit_logger.log({
         "agent_key": agent_key,
@@ -390,6 +396,7 @@ async def classify(request: Request, body: dict):
             "input_guardrails": [{"guardrail": gr["guardrail"], "passed": gr["passed"], "action": gr["action"], "message": gr.get("message", "")} for gr in guardrail_results],
             "output_guardrails": [],
             "usage": {},
+            "policy_scope": _policy_scope,
         },
     })
 
@@ -668,6 +675,9 @@ async def screen_file(
     blocked = root_action == "block"
     guardrail_results = result.get("guardrail_results", [])
     triggered = [gr["guardrail"] for gr in guardrail_results if not gr.get("passed")]
+    _policy_scope = request_scope(request)
+    if _policy_scope is not None:
+        result["policy_scope"] = _policy_scope
 
     await audit_logger.log({
         "agent_key": agent_key,
@@ -702,6 +712,7 @@ async def screen_file(
             "input_guardrails": [{"guardrail": gr["guardrail"], "passed": gr["passed"], "action": gr["action"], "message": gr.get("message", "")} for gr in guardrail_results],
             "output_guardrails": [],
             "usage": {},
+            "policy_scope": _policy_scope,
         },
     })
 

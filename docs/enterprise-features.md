@@ -19,7 +19,7 @@ Votal Shield includes enterprise-grade controls for SOC2/ISO compliance, inciden
 4. [Webhook Notifications](#3-webhook-notifications)
 5. [Policy Versioning & Rollback](#4-policy-versioning--rollback)
 6. [Policy Export/Import (Policy-as-Code)](#5-policy-exportimport)
-7. [Cross-Tenant Policy Inheritance](#6-cross-tenant-policy-inheritance)
+7. [Parent tenants (reporting only)](#6-parent-tenants-reporting-only)
 8. [Data Taint Tracking](#7-data-taint-tracking)
 9. [Goal Drift Detection](#8-goal-drift-detection)
 10. [Certificate-Based Agent Identity](#9-certificate-based-agent-identity)
@@ -282,30 +282,37 @@ curl -X POST "http://localhost:8080/v1/shield/policies/staging/bundle/import?con
 
 ---
 
-## 6. Cross-Tenant Policy Inheritance
+## 6. Parent tenants (reporting only)
 
-**Problem**: Your org has 50 teams. Each team has its own tenant. You need a global baseline (e.g., "always block SSN") that teams cannot weaken.
+**Need a global baseline that teams can't weaken?** Use
+[team policies]({{ "/team-policies/" | relative_url }}): one tenant, one
+global input and output policy, and a policy per team picked by a request
+header. That is enforced on every guarded request.
 
-### Set parent tenant
+Parent tenants are a different, older feature, and they are **not enforced**.
+You can record that one tenant belongs under another and see a merged view of
+their data protection policies, but every request is still checked against
+the tenant's **own** policies only. Parent tenants also don't cover input and
+output guardrails at all.
+
+### Record a parent tenant
 ```bash
 curl -X PUT http://localhost:8080/v1/admin/tenants/team-alpha/parent \
   -H "X-Admin-Key: $ADMIN_KEY" \
   -d '{"parent_tenant_id": "org-global"}'
 ```
+Circular and self references are refused.
 
-### How inheritance works
-- Child inherits all parent policies automatically
-- Child can **add** restrictions (redact → block) but **cannot weaken** them (block → allow)
-- If a child tries to weaken, the parent policy is enforced and the override is rejected
-- Circular dependencies are prevented
-
-### View effective policies (merged parent + child)
+### See the merged view
 ```bash
 curl http://localhost:8080/v1/admin/tenants/team-alpha/effective-policies \
   -H "X-Admin-Key: $ADMIN_KEY"
 ```
+This merges the data protection policies (`/v1/shield/policies/...`) of the
+tenant and its ancestors and shows where a child would weaken a parent. It is
+a report: nothing on the request path reads it.
 
-### Remove parent
+### Remove the parent
 ```bash
 curl -X DELETE http://localhost:8080/v1/admin/tenants/team-alpha/parent \
   -H "X-Admin-Key: $ADMIN_KEY"
@@ -773,8 +780,9 @@ curl "http://localhost:8080/v1/shield/agent/identity/payment-bot?tenant_id=acme"
 | `/v1/shield/policies/{tid}/{pid}/rollback` | POST | Rollback to version |
 | `/v1/shield/policies/{tid}/bundle/export` | GET | Export policy bundle |
 | `/v1/shield/policies/{tid}/bundle/import` | POST | Import policy bundle |
-| `/v1/admin/tenants/{tid}/parent` | PUT/GET/DELETE | Tenant hierarchy |
-| `/v1/admin/tenants/{tid}/effective-policies` | GET | Merged inherited policies |
+| `/v1/admin/tenants/{tid}/parent` | PUT/GET/DELETE | Record a parent tenant (reporting only, not enforced) |
+| `/v1/admin/tenants/{tid}/effective-policies` | GET | Merged view of parent and child data protection policies (a report) |
+| `/v1/tenant/me/policy-scopes/*` | GET/PUT/DELETE/POST | Team policies: global plus per-team I/O guardrails, enforced ([guide]({{ "/team-policies/" | relative_url }})) |
 
 ### Advanced Agentic
 | Endpoint | Method | Description |

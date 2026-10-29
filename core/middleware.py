@@ -18,6 +18,7 @@ from core.signup.trial import refusal as _trial_refusal
 from storage.rate_limiter import check_and_increment
 from storage.tenant_models import effective_quota
 from core.feature_flags import CERT_IDENTITY_ENABLED
+from core import policy_scopes
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +289,22 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                       # routes above, so it needs the same tenant enrichment.
                       "/beta/litellm_basic_guardrail_api"}
 
+    # Routes where a policy scope swaps in a team's merged view of the tenant
+    # config (docs/specs/policy-scopes.md). Narrower than everything guarded on
+    # purpose: only routes that RUN the input/output pipelines get the merged
+    # view. Config, tool and portal routes keep the tenant's own config, so a
+    # team's view can never reach a save, and tools/call / cap/mint are
+    # untouched. The LiteLLM adapter calls the /guardrails/input handler with
+    # this same request, so it is covered by being listed here.
+    _POLICY_SCOPE_PATHS = frozenset({
+        "/guardrails/input", "/guardrails/output", "/guardrails/file",
+        "/classify", "/classify_output",
+        "/v1/chat/completions",              # OpenAI-compatible proxy
+        "/v1/shield/chat/completions",       # gateway proxy
+        "/v1/shield/chat/agent",             # agent chat
+        "/beta/litellm_basic_guardrail_api",
+    })
+
     # Paths that must carry a resolvable tenant key when
     # SHIELD_GUARD_REQUIRE_KEY is enforcing.
     #
@@ -395,6 +412,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
             # Resolve tenant from API key with caching
             request.state.tenant_id = None
             request.state.tenant_config = None
+            request.state.policy_scope = None
             store_degraded = False
             api_key = _extract_api_key(request)
             if api_key:
@@ -488,6 +506,15 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                         else:
                             request.state.shadow_agent = False
 
+                    # Policy scopes: the team's view of the policy, picked
+                    # from a request header. Before the quota, so a refused
+                    # request does not spend it; after the agent checks, so a
+                    # refused caller is still recorded.
+                    if path in self._POLICY_SCOPE_PATHS:
+                        _scope_stop = _apply_policy_scope(request, tenant_id, tenant_config, api_key)
+                        if _scope_stop is not None:
+                            return _scope_stop
+
                     # Per-tenant rate limiting based on quota
                     quota = effective_quota(tenant_config.get("quota"))
                     max_per_min = quota["max_requests_per_minute"]
@@ -522,7 +549,56 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                     if refusal is not None:
                         return refusal
 
-        return await call_next(request)
+        response = await call_next(request)
+        _scope = getattr(request.state, "policy_scope", None)
+        if _scope is not None:
+            # On every scoped route, including the chat proxies whose bodies
+            # are the model's and can't carry a field of ours.
+            response.headers["X-Shield-Policy-Scope"] = _scope.rule
+        return response
+
+
+def _apply_policy_scope(request: Request, tenant_id: str, tenant_config: dict,
+                        api_key: Optional[str]) -> Optional[JSONResponse]:
+    """Swap ``request.state.tenant_config`` for the team's merged view.
+
+    Costs one dict lookup for a tenant without policy scopes. With scopes, the
+    selection and merge are memoized per cached config object, so a known
+    header value is a couple more lookups (spec section 2). Selection errors
+    resolve to the global policy inside ``resolve``; this never raises.
+
+    Returns a 403 when the tenant requires the header and it is missing, or
+    when a key bound to some teams claims another. The body names the header
+    or the normalized value, never a rule's policy.
+    """
+    from storage.tenant_store import _KEY_PREFIX_LEN
+    resolution = policy_scopes.resolve(
+        tenant_config, request.headers.getlist,
+        key_prefix=api_key[:_KEY_PREFIX_LEN] if api_key else None)
+    decision = resolution.decision
+    if decision is None:
+        return None
+    if not decision.degraded:
+        # Discovery: every value seen, refused ones included, so an admin can
+        # write rules for values they didn't know in advance. In-process; a
+        # background thread flushes it.
+        from storage.policy_scopes_store import record_seen
+        record_seen(tenant_id, decision.value, decision.header)
+    if decision.outcome == policy_scopes.REJECT_MISSING:
+        headers = policy_scopes.selector_headers(tenant_config)
+        return JSONResponse(status_code=403, content={
+            "error": "policy_scope_required",
+            "detail": "This tenant requires a team header on guarded requests: "
+                      + ", ".join(headers) + ".",
+            "headers": headers})
+    if decision.outcome == policy_scopes.REJECT_BINDING:
+        return JSONResponse(status_code=403, content={
+            "error": "policy_scope_not_allowed",
+            "detail": f"This API key may not use policy scope '{decision.value}'.",
+            "value": decision.value})
+    request.state.tenant_config = resolution.config
+    request.state.policy_scope = decision
+    return None
 
 
 GUARD_KEY_OFF, GUARD_KEY_WARN, GUARD_KEY_ENFORCE = "off", "warn", "enforce"

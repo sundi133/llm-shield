@@ -41,6 +41,8 @@ from api.routes_memory import router as memory_router
 from api.routes_agent import router as agent_router
 from api.routes_tenant import router as tenant_router, global_router as tenant_audit_router
 from api.routes_tenant_self import router as tenant_self_router
+from api.routes_policy_scopes import (
+    tenant_router as policy_scopes_router, admin_router as admin_policy_scopes_router)
 from api.routes_agentic_control_plane import router as tenant_agentic_router
 from api.routes_flow_control import router as flow_control_router
 from api.routes_runtime_policy import router as runtime_profiles_router, edge_router as runtime_bundle_router
@@ -142,6 +144,8 @@ def create_app() -> FastAPI:
     app.include_router(tenant_router)
     app.include_router(tenant_audit_router)
     app.include_router(tenant_self_router)
+    app.include_router(policy_scopes_router)        # /v1/tenant/me/policy-scopes
+    app.include_router(admin_policy_scopes_router)  # /v1/admin/tenants/{id}/policy-scopes
     app.include_router(tenant_agentic_router)
     app.include_router(flow_control_router)
     app.include_router(runtime_profiles_router)

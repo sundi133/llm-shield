@@ -85,7 +85,7 @@ All enterprise features are **opt-in** — disabled by default. Enable via confi
 | **Webhook Notifications** | Push events to Slack/PagerDuty/SIEM on blocks, tool disables, policy changes |
 | **Policy Versioning** | Auto-version every policy change, rollback to any version |
 | **Policy Export/Import** | Export all policies as JSON bundle, import via CI/CD (policy-as-code) |
-| **Cross-Tenant Inheritance** | Org-level baseline policies that child tenants cannot weaken |
+| **Team Policies** | One global I/O policy per tenant plus a policy per team, picked by a request header; teams can tighten it, never weaken it ([guide]({{ "/team-policies/" | relative_url }})) |
 
 See [Enterprise Features]({{ "/enterprise-features/" | relative_url }}) for setup and usage.
 
