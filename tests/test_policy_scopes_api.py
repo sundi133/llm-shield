@@ -422,3 +422,17 @@ def test_admin_plane_mounts_the_routes():
     routes = _mounted(admin_app.app)
     assert routes, "flat_routes found nothing; the check would be vacuous"
     assert EXPECTED <= routes
+
+
+def test_tenant_create_does_not_store_delegable_null(client, env):
+    """POST /v1/admin/tenants dumps without exclude_none; an unset delegable
+    must still not appear in the stored config."""
+    r = client.post("/v1/admin/tenants", headers=ADMIN, json={
+        "tenant_id": "shape", "api_keys": ["sk-ps-shape-0001"],
+        "input_guardrails": {"keyword_blocklist": kw(["ssn"]),
+                             "toxicity": {"enabled": True, "action": "block", "delegable": True}}})
+    assert r.status_code == 200, r.text
+    stored = env.get_tenant("shape")["input_guardrails"]
+    assert "delegable" not in stored["keyword_blocklist"]
+    assert stored["toxicity"]["delegable"] is True
+    assert stored["keyword_blocklist"] == kw(["ssn"])

@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 
 class GuardrailPolicy(BaseModel):
@@ -14,6 +14,16 @@ class GuardrailPolicy(BaseModel):
     # team policy override its settings. Never its action or enabled state.
     # None, not False, so configs saved without it keep their shape.
     delegable: Optional[bool] = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_delegable(self, handler):
+        # Not every write passes exclude_none (POST /v1/admin/tenants doesn't),
+        # and "delegable": null on every guardrail of every new tenant is a
+        # shape change nobody asked for. Written only when actually set.
+        data = handler(self)
+        if isinstance(data, dict) and data.get("delegable") is None:
+            data.pop("delegable", None)
+        return data
 
     @field_validator("settings")
     @classmethod
