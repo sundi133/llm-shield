@@ -141,22 +141,60 @@ def test_two_tenants_get_their_own_sentiment_threshold():
 
 # ── rate_limiter ─────────────────────────────────────────────────────────────
 
+# A 2 s window keeps these fast: the 1,000-per-minute floor is 34 per 2 s.
+W = 2
+
+
 def test_two_tenants_get_their_own_request_limit():
     g = RateLimiterGuardrail()
-    a = [run(g, "x", {"max_requests": 2}, {"tenant_id": "a", "agent_key": "bot"}).action
-         for _ in range(3)]
-    b = [run(g, "x", {"max_requests": 10}, {"tenant_id": "b", "agent_key": "bot"}).action
-         for _ in range(3)]
-    assert a == ["pass", "pass", "block"]
-    assert b == ["pass", "pass", "pass"]
+    a = [run(g, "x", {"max_requests": 40, "window_seconds": W},
+             {"tenant_id": "a", "agent_key": "bot"}).action for _ in range(41)]
+    b = [run(g, "x", {"max_requests": 80, "window_seconds": W},
+             {"tenant_id": "b", "agent_key": "bot"}).action for _ in range(41)]
+    assert a[:40] == ["pass"] * 40 and a[40] == "block"
+    assert set(b) == {"pass"}
 
 
 def test_rate_budget_is_per_tenant_for_the_same_client():
     g = RateLimiterGuardrail()
-    for _ in range(2):
-        run(g, "x", {"max_requests": 2}, {"tenant_id": "a"})          # "anonymous" in a
-    assert run(g, "x", {"max_requests": 2}, {"tenant_id": "a"}).action == "block"
-    assert run(g, "x", {"max_requests": 2}, {"tenant_id": "b"}).action == "pass"
+    tight = {"max_requests": 34, "window_seconds": W}
+    for _ in range(34):
+        run(g, "x", tight, {"tenant_id": "a"})                       # "anonymous" in a
+    assert run(g, "x", tight, {"tenant_id": "a"}).action == "block"
+    assert run(g, "x", tight, {"tenant_id": "b"}).action == "pass"
+
+
+# ── The 1,000 requests a minute floor ────────────────────────────────────────
+
+def test_a_lower_limit_is_raised_to_1000_a_minute():
+    g = RateLimiterGuardrail()
+    ctx = {"tenant_id": "low", "agent_key": "bot"}
+    actions = [run(g, "x", {"max_requests": 5, "window_seconds": 60}, ctx).action
+               for _ in range(1001)]
+    assert actions[:1000] == ["pass"] * 1000
+    assert actions[1000] == "block"
+
+
+@pytest.mark.parametrize("max_requests,window,expected", [
+    (5, 60, (1000, 60)),          # raised to the floor
+    (5000, 60, (5000, 60)),       # above the floor: unchanged
+    (1, 1, (17, 1)),              # floor scales with the window: ceil(1000/60)
+    (1, 120, (2000, 120)),
+    ("lots", 60, (1000, 60)),     # garbage reads as the floor, never raises
+    (5, 0, (1000, 60)),           # non-positive window reads as 60 s
+    (5, "x", (1000, 60)),
+])
+def test_effective_limit(max_requests, window, expected):
+    from guardrails.input.rate_limiter import effective_limit
+    assert effective_limit(max_requests, window) == expected
+
+
+def test_default_without_any_setting_is_1000_a_minute(monkeypatch):
+    monkeypatch.setattr(cs, "config", None)
+    g = RateLimiterGuardrail()
+    ctx = {"tenant_id": "fresh", "agent_key": "bot"}
+    actions = [run(g, "x", {}, ctx).action for _ in range(1001)]
+    assert actions.count("pass") == 1000 and actions[-1] == "block"
 
 
 def test_rate_tenant_without_limit_keeps_server_value(server_settings):

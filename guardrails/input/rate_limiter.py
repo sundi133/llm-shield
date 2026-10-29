@@ -1,5 +1,6 @@
 """Sliding window rate limiter guardrail."""
 
+import math
 from typing import Optional
 
 from core.models import GuardrailResult
@@ -8,6 +9,34 @@ from storage.state_store import StateStore
 
 # Module-level shared state store so all instances share the same counters.
 _state_store = StateStore()
+
+# The lowest rate this guardrail will enforce, whatever a tenant or the server
+# configures: 1,000 requests a minute. A limit set lower is raised to it,
+# scaled to the configured window (a 1 s window allows at least 17), so a
+# misconfigured or hostile tenant setting can't throttle legitimate traffic
+# to a crawl.
+MIN_REQUESTS_PER_MINUTE = 1000
+DEFAULT_WINDOW_SECONDS = 60
+
+
+def effective_limit(max_requests, window_seconds) -> tuple[int, int]:
+    """``(max_requests, window_seconds)`` after the floor, from raw settings.
+
+    Non-numeric or non-positive values read as the defaults rather than
+    raising on the guard path.
+    """
+    try:
+        window = int(window_seconds)
+    except (TypeError, ValueError):
+        window = DEFAULT_WINDOW_SECONDS
+    if window <= 0:
+        window = DEFAULT_WINDOW_SECONDS
+    floor = math.ceil(MIN_REQUESTS_PER_MINUTE * window / 60)
+    try:
+        requested = int(max_requests)
+    except (TypeError, ValueError):
+        requested = floor
+    return max(requested, floor), window
 
 
 class RateLimiterGuardrail(BaseGuardrail):
@@ -26,8 +55,9 @@ class RateLimiterGuardrail(BaseGuardrail):
         context = context or {}
         # Read per check, so a tenant's own limits apply (they used to be fixed
         # at startup).
-        max_requests = self.setting("max_requests", 100)
-        window_seconds = self.setting("window_seconds", 60)
+        max_requests, window_seconds = effective_limit(
+            self.setting("max_requests", MIN_REQUESTS_PER_MINUTE),
+            self.setting("window_seconds", DEFAULT_WINDOW_SECONDS))
         client_id = context.get("client_id") or context.get("agent_key") or "anonymous"
         # Per tenant: two tenants' "anonymous" callers (or a shared agent name)
         # must not spend one budget, now that each can set its own limit.

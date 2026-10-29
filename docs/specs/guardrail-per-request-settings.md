@@ -34,6 +34,13 @@ The rate limiter's counters are also now kept per tenant (see section 3); every
 counter starts from zero once on deploy, which can only let more through for at
 most one window.
 
+**Rate limit floor.** The rate limiter now never enforces fewer than **1,000
+requests a minute**. A lower `max_requests` (from a tenant or the server) is
+raised to 1,000 per minute scaled to its `window_seconds` (a 1 s window allows
+at least 17), and the code default is 1,000 instead of 100. This can only let
+more through: a tenant that had set a tighter limit now gets 1,000 a minute.
+Not covered by `SHIELD_GUARDRAIL_SETTINGS_SERVER_ONLY`; the floor always applies.
+
 ## 1. Problem & outcome
 
 `regex_pattern`, `length_limit`, `sentiment`, `rate_limiter` and
@@ -77,6 +84,10 @@ encoders by name, so nothing compiles per request.
 - `rate_limiter` keys its counter by tenant as well as client
   (`rate_limit:{tenant}:{client}`). With per-tenant limits, two tenants'
   `anonymous` callers or a shared agent name must not spend one budget.
+- `rate_limiter` enforces at least 1,000 requests a minute
+  (`MIN_REQUESTS_PER_MINUTE`): `max(max_requests, ceil(1000 * window / 60))`.
+  Non-numeric or non-positive settings read as the defaults instead of raising
+  on the guard path.
 - A test walks every `__init__` under `guardrails/` and fails if one reads
   `self.settings` or `self.configured_action`, so the bug can't come back
   in a new guardrail.
