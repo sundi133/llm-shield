@@ -27,7 +27,8 @@ def _fn(name: str, source: str = HTML) -> str:
 def test_controls_sit_on_the_guardrails_page():
     for el in ('id="ps-bar"', 'id="ps-chips"', 'id="ps-settings"', 'id="ps-team-view"',
                'id="ps-team-input"', 'id="ps-team-output"', 'id="ps-discovered"',
-               'id="ps-try-result"', 'id="ps-match-exact"', 'id="ps-match-glob"'):
+               'id="ps-try-result"', 'id="ps-match-exact"', 'id="ps-match-glob"',
+               'id="ps-keys-card"', 'id="ps-keys"'):
         assert el in PANE, el
 
 
@@ -110,3 +111,21 @@ def test_script_parses():
         r = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"],
                            input=block, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr[:500]
+
+
+def test_team_keys_card():
+    load = _fn("psLoadKeys", SCRIPT)
+    # The key list is the tenant's own endpoint; prefixes and labels escaped.
+    assert "apiCall('/v1/tenant/me/api-keys')" in load
+    assert "${psEsc(k.prefix" in load and "psEsc(k.label)" in load
+    assert not re.search(r"\$\{k\.(prefix|label)\}", load)
+    # Keys that can't be bound say why instead of offering a broken button.
+    assert "if (!k.prefix)" in load and "shared.has(k.prefix)" in load
+    # Locks whose key is gone stay removable.
+    assert "key not found" in load
+    assert "${psW()}" in load
+    save = _fn("psSaveBinding", SCRIPT)
+    assert "`/key-bindings/${encodeURIComponent(prefix)}`" in save
+    assert "expected_version" in save
+    assert "method: 'DELETE'" in _fn("psRemoveBinding", SCRIPT)
+    assert "psLoadKeys()" in _fn("loadPolicyScopes", SCRIPT)

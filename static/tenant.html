@@ -3271,6 +3271,17 @@
         <div id="ps-discovered" style="font-size:12.5px;"></div>
       </div>
 
+      <div id="ps-keys-card" class="card hidden">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Team keys</div>
+            <div class="card-subtitle">Lock an API key to the teams it may claim, so one team can't use another team's policy by sending its header. A key that isn't locked may claim any team.</div>
+          </div>
+          <button class="small" onclick="psLoadKeys()">Refresh</button>
+        </div>
+        <div id="ps-keys" style="font-size:12.5px;"></div>
+      </div>
+
       <div id="ps-try-card" class="card hidden">
         <div class="card-header">
           <div>
@@ -8783,9 +8794,9 @@ function psShow(msg, ok) {
   if (ok) setTimeout(() => el.classList.add('hidden'), 3000);
 }
 
-function psShowError(e) {
+function psShowError(e, what = 'team policy') {
   const list = (e.errors || []).map(x => `<li>${psEsc(x)}</li>`).join('');
-  psShow(list ? `${psEsc(e.message === 'HTTP 422' ? "That team policy can't be saved:" : e.message)}<ul style="margin:0.4rem 0 0 1rem;">${list}</ul>`
+  psShow(list ? `${psEsc(e.message === 'HTTP 422' ? `That ${what} can't be saved:` : e.message)}<ul style="margin:0.4rem 0 0 1rem;">${list}</ul>`
               : psEsc(e.message), false);
 }
 
@@ -8814,9 +8825,10 @@ async function loadPolicyScopes() {
   const configured = (s.selectors || []).length > 0;
   document.getElementById('ps-discovered-card').classList.toggle('hidden', !configured);
   document.getElementById('ps-try-card').classList.toggle('hidden', !configured);
+  document.getElementById('ps-keys-card').classList.toggle('hidden', !configured);
   if (!configured) document.getElementById('ps-settings').classList.remove('hidden');
   psRenderChips();
-  if (configured) psLoadDiscovered();
+  if (configured) { psLoadDiscovered(); psLoadKeys(); }
   if (PS_VIEW !== 'global' && !PS_NEW_RULE && !psRule(PS_VIEW) && PS_VIEW !== 'unmatched') psSelect('global', true);
 }
 
@@ -9218,6 +9230,94 @@ async function psLoadDiscovered() {
   } catch (e) {
     el.innerHTML = `<div class="muted">${psEsc(e.message)}</div>`;
   }
+}
+
+// Team keys: key bindings, PUT/DELETE /key-bindings/{key_prefix}. A binding
+// names the key's 12-char prefix; the server checks it matches exactly one of
+// this tenant's keys (404 none, 409 several) and that every value is valid.
+function psTeamHint() {
+  const rules = (PS && PS.policy_scopes.rules) || [];
+  const all = rules.flatMap(r => [...((r.match || {}).exact || []), ...((r.match || {}).glob || [])]);
+  return all.slice(0, 6).join(', ');
+}
+
+async function psLoadKeys() {
+  const el = document.getElementById('ps-keys');
+  let keys = [];
+  try {
+    keys = (await apiCall('/v1/tenant/me/api-keys')).api_keys || [];
+  } catch (e) {
+    el.innerHTML = `<div class="muted">${psEsc(e.message)}</div>`;
+    return;
+  }
+  const bindings = (PS && PS.policy_scopes.key_bindings) || {};
+  const prefixes = keys.map(k => k.prefix).filter(Boolean);
+  const shared = new Set(prefixes.filter((p, i) => prefixes.indexOf(p) !== i));
+  const hint = psTeamHint();
+  const rows = keys.map((k, i) => {
+    const label = k.label ? psEsc(k.label) : '<span class="muted">unlabelled</span>';
+    const keyText = `<code style="font-size:11px;">${psEsc(k.prefix || '')}…${psEsc(k.fingerprint || '')}</code>`;
+    if (!k.prefix) {
+      return `<tr style="border-top:1px solid var(--border);"><td style="padding-right:0.75rem;">${label}</td><td>${keyText}</td>
+        <td colspan="2" class="muted">Created with the workspace, so it can't be locked. Create a key per team on the API keys page.</td></tr>`;
+    }
+    if (shared.has(k.prefix)) {
+      return `<tr style="border-top:1px solid var(--border);"><td style="padding-right:0.75rem;">${label}</td><td>${keyText}</td>
+        <td colspan="2" class="muted">Starts with the same 12 characters as another key, so it can't be told apart. Create a new key for this team.</td></tr>`;
+    }
+    const allowed = bindings[k.prefix] || [];
+    return `<tr style="border-top:1px solid var(--border);">
+      <td style="padding-right:0.75rem;">${label}</td><td>${keyText}</td>
+      <td style="padding:0.35rem 0;"><input id="ps-bind-${i}" value="${psEsc(allowed.join(', '))}"
+          placeholder="${allowed.length ? '' : 'any team' + (hint ? ` (e.g. ${psEsc(hint)})` : '')}" style="width:100%;font-size:11.5px;"${psW()}></td>
+      <td style="white-space:nowrap;padding-left:0.5rem;">
+        <button data-config-write class="small" data-prefix="${psEsc(k.prefix)}" data-input="ps-bind-${i}"
+                onclick="psSaveBinding(this.dataset.prefix, this.dataset.input)" style="font-size:10px;"${psW()}>${allowed.length ? 'Save' : 'Lock'}</button>
+        ${allowed.length ? `<button data-config-write class="small" data-prefix="${psEsc(k.prefix)}"
+                onclick="psRemoveBinding(this.dataset.prefix)" style="font-size:10px;"${psW()}>Unlock</button>` : ''}
+      </td></tr>`;
+  });
+  // Bindings whose key is gone (revoked): still stored, so let them be removed.
+  const listed = new Set(prefixes);
+  Object.keys(bindings).filter(p => !listed.has(p)).forEach(p => rows.push(`
+    <tr style="border-top:1px solid var(--border);">
+      <td class="muted" style="padding-right:0.75rem;">key not found</td><td><code style="font-size:11px;">${psEsc(p)}…</code></td>
+      <td>${psEsc((bindings[p] || []).join(', '))}</td>
+      <td style="padding-left:0.5rem;"><button data-config-write class="small" data-prefix="${psEsc(p)}"
+          onclick="psRemoveBinding(this.dataset.prefix)" style="font-size:10px;"${psW()}>Remove</button></td></tr>`));
+  el.innerHTML = rows.length ? `
+    <table style="width:100%;border-collapse:collapse;">
+      <thead><tr class="muted" style="text-align:left;"><th>Key</th><th></th><th style="width:45%;">May claim teams</th><th></th></tr></thead>
+      <tbody>${rows.join('')}</tbody>
+    </table>
+    <div class="muted" style="margin-top:0.5rem;font-size:11.5px;">Team values or patterns, comma separated. A locked key that claims another team is refused (403). A key locked to exactly one team gets that team when it sends no header.</div>`
+    : '<div class="muted" style="padding:0.75rem;">No API keys yet. Create one per team on the API keys page.</div>';
+}
+
+async function psSaveBinding(prefix, inputId) {
+  const allowed = document.getElementById(inputId).value.split(',').map(x => x.trim()).filter(Boolean);
+  if (!allowed.length) return psRemoveBinding(prefix);
+  try {
+    PS.policy_scopes = (await psApi(`/key-bindings/${encodeURIComponent(prefix)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ allowed, expected_version: PS.policy_scopes.version }),
+    })).policy_scopes;
+    psShow(`Key ${psEsc(prefix)}… locked to ${psEsc(allowed.join(', '))}. Live traffic picks it up within a minute.`, true);
+    psLoadKeys();
+  } catch (e) {
+    if (e.status === 409 && e.message.startsWith('More than one')) e.message = 'Another key starts with the same 12 characters, so this one can\'t be locked. Create a new key for this team.';
+    else if (e.status === 409) e.message = 'Someone else changed team policies since you loaded them. Refresh and try again.';
+    psShowError(e, 'key lock');
+  }
+}
+
+async function psRemoveBinding(prefix) {
+  if (!confirm(`Unlock key ${prefix}…? It will be able to claim any team.`)) return;
+  try {
+    await psApi(`/key-bindings/${encodeURIComponent(prefix)}`, { method: 'DELETE' });
+    await loadPolicyScopes();
+    psShow(`Key ${psEsc(prefix)}… unlocked.`, true);
+  } catch (e) { psShowError(e); }
 }
 
 async function psTry() {

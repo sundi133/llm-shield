@@ -573,4 +573,5 @@ keywords need different actions.
      existing global route when Global is selected;
    - a Discovered values list (value, header, requests, policy now, "Create rule");
    - a Try it box backed by `POST /preview` plus `/guardrails/input`;
+   - a Team keys card: each of the tenant's keys with the teams it may claim, Lock / Unlock (`PUT`/`DELETE /key-bindings/{prefix}`); keys without metadata or sharing a prefix say why they can't be locked; locks whose key was revoked stay removable;
    - `docs/team-policies.md` (`/team-policies/`) built from the walkthrough (no em dashes).

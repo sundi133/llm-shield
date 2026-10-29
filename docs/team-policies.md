@@ -102,7 +102,19 @@ nothing:
 Because a header is set by the caller, any app holding your tenant key could
 claim any team. The global policy still applies to all of them, but a team
 could pick another team's rule. To prevent that, give each team its own API
-key and **bind** it:
+key and **lock** it to that team:
+
+1. Create a key per team on the **API keys** page, labelled with the team.
+2. On **Input & Output Guardrails**, find the **Team keys** card.
+3. Next to the team's key, enter the teams it may claim (for example `team-a`,
+   or a pattern such as `eng-*`) and click **Lock**.
+
+A locked key that claims another team gets `403 policy_scope_not_allowed`. A
+key locked to exactly one team gets that team when it sends no header.
+**Unlock** lets it claim any team again. Keys created together with the
+workspace can't be locked; the card says so.
+
+The same over the API (the path ends with the key's first 12 characters):
 
 ```bash
 curl -X PUT "$SHIELD/v1/tenant/me/policy-scopes/key-bindings/sk-acme-team" \
@@ -110,14 +122,8 @@ curl -X PUT "$SHIELD/v1/tenant/me/policy-scopes/key-bindings/sk-acme-team" \
   -d '{"allowed": ["team-a"]}'
 ```
 
-The path ends with the key's first 12 characters, as shown on the API keys
-page. A bound key that claims another team gets `403 policy_scope_not_allowed`;
-a bound key that sends no header uses its team when the binding names exactly
-one value. Keys created together with the tenant can't be bound; create a new
-key per team.
-
 If the header is added by your own gateway rather than by apps, you don't need
-bindings.
+to lock keys.
 
 ## What a request sees
 
