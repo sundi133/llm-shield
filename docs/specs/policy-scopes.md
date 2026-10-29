@@ -173,14 +173,14 @@ Tenant-scoped under `/v1/tenant/me/policy-scopes`, with operator mirrors under
 
 | Method + path | Body | Result |
 |---|---|---|
-| `GET /` | | Full `policy_scopes` config. |
+| `GET /` | | `{policy_scopes, warnings, kill_switch}`. `warnings` lists rules that no longer pass against the current global policy. |
 | `PUT /settings` | `{enabled, selectors, missing, unmatched, expected_version?}` | Saved config. |
 | `PUT /rules/{rule_id}` | `{match, input_guardrails, output_guardrails, expected_version?}` | Saved rule. |
 | `DELETE /rules/{rule_id}` | | 204. |
 | `PUT /key-bindings/{key_prefix}` | `{allowed: [...]}` | 404 if the prefix matches none of this tenant's keys; 409 if it matches more than one. |
 | `DELETE /key-bindings/{key_prefix}` | | 204. |
 | `GET /discovered?limit=200` | | `[{value, count, first_seen, last_seen, header, matched_rule}]`. `matched_rule` is computed against the **current** rules, so the admin sees what a new rule would catch. |
-| `POST /preview` | `{headers: {...}, key_prefix?}` | `{value, source_header, rule, outcome, effective: {input_guardrails, output_guardrails}, guardrail_tiers}`. Reads the config fresh from the store, so it reflects a save immediately. |
+| `POST /preview` | `{headers: {...}, key_prefix?}` | `{value, source_header, rule, outcome, scopes_active, kill_switch, effective: {input_guardrails, output_guardrails}, guardrail_tiers}`. Reads the config fresh from the store, so it reflects a save immediately. Evaluates rules even while scopes are off for the tenant (`scopes_active: false`), so rules can be tested before turning them on. Read-only, so it needs no write scope. |
 
 Status codes: 422 for an invalid or weakening rule (body lists every violation,
 for example `"keyword_blocklist: global action is block, rule sets pass"`),
@@ -244,9 +244,23 @@ any holder of the tenant key can claim any value.
   `core/identity_resolution.py`). The selector list is shaped so this is additive.
 
 **Write safety.** The scoped config handed to the guard path is a **copy** with
-a `_policy_scope` marker. `set_tenant_policies` / `update_tenant_config` refuse
-a dict carrying the marker, so a merged view can never be saved back as the
-global policy. The cached tenant dict is never mutated.
+a `_policy_scope` marker. `update_tenant` / `create_tenant` refuse a dict
+carrying the marker, so a merged view can never be saved back as the global
+policy. (`set_tenant_policies` takes stage dicts, not a whole config; task 3
+keeps scoped configs off every non-guarded route, which is what protects it.)
+The cached tenant dict is never mutated.
+
+**Stale rules.** A write checks only the rule (or `unmatched`) it touches
+against the current global policy, plus every structural limit. A rule saved
+before a later global edit may now ask for something global forbids; the merge
+already ignores that part, `GET` lists it under `warnings`, and it does not
+block unrelated writes.
+
+**Key bindings need key metadata.** A binding names the 12-char prefix from the
+key's metadata record. Keys added after tenant creation (`add_api_key`, the
+portal, `POST /v1/admin/tenants/{id}/api-keys`) have one; keys passed in
+`api_keys` when the tenant is created do not, and binding them returns 404.
+Mint a separate key per team (the intended setup anyway).
 
 **Escape hatches.**
 

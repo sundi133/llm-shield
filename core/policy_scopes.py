@@ -597,8 +597,15 @@ def _validate_custom_policies(where: str, global_list: list, local_list: list) -
     return errors
 
 
-def validate_rule(rule: dict, tenant_config: dict) -> list[str]:
-    """Errors for one rule against the tenant's current global policy."""
+def validate_rule(rule: dict, tenant_config: dict, check_stages: bool = True) -> list[str]:
+    """Errors for one rule against the tenant's current global policy.
+
+    ``check_stages=False`` checks only the rule's shape (id, match). The write
+    routes use that for rules the write didn't touch: a rule that has gone
+    stale because the *global* policy changed after it was saved must not
+    block an unrelated save. The merge keeps such a rule safe regardless, and
+    ``GET`` reports it as a warning.
+    """
     errors = []
     rid = rule.get("id")
     where = f"rules.{rid}"
@@ -620,13 +627,19 @@ def validate_rule(rule: dict, tenant_config: dict) -> list[str]:
         if not isinstance(g, str) or not g.strip() or len(g) > MAX_VALUE_LEN:
             errors.append(f"{where}.match.glob: '{g}' must be 1 to {MAX_VALUE_LEN} chars")
     for stage in STAGE_KEYS:
-        if stage in rule:
+        if check_stages and stage in rule:
             errors.extend(_validate_local_stage(stage, rule[stage], tenant_config.get(stage), where))
     return errors
 
 
-def validate_scopes(scopes: dict, tenant_config: dict) -> list[str]:
-    """Every error in a whole ``policy_scopes`` config. Empty means valid."""
+def validate_scopes(scopes: dict, tenant_config: dict,
+                    only_rules: Optional[set] = None,
+                    check_unmatched: bool = True) -> list[str]:
+    """Every error in a whole ``policy_scopes`` config. Empty means valid.
+
+    ``only_rules`` limits the checks against the global policy to those rule
+    ids (see :func:`validate_rule`); every structural limit is always checked.
+    """
     errors = []
     if not isinstance(scopes, dict):
         return ["policy_scopes must be an object"]
@@ -655,7 +668,7 @@ def validate_scopes(scopes: dict, tenant_config: dict) -> list[str]:
     if unmatched is not None:
         if not isinstance(unmatched, dict):
             errors.append("unmatched: must be an object")
-        else:
+        elif check_unmatched:
             for stage in STAGE_KEYS:
                 if stage in unmatched:
                     errors.extend(_validate_local_stage(
@@ -669,8 +682,9 @@ def validate_scopes(scopes: dict, tenant_config: dict) -> list[str]:
         if not isinstance(rule, dict):
             errors.append("rules: every rule must be an object")
             continue
-        errors.extend(validate_rule(rule, tenant_config))
         rid = rule.get("id")
+        errors.extend(validate_rule(rule, tenant_config,
+                                    check_stages=only_rules is None or rid in only_rules))
         if rid in seen_ids:
             errors.append(f"rules.{rid}: duplicate rule id")
         seen_ids.add(rid)

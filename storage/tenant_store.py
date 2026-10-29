@@ -174,6 +174,18 @@ def reserved_key_problem(tenant_id: str, api_key: str) -> Optional[str]:
     return None
 
 
+# Set by core.policy_scopes on a team's merged view of a tenant config
+# (SCOPE_MARKER there; a test keeps the two equal). Saving that view would
+# write one team's policy back as the global policy for everyone.
+_SCOPED_VIEW_MARKER = "_policy_scope"
+
+
+def _refuse_scoped_view(config: Optional[dict]) -> None:
+    if isinstance(config, dict) and _SCOPED_VIEW_MARKER in config:
+        raise ValueError("refusing to save a team's merged policy view as the "
+                         "tenant config (docs/specs/policy-scopes.md)")
+
+
 def key_owner(api_key: str) -> Optional[str]:
     """The tenant an API key belongs to, from the store (not the cache)."""
     name = f"apikey:{_hash_key(api_key)}"
@@ -197,6 +209,7 @@ def create_tenant(tenant_id: str, config: dict, api_keys: list[str] = None) -> d
     Returns:
         The stored tenant config.
     """
+    _refuse_scoped_view(config)
     config.setdefault("tenant_id", tenant_id)
     config_json = json.dumps(config)
 
@@ -263,6 +276,7 @@ def update_tenant(tenant_id: str, updates: dict) -> Optional[dict]:
     Returns:
         Updated config, or None if tenant not found.
     """
+    _refuse_scoped_view(updates)
     config = get_tenant(tenant_id)
     if config is None:
         return None

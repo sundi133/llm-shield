@@ -48,6 +48,8 @@ from api.routes_admin_principals import router as admin_principals_router
 from api.routes_admin_delegations import router as admin_delegations_router
 from api.routes_admin_policies import router as admin_policies_router
 from api.routes_tenant_self import router as tenant_self_router
+from api.routes_policy_scopes import (
+    tenant_router as policy_scopes_router, admin_router as admin_policy_scopes_router)
 from api.routes_agents_registry import router as agents_registry_router
 try:
     from api.routes_governance import router as governance_router
@@ -1094,6 +1096,8 @@ def create_admin_app() -> FastAPI:
     app.include_router(admin_delegations_router)  # /v1/admin/delegations/*
     app.include_router(admin_policies_router)     # /v1/admin/policies/*
     app.include_router(tenant_self_router)      # /v1/tenant/* (includes policies and custom policy CRUD)
+    app.include_router(policy_scopes_router)        # /v1/tenant/me/policy-scopes
+    app.include_router(admin_policy_scopes_router)  # /v1/admin/tenants/{id}/policy-scopes
     app.include_router(agents_registry_router)  # /v1/agents/* (registry, roles, tool policies)
     if governance_router is not None:
         app.include_router(governance_router)   # /v1/governance/* (inventory, used-vs-granted, reviews)

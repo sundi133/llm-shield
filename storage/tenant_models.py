@@ -10,6 +10,10 @@ class GuardrailPolicy(BaseModel):
     enabled: bool = True
     action: str = Field(default="block", pattern="^(block|warn|log|pass)$")
     settings: dict = Field(default_factory=dict)
+    # Policy scopes (docs/specs/policy-scopes.md): on a GLOBAL guardrail, lets a
+    # team policy override its settings. Never its action or enabled state.
+    # None, not False, so configs saved without it keep their shape.
+    delegable: Optional[bool] = None
 
     @field_validator("settings")
     @classmethod
