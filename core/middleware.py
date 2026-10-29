@@ -18,6 +18,7 @@ from core.signup.trial import refusal as _trial_refusal
 from storage.rate_limiter import check_and_increment
 from storage.tenant_models import effective_quota
 from core.feature_flags import CERT_IDENTITY_ENABLED
+from guardrails.base import _request_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -395,6 +396,9 @@ class ShieldMiddleware(BaseHTTPMiddleware):
             # Resolve tenant from API key with caching
             request.state.tenant_id = None
             request.state.tenant_config = None
+            # Cleared first so nothing from an earlier request on this context
+            # can ever be read as this request's tenant.
+            _request_tenant.set(None)
             store_degraded = False
             api_key = _extract_api_key(request)
             if api_key:
@@ -412,6 +416,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                 if tenant_id and tenant_config:
                     request.state.tenant_id = tenant_id
                     request.state.tenant_config = tenant_config
+                    _request_tenant.set(tenant_id)
 
                     # A self-serve trial that ended, or that an operator
                     # suspended: its keys stop here. In memory, on the config

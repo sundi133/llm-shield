@@ -14,6 +14,20 @@ _request_configs: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVa
     "_request_configs", default=None
 )
 
+# The tenant the server resolved for this request from its API key, set by
+# ShieldMiddleware. Guardrails that need to know whose request this is read it
+# here, never from ``context``: on /guardrails/input the context is the
+# caller's own ``body["context"]``, so a tenant_id there is whatever the caller
+# typed, including another tenant's.
+_request_tenant: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "_request_tenant", default=None
+)
+
+
+def request_tenant_id() -> Optional[str]:
+    """The server-resolved tenant of the current request, or None."""
+    return _request_tenant.get()
+
 
 SERVER_SETTINGS_ONLY_ENV = "SHIELD_GUARDRAIL_SETTINGS_SERVER_ONLY"
 

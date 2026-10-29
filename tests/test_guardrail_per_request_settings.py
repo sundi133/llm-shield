@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 import config.schema as cs
-from guardrails.base import _request_configs
+from guardrails.base import _request_configs, _request_tenant
 from guardrails.input.length_limit import LengthLimitGuardrail
 from guardrails.input.rate_limiter import RateLimiterGuardrail
 from guardrails.input.regex_pattern import RegexPatternGuardrail
@@ -27,18 +27,21 @@ from guardrails.input.system_prompt_leak import SystemPromptLeakGuardrail
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def run(guardrail, text, settings=None, context=None, tenant_row=True):
+def run(guardrail, text, settings=None, context=None, tenant_row=True, tenant=None):
     """Check ``text`` as a tenant whose row for this guardrail has ``settings``.
 
+    ``tenant`` is the server-resolved tenant (what ShieldMiddleware sets);
     ``tenant_row=False`` runs outside any tenant request (server config only).
     """
     async def go():
         token = _request_configs.set(
             {guardrail.name: {"enabled": True, "action": "block", "settings": settings or {}}}
             if tenant_row else None)
+        tenant_token = _request_tenant.set(tenant)
         try:
             return await guardrail.check(text, context or {})
         finally:
+            _request_tenant.reset(tenant_token)
             _request_configs.reset(token)
     return asyncio.run(go())
 
@@ -148,9 +151,9 @@ W = 2
 def test_two_tenants_get_their_own_request_limit():
     g = RateLimiterGuardrail()
     a = [run(g, "x", {"max_requests": 40, "window_seconds": W},
-             {"tenant_id": "a", "agent_key": "bot"}).action for _ in range(41)]
+             {"agent_key": "bot"}, tenant="a").action for _ in range(41)]
     b = [run(g, "x", {"max_requests": 80, "window_seconds": W},
-             {"tenant_id": "b", "agent_key": "bot"}).action for _ in range(41)]
+             {"agent_key": "bot"}, tenant="b").action for _ in range(41)]
     assert a[:40] == ["pass"] * 40 and a[40] == "block"
     assert set(b) == {"pass"}
 
@@ -159,17 +162,29 @@ def test_rate_budget_is_per_tenant_for_the_same_client():
     g = RateLimiterGuardrail()
     tight = {"max_requests": 34, "window_seconds": W}
     for _ in range(34):
-        run(g, "x", tight, {"tenant_id": "a"})                       # "anonymous" in a
-    assert run(g, "x", tight, {"tenant_id": "a"}).action == "block"
-    assert run(g, "x", tight, {"tenant_id": "b"}).action == "pass"
+        run(g, "x", tight, tenant="a")                               # "anonymous" in a
+    assert run(g, "x", tight, tenant="a").action == "block"
+    assert run(g, "x", tight, tenant="b").action == "pass"
+
+
+def test_caller_supplied_tenant_id_is_ignored():
+    """On /guardrails/input the context is the caller's body; a tenant_id in it
+    must not let one tenant spend another's budget."""
+    g = RateLimiterGuardrail()
+    tight = {"max_requests": 34, "window_seconds": W}
+    for _ in range(34):
+        run(g, "x", tight, {"tenant_id": "victim"}, tenant="attacker")
+    # An honest victim that sends its own tenant_id in context too.
+    assert run(g, "x", tight, {"tenant_id": "victim"}, tenant="victim").action == "pass"
+    assert run(g, "x", tight, {"tenant_id": "victim"}, tenant="attacker").action == "block"
 
 
 # ── The 1,000 requests a minute floor ────────────────────────────────────────
 
 def test_a_lower_limit_is_raised_to_1000_a_minute():
     g = RateLimiterGuardrail()
-    ctx = {"tenant_id": "low", "agent_key": "bot"}
-    actions = [run(g, "x", {"max_requests": 5, "window_seconds": 60}, ctx).action
+    ctx = {"agent_key": "bot"}
+    actions = [run(g, "x", {"max_requests": 5, "window_seconds": 60}, ctx, tenant="low").action
                for _ in range(1001)]
     assert actions[:1000] == ["pass"] * 1000
     assert actions[1000] == "block"
@@ -192,8 +207,8 @@ def test_effective_limit(max_requests, window, expected):
 def test_default_without_any_setting_is_1000_a_minute(monkeypatch):
     monkeypatch.setattr(cs, "config", None)
     g = RateLimiterGuardrail()
-    ctx = {"tenant_id": "fresh", "agent_key": "bot"}
-    actions = [run(g, "x", {}, ctx).action for _ in range(1001)]
+    ctx = {"agent_key": "bot"}
+    actions = [run(g, "x", {}, ctx, tenant="fresh").action for _ in range(1001)]
     assert actions.count("pass") == 1000 and actions[-1] == "block"
 
 
@@ -202,7 +217,7 @@ def test_rate_tenant_without_limit_keeps_server_value(server_settings):
     # default is 100. An empty tenant row must keep the server's value.
     server_settings("rate_limiter", {"max_requests": 10_000_000, "window_seconds": 60})
     g = RateLimiterGuardrail()
-    actions = {run(g, "x", {}, {"tenant_id": "t", "agent_key": "busy"}).action for _ in range(150)}
+    actions = {run(g, "x", {}, {"agent_key": "busy"}, tenant="t").action for _ in range(150)}
     assert actions == {"pass"}
 
 
@@ -267,3 +282,45 @@ def test_escape_hatch_restores_server_only_settings(server_settings, monkeypatch
     assert run(g, "ACME-1234", {"patterns": ACME}).action == "pass"     # read live
     monkeypatch.setenv("SHIELD_GUARDRAIL_SETTINGS_SERVER_ONLY", "")
     assert run(g, "ACME-1234", {"patterns": ACME}).action == "block"
+
+
+# ── Through the real app: the middleware's tenant reaches the guardrail ──────
+
+def test_rate_budgets_are_per_tenant_through_guardrails_input(monkeypatch):
+    from unittest.mock import patch
+    from fastapi.testclient import TestClient
+    import core.middleware as mw
+    import storage.tenant_store as ts
+
+    monkeypatch.setattr(ts, "_get_redis", lambda: None)
+    for name in ("REDIS_URL", "UPSTASH_REDIS_REST_URL", "SHIELD_GUARD_REQUIRE_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    ts._fallback_store.clear()
+    ts._cache.clear()
+    mw._tenant_cache.clear()
+    row = {"rate_limiter": {"enabled": True, "action": "block",
+                            "settings": {"max_requests": 34, "window_seconds": W}}}
+    ts.create_tenant("rt-a", {"name": "A", "input_guardrails": row}, api_keys=["sk-rt-tenant-a-01"])
+    ts.create_tenant("rt-b", {"name": "B", "input_guardrails": row}, api_keys=["sk-rt-tenant-b-01"])
+
+    monkeypatch.setattr(cs, "config", cs.config)
+    cfg = cs.config if cs.config is not None else cs.load_config()
+    with patch("config.schema.load_config", return_value=cfg):
+        from core.app import create_app
+        client = TestClient(create_app())
+
+    def send(key, **context):
+        r = client.post("/guardrails/input", headers={"X-API-Key": key},
+                        json={"message": "hi", "context": {"agent_key": "bot", **context}})
+        assert r.status_code == 200, r.text
+        return r.json()["action"]
+
+    try:
+        # Tenant A spends its whole budget while claiming to be B.
+        assert {send("sk-rt-tenant-a-01", tenant_id="rt-b") for _ in range(34)} == {"pass"}
+        assert send("sk-rt-tenant-a-01") == "block"
+        assert send("sk-rt-tenant-b-01") == "pass"      # B's budget untouched
+    finally:
+        ts._fallback_store.clear()
+        ts._cache.clear()
+        mw._tenant_cache.clear()

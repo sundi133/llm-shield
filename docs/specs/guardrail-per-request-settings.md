@@ -83,7 +83,11 @@ encoders by name, so nothing compiles per request.
   (`patterns: []` means no patterns for that tenant).
 - `rate_limiter` keys its counter by tenant as well as client
   (`rate_limit:{tenant}:{client}`). With per-tenant limits, two tenants'
-  `anonymous` callers or a shared agent name must not spend one budget.
+  `anonymous` callers or a shared agent name must not spend one budget. The
+  tenant is the one ShieldMiddleware resolved from the API key
+  (`guardrails.base.request_tenant_id()`), never `context["tenant_id"]`: on
+  `/guardrails/input` the context is the caller's own body, so trusting it
+  would let one tenant spend another's budget.
 - `rate_limiter` enforces at least 1,000 requests a minute
   (`MIN_REQUESTS_PER_MINUTE`): `max(max_requests, ceil(1000 * window / 60))`.
   Non-numeric or non-positive settings read as the defaults instead of raising

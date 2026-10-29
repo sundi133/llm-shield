@@ -4,7 +4,7 @@ import math
 from typing import Optional
 
 from core.models import GuardrailResult
-from guardrails.base import BaseGuardrail
+from guardrails.base import BaseGuardrail, request_tenant_id
 from storage.state_store import StateStore
 
 # Module-level shared state store so all instances share the same counters.
@@ -60,8 +60,11 @@ class RateLimiterGuardrail(BaseGuardrail):
             self.setting("window_seconds", DEFAULT_WINDOW_SECONDS))
         client_id = context.get("client_id") or context.get("agent_key") or "anonymous"
         # Per tenant: two tenants' "anonymous" callers (or a shared agent name)
-        # must not spend one budget, now that each can set its own limit.
-        tenant_id = context.get("tenant_id")
+        # must not spend one budget, now that each can set its own limit. The
+        # server-resolved tenant only: context["tenant_id"] is caller-supplied
+        # on /guardrails/input, and would let a caller spend another tenant's
+        # budget.
+        tenant_id = request_tenant_id()
         rate_key = f"rate_limit:{tenant_id}:{client_id}" if tenant_id else f"rate_limit:{client_id}"
 
         current_count = self._store.increment(rate_key, window_seconds)
