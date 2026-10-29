@@ -60,8 +60,9 @@ your guardrails.
    every value seen on your header, how many requests carried it, and which
    policy it gets today.
 3. **Create a rule.** Click **Create rule** next to a value, or **+ New team rule**.
-   Add exact values, or a pattern such as `eng-*` to cover teams that don't
-   exist yet.
+   Enter a team name and the header values its requests carry, then
+   **Create team rule**. You can add a pattern such as `eng-*` afterwards to
+   cover teams that don't exist yet.
 4. **Edit the team's guardrails.** The page shows the same guardrail cards:
    - rows marked **Global** come from the global policy; you can pick a
      stricter action or add to their lists, nothing else;

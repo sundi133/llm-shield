@@ -3207,6 +3207,32 @@
           </div>
         </div>
         <div id="ps-chips" class="ps-chips"></div>
+        <div id="ps-new" class="hidden ps-panel">
+          <div style="font-size:13px;font-weight:600;margin-bottom:0.75rem;">New team rule</div>
+          <div class="ps-grid">
+            <div>
+              <label for="ps-new-name">Team name</label>
+              <input type="text" id="ps-new-name" placeholder="Engineering" maxlength="64" oninput="psNewNameInput()"
+                     onkeydown="if(event.key==='Enter')psNewCreate();if(event.key==='Escape')psNewCancel();">
+              <div class="ps-hint">A label for you. <span id="ps-new-id"></span></div>
+            </div>
+            <div>
+              <label for="ps-new-values" id="ps-new-values-label">Header values for this team</label>
+              <input type="text" id="ps-new-values" placeholder="eng, engineering"
+                     oninput="this.dataset.touched='1';psNewCheck()"
+                     onkeydown="if(event.key==='Enter')psNewCreate();if(event.key==='Escape')psNewCancel();">
+              <div class="ps-hint">Requests carrying any of these values get this team's policy. Comma-separated; case is ignored. You can add patterns such as eng-* next.</div>
+            </div>
+          </div>
+          <div id="ps-new-noheader" class="hidden ps-hint" style="color:var(--warning, #f59e0b);margin-top:0.75rem;">
+            No team header is set yet, so no request will match this rule. Name your header in Team settings too.
+          </div>
+          <div id="ps-new-error" class="hidden" style="margin-top:0.75rem;font-size:12px;color:var(--danger);"></div>
+          <div style="margin-top:1rem;display:flex;justify-content:flex-end;gap:0.5rem;">
+            <button class="small" onclick="psNewCancel()">Cancel</button>
+            <button data-config-write class="primary small" id="ps-new-create" onclick="psNewCreate()" disabled>Create team rule</button>
+          </div>
+        </div>
         <div id="ps-warnings" class="hidden" style="margin-top:0.75rem;font-size:12px;color:var(--warning, #f59e0b);"></div>
         <div id="ps-settings" class="hidden ps-panel">
           <div class="ps-grid">
@@ -8904,6 +8930,7 @@ function psRenderChips() {
 
 function psToggleSettings() {
   document.getElementById('ps-settings').classList.toggle('hidden');
+  psNewCancel();
   psSyncSettingsButton();
 }
 
@@ -8964,20 +8991,72 @@ function psSelect(view, force) {
   if (team) psRenderTeam();
 }
 
+function psSlug(text) {
+  return (text || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+}
+
+// Opens the inline "New team rule" form; value comes from Discovered values.
 function psNewRule(value) {
-  const suggested = (value || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
-  const id = (prompt('Name this team rule (lowercase letters, digits, - and _):', suggested) || '').trim().toLowerCase();
-  if (!id) return;
-  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) || id === 'global' || id === 'unmatched') {
-    return alert('Use lowercase letters, digits, - and _, starting with a letter or digit.');
-  }
-  if (psRule(id)) return psSelect(id);
+  const form = document.getElementById('ps-new');
+  document.getElementById('ps-settings').classList.add('hidden');
+  psSyncSettingsButton();
+  form.classList.remove('hidden');
+  const name = document.getElementById('ps-new-name');
+  const values = document.getElementById('ps-new-values');
+  name.value = value ? psSlug(value) : '';
+  values.value = value || '';
+  values.dataset.touched = value ? '1' : '';
+  const headers = ((PS && PS.policy_scopes.selectors) || []).map(x => x.header);
+  document.getElementById('ps-new-values-label').textContent =
+    headers.length ? `${headers.join(' or ')} values for this team` : 'Header values for this team';
+  document.getElementById('ps-new-noheader').classList.toggle('hidden', headers.length > 0);
+  psNewCheck();
+  form.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  name.focus();
+}
+
+function psNewCancel() {
+  document.getElementById('ps-new').classList.add('hidden');
+}
+
+// Values follow the name until the user edits them, so "eng" needs typing once.
+function psNewNameInput() {
+  const values = document.getElementById('ps-new-values');
+  if (!values.dataset.touched) values.value = psSlug(document.getElementById('ps-new-name').value);
+  psNewCheck();
+}
+
+function psNewCheck() {
+  const raw = document.getElementById('ps-new-name').value.trim();
+  const id = psSlug(raw);
+  const err = document.getElementById('ps-new-error');
+  const values = document.getElementById('ps-new-values').value.split(',').map(x => x.trim()).filter(Boolean);
+  let msg = '';
+  if (raw && !id) msg = 'Use letters or digits in the name.';
+  else if (id === 'global' || id === 'unmatched') msg = `"${id}" is reserved. Pick another name.`;
+  else if (id && psRule(id)) msg = `A team rule named "${id}" already exists. Pick it above to edit it.`;
+  // Same characters core/policy_scopes.py accepts in a header value (_VALUE_RE).
+  const bad = values.find(v => !/^[a-z0-9._:@\/-]{1,64}$/.test(v.toLowerCase()));
+  if (!msg && bad) msg = `"${bad}" can't be a header value: use letters, digits and . _ : @ / - (no spaces).`;
+  err.textContent = msg;
+  err.classList.toggle('hidden', !msg);
+  const idHint = document.getElementById('ps-new-id');
+  idHint.textContent = id && id !== raw ? `Saved as "${id}".` : '';
+  document.getElementById('ps-new-create').disabled = !id || !!msg || !values.length;
+  return msg ? null : { id, values };
+}
+
+function psNewCreate() {
+  const ok = psNewCheck();
+  if (!ok || !ok.id) return;
   if (PS_DIRTY && !confirm('Discard unsaved changes to this team policy?')) return;
   if (POLICIES_DIRTY && PS_VIEW === 'global' && !confirm('Discard unsaved changes to the global policy?')) return;
-  PS_DRAFT = { match: { exact: value ? [value] : [id], glob: [] }, input_guardrails: {}, output_guardrails: {} };
+  psNewCancel();
+  PS_DRAFT = { match: { exact: ok.values, glob: [] }, input_guardrails: {}, output_guardrails: {} };
   PS_NEW_RULE = true;
-  psSelect(id, true);
+  psSelect(ok.id, true);
   psMarkDirty();
+  psShow(`Team "${psEsc(ok.id)}" created as a draft. Make its guardrails stricter below, then Save Changes.`, true);
 }
 
 function psLocal(key) {
