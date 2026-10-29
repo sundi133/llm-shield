@@ -69,7 +69,13 @@ the global rule blocks is blocked for every value, including no header at all.
   - Discovery counting is in-process; a background task flushes it to Redis. No
     Redis call on the request.
   - Value-to-rule results are memoized too, per cached config object, bounded
-    to 5,000 values (beyond that, lookups run uncached). Exact values are a dict
+    to 5,000 values (beyond that, lookups run uncached). The memo keeps the 4
+    most recent config objects per tenant, so cache reloads don't pin stale
+    configs in memory.
+  - Selector headers that carry credentials (`Authorization`, `Cookie`,
+    `X-API-Key`, `X-Tenant-Key`, `X-Admin-Key`, client-cert headers) are refused
+    on save and skipped at read, so a credential can never land in the
+    discovery store or the audit log. Exact values are a dict
     lookup; globs are pre-compiled once per config object.
   - **Budget:** tenants without `policy_scopes`: one `dict.get`, effectively 0.
     Tenants with scopes: under 50 µs p99 added for selection + memo lookup
@@ -213,8 +219,12 @@ the selected local policy:
 | In both, global enabled | Stays enabled; local `enabled: false` is rejected on save (and ignored at merge if it got in some other way). |
 | In both, global disabled | Local may enable it. |
 | In both, action | Stricter wins: `pass < log < warn < redact < block`. An unknown action on save is a 422; at merge it keeps global. |
-| In both, settings | List-valued keys in both (for example `keywords`) are unioned. Scalars keep global, **unless** the global guardrail has `"delegable": true`, in which case local settings override (a team that needs its own threshold). |
-| `custom_policy_input` / `_output` | Policies unioned by `policy_id`; same id keeps the stricter action; capped at the existing 10 per stage (`MAX_POLICIES_PER_STAGE`), global policies first. Over the cap: 422 on save; at merge, extra local policies dropped with a warning. |
+| In both, denylist settings (`keywords`, `patterns`, `extra_patterns`, `blocked_topics`, `competitors`, `pii_patterns`) | Unioned: more entries is stricter. |
+| In both, allowlist settings (`allowed_languages`, `allowed_topics`, `trusted_domains`) | **Intersected**: more entries would be looser. An empty list means unrestricted, so empty on either side yields the other; lists with nothing in common keep global (422 on save). |
+| In both, any other setting | Global, **unless** the global guardrail has `"delegable": true`, in which case local settings override (a team that needs its own threshold). `delegable` never lets a team lower the action. |
+| Local `enabled: false` on any guardrail | Rejected on save, dropped at merge. Even for a guardrail global does not name: on the chat proxies (UNION mode) a disabled entry switches off a server default. |
+| Local stage when global has no such stage | Rejected on save ("set a global input_guardrails first"), ignored at merge. A tenant stage *replaces* the server defaults on `/guardrails/*`, so a one-guardrail local stage would drop the rest. |
+| `custom_policy_input` / `_output` | Policies unioned by `policy_id`; same id keeps the stricter action; capped like the write path (`MAX_POLICIES_PER_STAGE` for NL, `SHIELD_SIGMA_MAX_POLICIES_PER_STAGE` for Sigma, counted separately), global policies first. The caps also apply to a team-only custom policy guardrail. Over the cap: 422 on save; at merge, extra local policies dropped with a warning. |
 | `tool_allowlist` | Not allowed in a local policy (422). Global passes through untouched. |
 
 `delegable` is a new optional boolean on the global `GuardrailPolicy`
