@@ -135,9 +135,16 @@ curl -X POST http://localhost:8080/v1/shield/policies/acme/hipaa-policy/rollback
 
 Yes. `GET /v1/shield/policies/{tenant}/bundle/export` dumps all policies as JSON; `POST .../bundle/import` re-applies them. Use it for CI/CD-driven policy management or staging→prod promotion.
 
-### Can org-wide baseline policies be enforced across tenants?
+### Can org-wide baseline policies be enforced across teams?
 
-Yes. Set a `parent_tenant_id` and the child tenant inherits all parent policies. Children can **add** restrictions but cannot **weaken** them (a block→allow override is rejected).
+Yes, within one tenant: use [team policies]({{ "/team-policies/" | relative_url }}).
+You keep one global input and output policy and add a policy per team, picked by
+a request header you choose. A team policy can only make things stricter, so no
+team can weaken the global baseline, and it is enforced on every guarded request.
+
+Across separate tenants, Shield can record a parent tenant and report a merged
+view of their data protection policies, but it does not enforce that: each
+tenant's requests are checked against its own policies only.
 
 ---
 

@@ -40,6 +40,9 @@ COPY core/policy_inheritance.py core/
 # Imported at module load by api/routes_tool.py (which this image COPYs), so
 # their absence crash-loops the admin container at boot.
 COPY core/policy_mode.py core/
+# Policy scopes (docs/specs/policy-scopes.md): selection, merge and validation,
+# imported at module load by api/routes_policy_scopes.py. Stdlib only.
+COPY core/policy_scopes.py core/
 COPY core/prompt_exceptions.py core/
 COPY core/run_context.py core/
 # Shared redaction contract (modified_text / usable_redaction), imported at
@@ -104,6 +107,7 @@ COPY api/routes_admin_principals.py api/
 COPY api/routes_admin_delegations.py api/
 COPY api/routes_admin_policies.py api/
 COPY api/routes_tenant_self.py api/
+COPY api/routes_policy_scopes.py api/
 COPY api/routes_agents_registry.py api/
 COPY api/routes_governance.py api/
 COPY api/routes_edge.py api/
@@ -181,6 +185,7 @@ COPY api/routes_tool.py api/
 COPY api/routes_config.py api/
 COPY storage/__init__.py storage/
 COPY storage/tenant_store.py storage/
+COPY storage/policy_scopes_store.py storage/
 # Per-tenant role-binding config. identity_resolution imports it lazily
 # inside a try/except, so a missing COPY does NOT crash the boot — it
 # silently falls back to env defaults and every tenant's IdP claim-path
