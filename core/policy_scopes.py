@@ -513,6 +513,27 @@ def selector_headers(tenant_config: Optional[dict]) -> list[str]:
     return _selector_headers(scopes) if isinstance(scopes, dict) else []
 
 
+def rules_for_values(tenant_config: Optional[dict], values: Sequence[str]) -> dict:
+    """The rule each already-normalized value would land in under the current
+    config, for the discovered-values list. Ignores ``enabled`` (like preview),
+    so rules can be checked against real values before scopes go live.
+    ``(overflow)`` stands for many values, so it maps to None."""
+    scopes = (tenant_config or {}).get("policy_scopes")
+    compiled = _Compiled(tenant_config, scopes) if isinstance(scopes, dict) else None
+    out = {}
+    for value in values:
+        if value == "(overflow)":
+            out[value] = None
+        elif compiled is None:
+            out[value] = RULE_GLOBAL
+        else:
+            try:
+                out[value] = compiled._match(value)
+            except Exception:
+                out[value] = RULE_GLOBAL
+    return out
+
+
 def request_scope(request) -> Optional[dict]:
     """The decision the middleware made for this request, as a response field.
 

@@ -20,17 +20,18 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from core.auth import require_config_write
 from core.policy_scopes import (
-    MISSING, RULE_GLOBAL, STAGE_KEYS, resolve, scopes_disabled,
+    MISSING, RULE_GLOBAL, STAGE_KEYS, resolve, rules_for_values, scopes_disabled,
 )
 from storage.admin_audit import log_admin_action
 from storage.policy_scopes_store import (
     AmbiguousKeyPrefix, InvalidScopes, KeyPrefixNotFound, TenantNotFound,
-    VersionConflict, change_scopes, get_scopes, resolve_key_prefix, stale_warnings,
+    VersionConflict, change_scopes, discovery_enabled, get_scopes, read_seen,
+    resolve_key_prefix, stale_warnings,
 )
 
 tenant_router = APIRouter(prefix="/v1/tenant/me/policy-scopes", tags=["policy-scopes"])
@@ -257,6 +258,23 @@ def _preview(tenant_id: str, body: PreviewBody) -> dict:
     }
 
 
+def _discovered(tenant_id: str, limit: int) -> dict:
+    """Header values seen on the guard path, and the rule each lands in now.
+
+    ``matched_rule`` is computed against the current rules, not the ones in
+    force when the value was seen, so an admin sees what a rule they just
+    wrote would catch.
+    """
+    tenant, _ = _errors_to_http(get_scopes, tenant_id)
+    rows = read_seen(tenant_id)
+    shown = rows[:limit]
+    matched = rules_for_values(tenant, [r["value"] for r in shown])
+    for row in shown:
+        row["matched_rule"] = matched.get(row["value"])
+    return {"tenant_id": tenant_id, "discovery_enabled": discovery_enabled(),
+            "total": len(rows), "values": shown}
+
+
 # ── Tenant routes ────────────────────────────────────────────────────────────
 
 @tenant_router.get("")
@@ -299,6 +317,12 @@ async def delete_my_binding(request: Request, key_prefix: str):
 async def preview_my_scope(request: Request, body: PreviewBody):
     tenant_id, _ = await _tenant_caller(request, body)
     return _preview(tenant_id, body)
+
+
+@tenant_router.get("/discovered")
+async def my_discovered_values(request: Request, limit: int = Query(200, ge=1, le=2000)):
+    tenant_id, _ = await _tenant_caller(request)
+    return _discovered(tenant_id, limit)
 
 
 # ── Admin routes ─────────────────────────────────────────────────────────────
@@ -344,3 +368,10 @@ async def admin_delete_binding(request: Request, tenant_id: str, key_prefix: str
 async def admin_preview(request: Request, tenant_id: str, body: PreviewBody):
     _admin_caller(request, tenant_id)
     return _preview(tenant_id, body)
+
+
+@admin_router.get("/discovered")
+async def admin_discovered_values(request: Request, tenant_id: str,
+                                  limit: int = Query(200, ge=1, le=2000)):
+    _admin_caller(request, tenant_id)
+    return _discovered(tenant_id, limit)

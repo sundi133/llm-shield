@@ -511,7 +511,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                     # request does not spend it; after the agent checks, so a
                     # refused caller is still recorded.
                     if path in self._POLICY_SCOPE_PATHS:
-                        _scope_stop = _apply_policy_scope(request, tenant_config, api_key)
+                        _scope_stop = _apply_policy_scope(request, tenant_id, tenant_config, api_key)
                         if _scope_stop is not None:
                             return _scope_stop
 
@@ -558,7 +558,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
         return response
 
 
-def _apply_policy_scope(request: Request, tenant_config: dict,
+def _apply_policy_scope(request: Request, tenant_id: str, tenant_config: dict,
                         api_key: Optional[str]) -> Optional[JSONResponse]:
     """Swap ``request.state.tenant_config`` for the team's merged view.
 
@@ -578,6 +578,12 @@ def _apply_policy_scope(request: Request, tenant_config: dict,
     decision = resolution.decision
     if decision is None:
         return None
+    if not decision.degraded:
+        # Discovery: every value seen, refused ones included, so an admin can
+        # write rules for values they didn't know in advance. In-process; a
+        # background thread flushes it.
+        from storage.policy_scopes_store import record_seen
+        record_seen(tenant_id, decision.value, decision.header)
     if decision.outcome == policy_scopes.REJECT_MISSING:
         headers = policy_scopes.selector_headers(tenant_config)
         return JSONResponse(status_code=403, content={

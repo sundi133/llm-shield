@@ -155,10 +155,24 @@ tenant record cheap to load; a large blob on the guard path already costs about
 
 **Discovery store** (new Redis key, written only by the background flush):
 
-- `policy_scope_seen:{tenant_id}`: hash, field = normalized value, value = JSON
-  `{"count": int, "first_seen": ts, "last_seen": ts, "header": "X-Org-Id"}`.
-- At most 2,000 fields per tenant; values beyond that add to the `(overflow)` field.
-- TTL 30 days, refreshed on each flush. Values not seen for 30 days age out.
+Three hashes per tenant, field = normalized value. Three rather than one hash
+of JSON so the count is an atomic `HINCRBY` and concurrent flushes from several
+workers never lose increments:
+
+- `policy_scope_seen:{tenant_id}`: request count (`HINCRBY`).
+- `policy_scope_seen_first:{tenant_id}`: first seen, epoch seconds (`HSETNX`).
+- `policy_scope_seen_last:{tenant_id}`: `"{epoch seconds}|{header}"`, the
+  header the value most recently arrived on (shows a header rename's progress).
+- At most 2,000 values per tenant; a flush keeps the busiest new values that
+  fit and adds the rest to the `(overflow)` field.
+- TTL 30 days, refreshed on each flush. A tenant that stops sending values ages out.
+- In process: a buffer of at most 50,000 (tenant, value) pairs, updated under
+  a lock; a daemon thread flushes it at most every
+  `SHIELD_POLICY_SCOPE_FLUSH_SECONDS`, started by a request (no startup task).
+  `GET /discovered` flushes its own process's buffer first.
+- Every decision is recorded, refused requests included; `(missing)` and
+  `(invalid)` are counted like any value. Selection errors are not recorded.
+- Without Redis, the same three maps live in the in-memory fallback store.
 
 **Tenant scoping.** Both keys are keyed by `tenant_id`, which the middleware
 resolves from the API key. A header value is only ever looked up inside that
@@ -179,7 +193,7 @@ Tenant-scoped under `/v1/tenant/me/policy-scopes`, with operator mirrors under
 | `DELETE /rules/{rule_id}` | | 204. |
 | `PUT /key-bindings/{key_prefix}` | `{allowed: [...]}` | 404 if the prefix matches none of this tenant's keys; 409 if it matches more than one. |
 | `DELETE /key-bindings/{key_prefix}` | | 204. |
-| `GET /discovered?limit=200` | | `[{value, count, first_seen, last_seen, header, matched_rule}]`. `matched_rule` is computed against the **current** rules, so the admin sees what a new rule would catch. |
+| `GET /discovered?limit=200` | | `{discovery_enabled, total, values: [{value, count, first_seen, last_seen, header, matched_rule}]}`, busiest first, `limit` 1 to 2,000. `matched_rule` is computed against the **current** rules (ignoring `enabled`, like preview), so the admin sees what a new rule would catch; it is null for `(overflow)`. |
 | `POST /preview` | `{headers: {...}, key_prefix?}` | `{value, source_header, rule, outcome, scopes_active, kill_switch, effective: {input_guardrails, output_guardrails}, guardrail_tiers}`. Reads the config fresh from the store, so it reflects a save immediately. Evaluates rules even while scopes are off for the tenant (`scopes_active: false`), so rules can be tested before turning them on. Read-only, so it needs no write scope. |
 
 Status codes: 422 for an invalid or weakening rule (body lists every violation,
