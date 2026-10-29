@@ -53,25 +53,26 @@ Open **Input & Output Guardrails**. The **Editing policy for** bar sits above
 your guardrails.
 
 1. **Name your header.** Click **Team settings**, enter the header (for
-   example `X-Org-Id`), tick **Apply team policies to live traffic**, and save.
+   example `X-Org-Id`), turn on **Apply team policies to live traffic**, and save. The badge
+   next to **Editing policy for** changes to **Live**.
    You don't need any rules yet.
 2. **Watch what arrives.** Send traffic as usual. **Discovered values** lists
    every value seen on your header, how many requests carried it, and which
    policy it gets today.
-3. **Create a rule.** Click **Create rule** next to a value, or **+ Team rule**.
+3. **Create a rule.** Click **Create rule** next to a value, or **+ New team rule**.
    Add exact values, or a pattern such as `eng-*` to cover teams that don't
    exist yet.
 4. **Edit the team's guardrails.** The page shows the same guardrail cards:
    - rows marked **Global** come from the global policy; you can pick a
      stricter action or add to their lists, nothing else;
    - **+ Add guardrail** adds one for this team only.
-5. **Save Changes** saves the selected team. **Global (everyone)** takes you
+5. **Save Changes** saves the selected team. **Global** takes you
    back to the global policy, which works exactly as before.
 6. **Try it.** Enter a header value to see which policy a request would get.
    It reflects a save immediately; live traffic picks changes up within a
    minute.
 
-**Unmatched values** is the policy for any value no rule matches, including
+**Other values** is the policy for any value no rule matches, including
 values you have never seen. Leave it empty to give them the global policy.
 
 ## Header values you don't know in advance
@@ -80,7 +81,7 @@ You don't have to list your teams up front:
 
 - **Discovered values** shows every value as soon as traffic carries it.
 - **Patterns** (`eng-*`, `*-prod`) match values that appear later.
-- **Unmatched values** gives brand-new teams a sensible baseline on their first
+- **Other values** gives brand-new teams a sensible baseline on their first
   request.
 
 Values are compared after trimming spaces and lowercasing, so `TeamA`,
