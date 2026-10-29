@@ -1,6 +1,7 @@
 # Spec: policy scopes (global + per-team I/O policies selected by a request header)
 
-Status: **draft, awaiting approval.** No code yet.
+Status: **implemented**, tasks 1 to 5 on branch `feat/policy-scopes`. Task 0 (parent-tenant doc drift) and 0b (regex_pattern / length_limit settings bug) are separate and still open.
+Customer guide: `docs/team-policies.md` (`/team-policies/`).
 
 ## 1. Problem & outcome
 
@@ -88,6 +89,13 @@ the global rule blocks is blocked for every value, including no header at all.
     | Known value, steady state (memoized) | 0.29 µs | 0.33 µs |
     | First sight of a value, 20 rules / 20 globs, no match, plus merge | 2.5 µs | 3.2 µs |
     | First sight, 4,000 globs (the original limit, now rejected) | 279 µs | 321 µs |
+
+    Measured again on the shipped `core.policy_scopes.resolve` (task 5), with
+    a real Starlette `Headers` object, 200 rules and 100 globs, 50,000 runs:
+    known value **2.5 µs median, 6.2 µs p99**; tenant without scopes 0.3 µs
+    median, 0.7 µs p99. Higher than the prototype because of header lookups
+    and the per-request copy of the memoized config that carries the marker;
+    well inside the 50 µs budget.
   - What a local policy *enables* costs what that guardrail costs (a custom LLM
     policy is an LLM call), exactly as if the tenant had enabled it globally.
     That is the customer's choice, not Shield overhead; the preview endpoint shows
@@ -561,4 +569,4 @@ keywords need different actions.
      existing global route when Global is selected;
    - a Discovered values list (value, header, requests, policy now, "Create rule");
    - a Try it box backed by `POST /preview` plus `/guardrails/input`;
-   - `docs/policy-scopes.md` built from the walkthrough (no em dashes).
+   - `docs/team-policies.md` (`/team-policies/`) built from the walkthrough (no em dashes).

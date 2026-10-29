@@ -3180,8 +3180,114 @@
         </div>
       </div>
 
+      <!-- Team policies (policy scopes). docs/specs/policy-scopes.md, task 5.
+           Global is the page as it always was; picking a team swaps the cards
+           below for that team's view, where global rules are locked. -->
+      <div id="ps-bar" class="card hidden" style="margin-bottom:1rem;">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Editing policy for</div>
+            <div class="card-subtitle" id="ps-bar-sub">A request header picks the team. A team policy can only add to the global policy, never weaken it.</div>
+          </div>
+          <div style="display:flex;gap:0.5rem;">
+            <button class="small" onclick="psToggleSettings()">Team settings</button>
+          </div>
+        </div>
+        <div id="ps-chips" style="display:flex;flex-wrap:wrap;gap:0.4rem;"></div>
+        <div id="ps-warnings" class="hidden" style="margin-top:0.75rem;font-size:12px;color:var(--warning, #f59e0b);"></div>
+        <div id="ps-settings" class="hidden" style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--border);">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0.75rem;font-size:12.5px;">
+            <label>Team headers, first one present wins
+              <input id="ps-headers" placeholder="X-Team-Id, X-Org-Id" style="width:100%;">
+              <span class="muted" style="font-size:11px;">To rename a header, put the new one first and keep the old one until it goes quiet in Discovered values.</span>
+            </label>
+            <label>When no team header is sent
+              <select id="ps-missing" style="width:100%;">
+                <option value="global">Use the global policy</option>
+                <option value="reject">Refuse the request (403)</option>
+              </select>
+            </label>
+            <label style="display:flex;align-items:center;gap:0.5rem;">
+              <input type="checkbox" id="ps-enabled"> Apply team policies to live traffic
+            </label>
+          </div>
+          <div style="margin-top:0.75rem;display:flex;gap:0.5rem;">
+            <button data-config-write class="primary small" onclick="psSaveSettings()">Save team settings</button>
+          </div>
+        </div>
+        <div id="ps-msg" class="hidden"></div>
+      </div>
+
+      <div id="ps-team-view" class="hidden">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title" id="ps-team-title">Team</div>
+              <div class="card-subtitle" id="ps-team-sub"></div>
+            </div>
+            <div style="display:flex;gap:0.5rem;">
+              <button data-config-write class="small" id="ps-delete-rule" onclick="psDeleteRule()" style="color:var(--danger);">Delete team rule</button>
+            </div>
+          </div>
+          <div id="ps-match" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0.75rem;font-size:12.5px;">
+            <label>Exact values
+              <input id="ps-match-exact" placeholder="team-a, teama" oninput="psMatchChanged()" style="width:100%;">
+            </label>
+            <label>Patterns, for values you haven't seen yet
+              <input id="ps-match-glob" placeholder="eng-*" oninput="psMatchChanged()" style="width:100%;">
+            </label>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Input guardrails for this team</div>
+              <div class="card-subtitle">Locked rows come from the global policy. You can make them stricter or add to their lists.</div>
+            </div>
+            <button data-config-write class="small" onclick="openAddPolicy('input')">+ Add guardrail</button>
+          </div>
+          <div id="ps-team-input" class="policy-grid"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">Output guardrails for this team</div>
+              <div class="card-subtitle">Locked rows come from the global policy.</div>
+            </div>
+            <button data-config-write class="small" onclick="openAddPolicy('output')">+ Add guardrail</button>
+          </div>
+          <div id="ps-team-output" class="policy-grid"></div>
+        </div>
+      </div>
+
+      <div id="ps-discovered-card" class="card hidden">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Discovered values</div>
+            <div class="card-subtitle">Every value seen on your team headers in the last 30 days, before or after you write a rule.</div>
+          </div>
+          <button class="small" onclick="psLoadDiscovered()">Refresh</button>
+        </div>
+        <div id="ps-discovered" style="font-size:12.5px;"></div>
+      </div>
+
+      <div id="ps-try-card" class="card hidden">
+        <div class="card-header">
+          <div>
+            <div class="card-title">Try it</div>
+            <div class="card-subtitle">Which policy would a request with this header get? Reflects saved changes immediately.</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <select id="ps-try-header" style="width:auto;min-width:140px;"></select>
+          <input id="ps-try-value" placeholder="TeamA" style="flex:1;min-width:160px;" onkeydown="if(event.key==='Enter')psTry()">
+          <button class="small" onclick="psTry()">Test</button>
+        </div>
+        <div id="ps-try-result" style="margin-top:0.75rem;font-size:12.5px;"></div>
+      </div>
+
       <!-- Full JSON Preview -->
-      <div class="card" style="margin-bottom:1rem;">
+      <div class="card ps-global-only" style="margin-bottom:1rem;">
         <div class="card-header" style="cursor:pointer;" onclick="document.getElementById('full-json-preview').classList.toggle('hidden');this.querySelector('.toggle-arrow').textContent=document.getElementById('full-json-preview').classList.contains('hidden')?'▸':'▾';">
           <div>
             <div class="card-title"><span class="toggle-arrow" style="margin-right:0.4rem;">▸</span>Full Policy JSON</div>
@@ -3194,7 +3300,7 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card ps-global-only">
         <div class="card-header">
           <div>
             <div class="card-title">Input Guardrails <span id="input-guardrails-count" class="muted" style="font-weight:400;"></span></div>
@@ -3229,7 +3335,7 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card ps-global-only">
         <div class="card-header">
           <div>
             <div class="card-title">Output Guardrails <span id="output-guardrails-count" class="muted" style="font-weight:400;"></span></div>
@@ -3264,7 +3370,7 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card ps-global-only">
         <div class="card-header" style="cursor: pointer;" onclick="document.getElementById('raw-json-body').classList.toggle('hidden'); this.querySelector('.toggle-arrow').textContent = document.getElementById('raw-json-body').classList.contains('hidden') ? '▸' : '▾';">
           <div>
             <div class="card-title"><span class="toggle-arrow" style="margin-right: 0.4rem;">▸</span>Advanced — Raw JSON</div>
@@ -8339,6 +8445,7 @@ async function loadPolicies() {
     renderPolicies();
     document.getElementById('policies-json').value = JSON.stringify(POLICIES, null, 2);
   }
+  loadPolicyScopes();
 }
 
 function renderPolicies() {
@@ -8534,6 +8641,8 @@ function openAddPolicy(stage) {
   document.getElementById('add-policy-title').textContent = `Add ${stage === 'input' ? 'Input' : 'Output'} Guardrail`;
   const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
   const existing = new Set(Object.keys(POLICIES[key] || {}));
+  // In a team view, global guardrails are already rows; offer the rest.
+  if (PS_VIEW !== 'global') Object.keys((PS_DRAFT || {})[key] || {}).forEach(n => existing.add(n));
   const available = (stage === 'input' ? INPUT_GUARDRAILS : OUTPUT_GUARDRAILS).filter(g => !existing.has(g));
   const sel = document.getElementById('add-policy-name');
   sel.innerHTML = '<option value="">Select a guardrail…</option>' + available.map(g => {
@@ -8567,6 +8676,12 @@ function confirmAddPolicy() {
   }
 
   const key = ADD_POLICY_STAGE === 'input' ? 'input_guardrails' : 'output_guardrails';
+  if (PS_VIEW !== 'global') {
+    psLocal(key)[name] = { enabled: true, action, settings };
+    psMarkDirty();
+    closeAddPolicy();
+    return;
+  }
   POLICIES[key][name] = { enabled: true, action, settings };
   markDirty();
   renderPolicyStage(ADD_POLICY_STAGE);
@@ -8574,6 +8689,7 @@ function confirmAddPolicy() {
 }
 
 async function savePolicies() {
+  if (PS_VIEW !== 'global') return psSaveTeam();
   try {
     await apiCall('/v1/tenant/me/policies', {
       method: 'PUT',
@@ -8605,7 +8721,529 @@ async function savePoliciesFromJSON() {
 }
 
 function discardPolicyChanges() {
+  if (PS_VIEW !== 'global') {
+    if (PS_NEW_RULE) { PS_NEW_RULE = false; return psSelect('global', true); }
+    return psSelect(PS_VIEW, true);
+  }
   loadPolicies();
+}
+
+// ── Team policies (policy scopes) ─────────
+// docs/specs/policy-scopes.md, task 5. A request header picks a team rule; the
+// rule's guardrails are merged over the global policy and can only tighten it.
+// The server enforces every rule below (422 with reasons); the UI only offers
+// what would pass, and shows the server's reasons when something doesn't.
+let PS = null;                // { policy_scopes, warnings, kill_switch }
+let PS_VIEW = 'global';       // 'global' | 'unmatched' | a rule id
+let PS_DRAFT = null;          // the selected team's { match, input_guardrails, output_guardrails }
+let PS_DIRTY = false;
+let PS_NEW_RULE = false;      // the selected rule exists only in the browser so far
+const PS_BASE = '/v1/tenant/me/policy-scopes';
+const PS_STRICT = { pass: 0, log: 1, warn: 2, redact: 3, mask: 3, block: 4 };
+const PS_UI_ACTIONS = ['log', 'warn', 'block'];
+const PS_DENYLISTS = ['keywords', 'patterns', 'extra_patterns', 'blocked_topics', 'competitors', 'pii_patterns'];
+const PS_ALLOWLISTS = ['allowed_languages', 'allowed_topics', 'trusted_domains'];
+
+// Attribute-safe: values from Discovered come from request headers.
+function psEsc(v) {
+  return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function psCanWrite() {
+  return typeof canWriteConfig !== 'function' || canWriteConfig();
+}
+
+function psW() {
+  return psCanWrite() ? '' : ' disabled title="Only workspace administrators can change configuration"';
+}
+
+// apiCall turns a 422's list of reasons into "[object Object]"; keep them.
+async function psApi(path, options = {}) {
+  options.headers = { ...(options.headers || {}), 'X-API-Key': API_KEY, 'Content-Type': 'application/json' };
+  const r = await fetch(`${BASE_URL}${PS_BASE}${path}`, options);
+  if (r.status === 204) return {};
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const d = data.detail;
+    const err = new Error(typeof d === 'string' ? d : (d && d.message) || `HTTP ${r.status}`);
+    err.errors = (d && Array.isArray(d.errors)) ? d.errors : [];
+    err.status = r.status;
+    throw err;
+  }
+  return data;
+}
+
+function psShow(msg, ok) {
+  const el = document.getElementById('ps-msg');
+  el.className = 'toast ' + (ok ? 'success' : 'error');
+  el.style.marginTop = '0.75rem';
+  el.innerHTML = msg;
+  el.classList.remove('hidden');
+  if (ok) setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+function psShowError(e) {
+  const list = (e.errors || []).map(x => `<li>${psEsc(x)}</li>`).join('');
+  psShow(list ? `${psEsc(e.message === 'HTTP 422' ? "That team policy can't be saved:" : e.message)}<ul style="margin:0.4rem 0 0 1rem;">${list}</ul>`
+              : psEsc(e.message), false);
+}
+
+async function loadPolicyScopes() {
+  try {
+    PS = await psApi('');
+  } catch (e) {
+    // An older server without policy scopes: the page stays exactly as before.
+    PS = null;
+    document.getElementById('ps-bar').classList.add('hidden');
+    return;
+  }
+  document.getElementById('ps-bar').classList.remove('hidden');
+  const s = PS.policy_scopes;
+  document.getElementById('ps-headers').value = (s.selectors || []).map(x => x.header).join(', ');
+  document.getElementById('ps-missing').value = s.missing || 'global';
+  document.getElementById('ps-enabled').checked = !!s.enabled;
+  const w = document.getElementById('ps-warnings');
+  const warn = [...(PS.warnings || [])];
+  if (PS.kill_switch) warn.unshift('Team policies are switched off on this server (SHIELD_DISABLE_POLICY_SCOPES). Every request gets the global policy.');
+  w.innerHTML = warn.map(x => `<div>${psEsc(x)}</div>`).join('');
+  w.classList.toggle('hidden', !warn.length);
+  const tryHeader = document.getElementById('ps-try-header');
+  const headers = (s.selectors || []).map(x => x.header);
+  tryHeader.innerHTML = (headers.length ? headers : ['X-Org-Id']).map(h => `<option>${psEsc(h)}</option>`).join('');
+  const configured = (s.selectors || []).length > 0;
+  document.getElementById('ps-discovered-card').classList.toggle('hidden', !configured);
+  document.getElementById('ps-try-card').classList.toggle('hidden', !configured);
+  if (!configured) document.getElementById('ps-settings').classList.remove('hidden');
+  psRenderChips();
+  if (configured) psLoadDiscovered();
+  if (PS_VIEW !== 'global' && !PS_NEW_RULE && !psRule(PS_VIEW) && PS_VIEW !== 'unmatched') psSelect('global', true);
+}
+
+function psRule(id) {
+  return ((PS && PS.policy_scopes.rules) || []).find(r => r.id === id) || null;
+}
+
+function psRenderChips() {
+  const s = PS.policy_scopes;
+  const chip = (id, label, extra) => `
+    <button class="small ${PS_VIEW === id ? 'primary' : ''}" data-ps-view="${psEsc(id)}"
+            onclick="psSelect(this.dataset.psView)">${label}${extra ? ` <span class="muted" style="font-size:10.5px;">${extra}</span>` : ''}</button>`;
+  const rules = (s.rules || []).map(r => {
+    const m = r.match || {};
+    const hint = [...(m.exact || []), ...(m.glob || [])].slice(0, 3).join(', ');
+    return chip(r.id, psEsc(r.id), psEsc(hint));
+  });
+  if (PS_NEW_RULE && PS_VIEW !== 'global' && !psRule(PS_VIEW) && PS_VIEW !== 'unmatched') {
+    rules.push(chip(PS_VIEW, psEsc(PS_VIEW), 'unsaved'));
+  }
+  document.getElementById('ps-chips').innerHTML = [
+    chip('global', 'Global (everyone)'),
+    ...rules,
+    chip('unmatched', 'Unmatched values', s.unmatched ? '' : 'global only'),
+    `<button data-config-write class="small" onclick="psNewRule()"${psW()}>+ Team rule</button>`,
+  ].join('');
+  const sub = document.getElementById('ps-bar-sub');
+  const headers = (s.selectors || []).map(x => x.header);
+  sub.textContent = headers.length
+    ? `Team header: ${headers.join(', then ')}. ${s.enabled ? 'Live.' : 'Not applied to live traffic yet; turn it on in Team settings.'}`
+    : 'Name the request header that identifies a team to get started.';
+}
+
+function psToggleSettings() {
+  document.getElementById('ps-settings').classList.toggle('hidden');
+}
+
+async function psSaveSettings() {
+  const s = PS.policy_scopes;
+  const headers = document.getElementById('ps-headers').value.split(',').map(x => x.trim()).filter(Boolean);
+  try {
+    PS.policy_scopes = (await psApi('/settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        enabled: document.getElementById('ps-enabled').checked,
+        selectors: headers.map(h => ({ header: h })),
+        missing: document.getElementById('ps-missing').value,
+        unmatched: s.unmatched || null,
+        expected_version: s.version,
+      }),
+    })).policy_scopes;
+    psShow('Team settings saved. Live traffic picks them up within a minute.', true);
+    await loadPolicyScopes();
+  } catch (e) { psShowError(e); }
+}
+
+// force: switch without asking (after a save, a discard, or a new rule).
+function psSelect(view, force) {
+  if (!force && view !== PS_VIEW) {
+    if (PS_DIRTY && !confirm('Discard unsaved changes to this team policy?')) return;
+    if (POLICIES_DIRTY && PS_VIEW === 'global') {
+      if (!confirm('Discard unsaved changes to the global policy?')) return;
+      loadPolicies();
+    }
+    PS_NEW_RULE = false;             // leaving an unsaved new rule drops it
+  }
+  PS_VIEW = view;
+  PS_DIRTY = false;
+  document.getElementById('edit-banner').classList.add('hidden');
+  const team = view !== 'global';
+  document.querySelectorAll('.ps-global-only').forEach(el => el.classList.toggle('hidden', team));
+  document.getElementById('ps-team-view').classList.toggle('hidden', !team);
+  if (team && !PS_NEW_RULE) {
+    const src = view === 'unmatched' ? (PS.policy_scopes.unmatched || {}) : (psRule(view) || {});
+    PS_DRAFT = JSON.parse(JSON.stringify({
+      match: src.match || { exact: [], glob: [] },
+      input_guardrails: src.input_guardrails || {},
+      output_guardrails: src.output_guardrails || {},
+    }));
+  }
+  psRenderChips();
+  if (team) psRenderTeam();
+}
+
+function psNewRule(value) {
+  const suggested = (value || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+  const id = (prompt('Name this team rule (lowercase letters, digits, - and _):', suggested) || '').trim().toLowerCase();
+  if (!id) return;
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id) || id === 'global' || id === 'unmatched') {
+    return alert('Use lowercase letters, digits, - and _, starting with a letter or digit.');
+  }
+  if (psRule(id)) return psSelect(id);
+  if (PS_DIRTY && !confirm('Discard unsaved changes to this team policy?')) return;
+  if (POLICIES_DIRTY && PS_VIEW === 'global' && !confirm('Discard unsaved changes to the global policy?')) return;
+  PS_DRAFT = { match: { exact: value ? [value] : [id], glob: [] }, input_guardrails: {}, output_guardrails: {} };
+  PS_NEW_RULE = true;
+  psSelect(id, true);
+  psMarkDirty();
+}
+
+function psLocal(key) {
+  if (!PS_DRAFT[key]) PS_DRAFT[key] = {};
+  return PS_DRAFT[key];
+}
+
+function psMarkDirty() {
+  PS_DIRTY = true;
+  document.getElementById('edit-banner').classList.remove('hidden');
+  psRenderTeam();
+}
+
+function psMatchChanged() {
+  const split = id => document.getElementById(id).value.split(',').map(x => x.trim()).filter(Boolean);
+  PS_DRAFT.match = { exact: split('ps-match-exact'), glob: split('ps-match-glob') };
+  PS_DIRTY = true;
+  document.getElementById('edit-banner').classList.remove('hidden');
+}
+
+function psRenderTeam() {
+  const unmatched = PS_VIEW === 'unmatched';
+  document.getElementById('ps-team-title').textContent = unmatched ? 'Unmatched values' : `Team rule: ${PS_VIEW}`;
+  document.getElementById('ps-team-sub').textContent = unmatched
+    ? 'Applies to any header value no team rule matches, including values you have never seen. Requests with no header get the global policy.'
+    : 'Requests whose team header matches below get the global policy plus these additions.';
+  document.getElementById('ps-match').classList.toggle('hidden', unmatched);
+  document.getElementById('ps-delete-rule').classList.toggle('hidden', PS_NEW_RULE);
+  document.getElementById('ps-delete-rule').textContent = unmatched ? 'Clear unmatched policy' : 'Delete team rule';
+  if (!unmatched && document.activeElement?.id !== 'ps-match-exact' && document.activeElement?.id !== 'ps-match-glob') {
+    document.getElementById('ps-match-exact').value = (PS_DRAFT.match.exact || []).join(', ');
+    document.getElementById('ps-match-glob').value = (PS_DRAFT.match.glob || []).join(', ');
+  }
+  psRenderTeamStage('input');
+  psRenderTeamStage('output');
+}
+
+function psRenderTeamStage(stage) {
+  const key = stage + '_guardrails';
+  const global = POLICIES[key] || {};
+  const local = (PS_DRAFT || {})[key] || {};
+  const names = [...Object.keys(global), ...Object.keys(local).filter(n => !(n in global))]
+    .filter(n => n !== 'tool_allowlist');
+  const el = document.getElementById(`ps-team-${stage}`);
+  if (!names.length) {
+    el.innerHTML = `<div class="muted" style="padding:1rem;text-align:center;">No ${stage} guardrails. ${Object.keys(global).length ? '' : `Set a global ${stage} policy first; a team policy adds to it.`}</div>`;
+    return;
+  }
+  el.innerHTML = names.map(name => psRow(stage, name, global[name], local[name])).join('');
+}
+
+function psRow(stage, name, g, l) {
+  const meta = GUARDRAIL_META[name] || {};
+  const label = meta.label || name.replace(/\b\w/g, c => c.toUpperCase());
+  const icon = meta.icon || '🔒';
+  const color = meta.color || '#6366f1';
+  const locked = !!g && g.enabled !== false;
+  const offGlobally = !!g && g.enabled === false;
+  const teamOn = !!l && l.enabled !== false;
+  const gAction = (g && g.action) || 'block';
+  const action = locked
+    ? ((PS_STRICT[l?.action] ?? -1) > (PS_STRICT[gAction] ?? -1) ? l.action : gAction)
+    : ((l && l.action) || 'block');
+  const offer = locked ? PS_UI_ACTIONS.filter(a => PS_STRICT[a] >= (PS_STRICT[gAction] ?? 0)) : PS_UI_ACTIONS;
+  if (!offer.includes(action)) offer.push(action);
+  const badge = locked
+    ? `<span class="badge" title="From the global policy">🔒 Global</span>`
+    : offGlobally
+      ? `<span class="badge" style="background:rgba(113,113,122,0.2);color:#a1a1aa;">Off globally</span>`
+      : `<span class="badge badge-success">This team only</span>`;
+  const n = psEsc(name);
+  const toggle = locked
+    ? `<label class="switch" title="Enabled by the global policy; a team can't turn it off"><input type="checkbox" checked disabled><span class="slider"></span></label>`
+    : `<label class="switch"><input type="checkbox" ${teamOn ? 'checked' : ''} data-stage="${stage}" data-name="${n}"
+          onchange="psToggle(this.dataset.stage,this.dataset.name,this.checked)"${psW()}><span class="slider"></span></label>`;
+  const select = (locked || teamOn) ? `
+    <select data-stage="${stage}" data-name="${n}" onchange="psSetAction(this.dataset.stage,this.dataset.name,this.value)" style="font-size:11px;"${psW()}>
+      ${offer.map(a => `<option value="${a}" ${a === action ? 'selected' : ''}>${a[0].toUpperCase() + a.slice(1)}${locked && a === gAction ? ' (global)' : ''}</option>`).join('')}
+    </select>` : '';
+  const lists = (locked || teamOn) ? psLists(stage, name, g, l) : '';
+  const json = JSON.stringify(l || {}, null, 2);
+  const editId = `ps-json-${stage}-${n}`;
+  return `
+    <div class="guardrail-row" style="flex-wrap:wrap;opacity:${locked || teamOn ? 1 : 0.6};">
+      <div class="guardrail-icon" style="background:${color}20;color:${color};">${icon}</div>
+      <div class="guardrail-info">
+        <div class="gr-name">${psEsc(label)} ${badge}</div>
+        ${meta.desc ? `<div class="gr-desc">${meta.desc}</div>` : ''}
+      </div>
+      <div class="guardrail-controls">${select}${toggle}</div>
+      ${lists}
+      <div style="width:100%;display:flex;gap:0.4rem;margin-top:0.4rem;padding-left:2.75rem;">
+        <button class="small" onclick="document.getElementById('${editId}').classList.toggle('hidden')" style="font-size:10px;padding:0.15rem 0.5rem;">Team JSON</button>
+        ${!g && l ? `<button class="small" data-stage="${stage}" data-name="${n}" onclick="psRemove(this.dataset.stage,this.dataset.name)" style="font-size:10px;padding:0.15rem 0.5rem;color:var(--danger);"${psW()}>Remove</button>` : ''}
+        ${locked && !g.delegable ? `<span class="muted" style="font-size:11px;align-self:center;">Other settings are set by the global policy.</span>` : ''}
+      </div>
+      <div id="${editId}" class="hidden" style="width:100%;margin-top:0.5rem;padding-left:2.75rem;">
+        <textarea id="${editId}-ta" style="width:100%;min-height:90px;font-size:11px;">${psEsc(json)}</textarea>
+        <button class="small" data-stage="${stage}" data-name="${n}" onclick="psApplyJson(this.dataset.stage,this.dataset.name)" style="margin-top:0.3rem;"${psW()}>Apply</button>
+        <span class="muted" style="font-size:11px;">Only this team's additions. The server rejects anything that would weaken the global policy.</span>
+      </div>
+    </div>`;
+}
+
+function psLists(stage, name, g, l) {
+  const gs = (g && g.enabled !== false && g.settings) || {};
+  const ls = (l && l.settings) || {};
+  const out = [];
+  PS_DENYLISTS.forEach(k => {
+    if (!(k in gs) && !(k in ls) && !(name === 'keyword_blocklist' && k === 'keywords')) return;
+    const globalItems = (Array.isArray(gs[k]) ? gs[k] : []).filter(x => typeof x === 'string');
+    const teamItems = (Array.isArray(ls[k]) ? ls[k] : []).filter(x => typeof x === 'string' && !globalItems.includes(x));
+    out.push(`
+      <div style="width:100%;padding-left:2.75rem;margin-top:0.4rem;font-size:11.5px;">
+        <span class="muted">${psEsc(k.replace(/_/g, ' '))}:</span>
+        ${globalItems.map(x => `<span class="gr-setting-chip" title="Global">🔒 ${psEsc(x)}</span>`).join(' ')}
+        ${teamItems.map(x => `<span class="gr-setting-chip" style="border-color:var(--success, #22c55e);">${psEsc(x)}
+          <a href="#" data-stage="${stage}" data-name="${psEsc(name)}" data-key="${k}" data-item="${psEsc(x)}"
+             onclick="event.preventDefault();psListRemove(this.dataset.stage,this.dataset.name,this.dataset.key,this.dataset.item)"
+             style="margin-left:0.25rem;">×</a></span>`).join(' ')}
+        <input placeholder="Add for this team" data-stage="${stage}" data-name="${psEsc(name)}" data-key="${k}" style="font-size:11px;width:150px;"
+               onkeydown="if(event.key==='Enter'){psListAdd(this.dataset.stage,this.dataset.name,this.dataset.key,this.value);}"${psW()}>
+      </div>`);
+  });
+  PS_ALLOWLISTS.forEach(k => {
+    if (!Array.isArray(gs[k]) || !gs[k].length) return;
+    const narrowed = Array.isArray(ls[k]) && ls[k].length ? ls[k] : gs[k];
+    out.push(`
+      <div style="width:100%;padding-left:2.75rem;margin-top:0.4rem;font-size:11.5px;">
+        <span class="muted">${psEsc(k.replace(/_/g, ' '))} (a team can only narrow this):</span>
+        ${gs[k].map(x => `<label class="gr-setting-chip" style="cursor:pointer;">
+          <input type="checkbox" ${narrowed.includes(x) ? 'checked' : ''} data-stage="${stage}" data-name="${psEsc(name)}" data-key="${k}" data-item="${psEsc(x)}"
+                 onchange="psAllowToggle(this.dataset.stage,this.dataset.name,this.dataset.key,this.dataset.item,this.checked)"${psW()}> ${psEsc(x)}</label>`).join(' ')}
+      </div>`);
+  });
+  return out.join('');
+}
+
+function psEntry(stage, name) {
+  const local = psLocal(stage + '_guardrails');
+  if (!local[name]) local[name] = { enabled: true };
+  return local[name];
+}
+
+function psPrune(stage, name) {
+  const local = psLocal(stage + '_guardrails');
+  const e = local[name];
+  const g = (POLICIES[stage + '_guardrails'] || {})[name];
+  if (!e || !g || g.enabled === false) return;
+  if (e.settings && !Object.keys(e.settings).length) delete e.settings;
+  const keys = Object.keys(e).filter(k => k !== 'enabled');
+  if (!keys.length) delete local[name];
+}
+
+function psSetAction(stage, name, action) {
+  const g = (POLICIES[stage + '_guardrails'] || {})[name];
+  const e = psEntry(stage, name);
+  if (g && g.enabled !== false && action === (g.action || 'block')) delete e.action;
+  else e.action = action;
+  psPrune(stage, name);
+  psMarkDirty();
+}
+
+function psToggle(stage, name, on) {
+  const local = psLocal(stage + '_guardrails');
+  const g = (POLICIES[stage + '_guardrails'] || {})[name];
+  // Start from the global guardrail's action and settings; "delegable" and
+  // the like are global-only flags, not part of a team policy.
+  const base = g ? JSON.parse(JSON.stringify({ action: g.action, settings: g.settings || {} })) : {};
+  if (on) local[name] = { ...base, ...(local[name] || {}), enabled: true };
+  else delete local[name];
+  psMarkDirty();
+}
+
+function psRemove(stage, name) {
+  delete psLocal(stage + '_guardrails')[name];
+  psMarkDirty();
+}
+
+function psListAdd(stage, name, key, value) {
+  value = (value || '').trim();
+  if (!value) return;
+  const e = psEntry(stage, name);
+  e.settings = e.settings || {};
+  const list = Array.isArray(e.settings[key]) ? e.settings[key] : [];
+  if (!list.includes(value)) list.push(value);
+  e.settings[key] = list;
+  psMarkDirty();
+}
+
+function psListRemove(stage, name, key, value) {
+  const e = psEntry(stage, name);
+  e.settings = e.settings || {};
+  e.settings[key] = (e.settings[key] || []).filter(x => x !== value);
+  if (!e.settings[key].length) delete e.settings[key];
+  psPrune(stage, name);
+  psMarkDirty();
+}
+
+function psAllowToggle(stage, name, key, value, on) {
+  const g = (POLICIES[stage + '_guardrails'] || {})[name] || {};
+  const all = (g.settings || {})[key] || [];
+  const e = psEntry(stage, name);
+  e.settings = e.settings || {};
+  let cur = Array.isArray(e.settings[key]) && e.settings[key].length ? e.settings[key] : [...all];
+  cur = on ? all.filter(x => cur.includes(x) || x === value) : cur.filter(x => x !== value);
+  if (!cur.length) { alert('Keep at least one. An empty list would mean no restriction at all.'); psRenderTeam(); return; }
+  if (cur.length === all.length) delete e.settings[key];
+  else e.settings[key] = cur;
+  psPrune(stage, name);
+  psMarkDirty();
+}
+
+function psApplyJson(stage, name) {
+  let v;
+  try { v = JSON.parse(document.getElementById(`ps-json-${stage}-${name}-ta`).value || '{}'); }
+  catch (e) { return alert('Invalid JSON'); }
+  const local = psLocal(stage + '_guardrails');
+  if (!v || !Object.keys(v).length) delete local[name];
+  else local[name] = v;
+  psMarkDirty();
+}
+
+async function psSaveTeam() {
+  const s = PS.policy_scopes;
+  try {
+    if (PS_VIEW === 'unmatched') {
+      const empty = !Object.keys(PS_DRAFT.input_guardrails || {}).length && !Object.keys(PS_DRAFT.output_guardrails || {}).length;
+      await psApi('/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          enabled: !!s.enabled, selectors: s.selectors || [], missing: s.missing || 'global',
+          unmatched: empty ? null : { input_guardrails: PS_DRAFT.input_guardrails, output_guardrails: PS_DRAFT.output_guardrails },
+          expected_version: s.version,
+        }),
+      });
+    } else {
+      await psApi(`/rules/${encodeURIComponent(PS_VIEW)}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          match: PS_DRAFT.match,
+          input_guardrails: PS_DRAFT.input_guardrails || {},
+          output_guardrails: PS_DRAFT.output_guardrails || {},
+          expected_version: s.version,
+        }),
+      });
+    }
+    PS_NEW_RULE = false;
+    PS_DIRTY = false;
+    document.getElementById('edit-banner').classList.add('hidden');
+    psShow('Team policy saved. Live traffic picks it up within a minute; Try it shows it now.', true);
+    await loadPolicyScopes();
+    psSelect(PS_VIEW, true);
+  } catch (e) {
+    if (e.status === 409) e.message = 'Someone else changed team policies since you loaded them. Copy your changes, then Refresh.';
+    psShowError(e);
+  }
+}
+
+async function psDeleteRule() {
+  if (PS_VIEW === 'unmatched') {
+    if (!confirm('Clear the unmatched policy? Unmatched values will get the global policy only.')) return;
+    PS_DRAFT.input_guardrails = {};
+    PS_DRAFT.output_guardrails = {};
+    return psSaveTeam();
+  }
+  if (!confirm(`Delete team rule ${PS_VIEW}? Its values will get the unmatched or global policy.`)) return;
+  try {
+    await psApi(`/rules/${encodeURIComponent(PS_VIEW)}`, { method: 'DELETE' });
+    psShow(`Deleted ${psEsc(PS_VIEW)}.`, true);
+    PS_DIRTY = false;
+    await loadPolicyScopes();
+    psSelect('global', true);
+  } catch (e) { psShowError(e); }
+}
+
+async function psLoadDiscovered() {
+  const el = document.getElementById('ps-discovered');
+  try {
+    const data = await psApi('/discovered?limit=200');
+    if (!data.values.length) {
+      el.innerHTML = `<div class="muted" style="padding:0.75rem;">Nothing seen yet. Send a request with your team header and it shows up here within ${data.discovery_enabled ? 'a few seconds' : '… discovery is off on this server'}.</div>`;
+      return;
+    }
+    const when = t => t ? new Date(t * 1000).toLocaleString() : '';
+    el.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;">
+        <thead><tr class="muted" style="text-align:left;"><th>Value</th><th>Header</th><th>Requests</th><th>Last seen</th><th>Policy now</th><th></th></tr></thead>
+        <tbody>${data.values.map(r => {
+          const reserved = r.value.startsWith('(');
+          const policy = r.matched_rule === null ? '' : r.matched_rule === 'global' ? 'Global' : r.matched_rule === 'unmatched' ? 'Unmatched' : psEsc(r.matched_rule);
+          const action = reserved || (r.matched_rule !== 'global' && r.matched_rule !== 'unmatched') ? ''
+            : `<button data-config-write class="small" data-value="${psEsc(r.value)}" onclick="psNewRule(this.dataset.value)" style="font-size:10px;"${psW()}>Create rule</button>`;
+          return `<tr style="border-top:1px solid var(--border);">
+            <td class="mono">${psEsc(r.value)}</td><td>${psEsc(r.header || '')}</td>
+            <td>${Number(r.count).toLocaleString()}</td><td class="muted">${when(r.last_seen)}</td>
+            <td>${policy}</td><td>${action}</td></tr>`;
+        }).join('')}</tbody>
+      </table>
+      ${data.total > data.values.length ? `<div class="muted" style="margin-top:0.4rem;">Showing ${data.values.length} of ${data.total}.</div>` : ''}`;
+  } catch (e) {
+    el.innerHTML = `<div class="muted">${psEsc(e.message)}</div>`;
+  }
+}
+
+async function psTry() {
+  const header = document.getElementById('ps-try-header').value;
+  const value = document.getElementById('ps-try-value').value;
+  const el = document.getElementById('ps-try-result');
+  try {
+    const r = await psApi('/preview', { method: 'POST', body: JSON.stringify({ headers: value ? { [header]: value } : {} }) });
+    if (r.outcome !== 'applied') {
+      el.innerHTML = `<span class="badge" style="background:rgba(239,68,68,0.15);color:var(--danger);">Refused (403)</span> ${r.outcome === 'reject_missing' ? 'This tenant requires a team header.' : 'This key may not use that team.'}`;
+      return;
+    }
+    const label = r.rule === 'global' ? 'the global policy' : r.rule === 'unmatched' ? 'the unmatched policy' : `team rule ${psEsc(r.rule)}`;
+    const rows = ['input', 'output'].map(stage => {
+      const eff = r.effective[stage + '_guardrails'] || {};
+      const names = Object.keys(eff).filter(n => eff[n].enabled !== false && n !== 'tool_allowlist');
+      return `<div style="margin-top:0.4rem;"><span class="muted">${stage}:</span> ${names.map(n => {
+        const kw = ((eff[n].settings || {}).keywords || []);
+        return `<span class="gr-setting-chip" style="margin:0 0.3rem 0.3rem 0;display:inline-block;">${psEsc(n)} · ${psEsc(eff[n].action || 'block')}${kw.length ? ` · ${kw.length} keywords` : ''}${r.guardrail_tiers[n] === 'slow' ? ' · LLM' : ''}</span>`;
+      }).join(' ') || '<span class="muted">none</span>'}</div>`;
+    }).join('');
+    el.innerHTML = `Value <code>${psEsc(r.value)}</code>${r.source_header ? ` from ${psEsc(r.source_header)}` : ''} gets <strong>${label}</strong>.
+      ${r.scopes_active ? '' : '<span class="muted">(Not live yet: team policies are off for live traffic.)</span>'}${rows}`;
+  } catch (e) {
+    el.innerHTML = `<span class="muted">${psEsc(e.message)}</span>`;
+  }
 }
 
 // ── Usage ─────────────────────────────────
