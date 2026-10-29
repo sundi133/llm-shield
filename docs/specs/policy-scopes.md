@@ -195,10 +195,10 @@ gate as every other tenant config write. Admin mirrors: the existing
 
 | Where | Change |
 |---|---|
-| `core/middleware.py`, right after `request.state.tenant_config = tenant_config` | On guarded paths only, replace it with the scoped copy and set `request.state.policy_scope`. |
-| Guarded paths | `/guardrails/input`, `/guardrails/output`, `/guardrails/file`, `/classify`, `/classify_output`, `/v1/chat/completions`, `/v1/shield/chat/completions`, `/v1/shield/chat/agent`. |
-| `/guardrails/*` responses | New field `"policy_scope": {"rule": "team-a", "value": "team-a", "header": "X-Org-Id"}`; `rule` is `"global"` or `"unmatched"` when those applied. Additive. |
-| Chat proxy responses | Response header `X-Shield-Policy-Scope: team-a`. |
+| `core/middleware.py`, after the agent checks and before the quota check | On scoped paths only (`ShieldMiddleware._POLICY_SCOPE_PATHS`), replace `request.state.tenant_config` with the scoped copy and set `request.state.policy_scope`. After the agent checks so a refused caller is still recorded as a shadow agent; before the quota so a refused request doesn't spend it. |
+| Scoped paths | `/guardrails/input`, `/guardrails/output`, `/guardrails/file`, `/classify`, `/classify_output`, `/v1/chat/completions`, `/v1/shield/chat/completions`, `/v1/shield/chat/agent`, and `/beta/litellm_basic_guardrail_api` (it calls the `/guardrails/input` handler with the same request). |
+| `/guardrails/input`, `/output`, `/file` responses | New field `"policy_scope": {"rule": "team-a", "value": "team-a", "header": "X-Org-Id"}`; `rule` is `"global"` or `"unmatched"` when those applied. Absent for tenants without policy scopes. Additive. |
+| Every scoped route's response | Header `X-Shield-Policy-Scope: team-a`, set by the middleware, so the chat proxies (whose bodies are the model's) carry it too. |
 | Audit log (`audit_logger.log` in the classify routes) | New `policy_scope` field. |
 
 Every consumer (`_classify_tenant`, `resolve_proxy_guardrails`) already reads

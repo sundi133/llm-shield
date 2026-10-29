@@ -167,7 +167,8 @@ def _is_glob(pattern: str) -> bool:
 
 def _selector_headers(scopes: dict) -> list[str]:
     out = []
-    for sel in scopes.get("selectors") or ():
+    selectors = scopes.get("selectors")
+    for sel in selectors if isinstance(selectors, list) else ():
         name = (sel or {}).get("header") if isinstance(sel, dict) else None
         if isinstance(name, str) and _HEADER_RE.match(name) \
                 and name.lower() not in _FORBIDDEN_HEADERS:
@@ -504,6 +505,22 @@ def resolve(tenant_config: Optional[dict],
 def is_scoped(config: Optional[dict]) -> bool:
     """True for a merged view. Storage refuses to save these."""
     return bool(config) and SCOPE_MARKER in config
+
+
+def selector_headers(tenant_config: Optional[dict]) -> list[str]:
+    """The usable selector header names, for the 403 that asks for one."""
+    scopes = (tenant_config or {}).get("policy_scopes")
+    return _selector_headers(scopes) if isinstance(scopes, dict) else []
+
+
+def request_scope(request) -> Optional[dict]:
+    """The decision the middleware made for this request, as a response field.
+
+    None when the tenant has no policy scopes, so responses for every other
+    tenant are unchanged.
+    """
+    decision = getattr(getattr(request, "state", None), "policy_scope", None)
+    return decision.as_dict() if isinstance(decision, Decision) else None
 
 
 # ---------------------------------------------------------------------------

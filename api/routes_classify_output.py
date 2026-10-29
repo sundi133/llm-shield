@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from core.models import GuardrailResult, PipelineResult
 from core.pipeline import run_pipeline
+from core.policy_scopes import request_scope
 from core.run_context import resolve_run_id
 from core.tenant_pipeline import REPLACE, run_tenant_pipeline
 from guardrails.base import _request_configs
@@ -585,6 +586,10 @@ async def classify_output(request: Request, body: dict):
     blocked = response.get("action") == "block"
     guardrail_results = response.get("guardrail_results", [])
     triggered = [gr["guardrail"] for gr in guardrail_results if not gr.get("passed")]
+    # Which team policy ran (docs/specs/policy-scopes.md); absent otherwise.
+    _policy_scope = request_scope(request)
+    if _policy_scope is not None:
+        response["policy_scope"] = _policy_scope
     await audit_logger.log({
         "agent_key": agent_id or "",
         "endpoint": "/guardrails/output",
@@ -611,6 +616,7 @@ async def classify_output(request: Request, body: dict):
             "input_guardrails": [],
             "output_guardrails": [{"guardrail": gr["guardrail"], "passed": gr["passed"], "action": gr["action"], "message": gr.get("message", "")} for gr in guardrail_results],
             "usage": {},
+            "policy_scope": _policy_scope,
         },
     })
 
