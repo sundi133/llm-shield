@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 _CSV_FIELDS = ["violates_policy", "confidence", "violation_type", "reasoning"]
 
 
-# How the evaluator is told to read the text. The previous wording — "Consider
+# How the evaluator is told to read the text (POLICY_SCAN_INSTRUCTION, defined in
+# core/text_utils.py with the prompt builder and re-exported here). The previous wording — "Consider
 # context and intent" — reads as an invitation to weigh the message as a whole,
 # and on a long multi-topic message the model anchors on the leading topic:
 # a pricing disclosure that blocked at confidence 0.95 on its own passed
@@ -36,16 +37,9 @@ _CSV_FIELDS = ["violates_policy", "confidence", "violation_type", "reasoning"]
 # Presence-type policies (PII, pricing, secrets) are not about what a message is
 # FOR. A violating clause buried in an otherwise mundane request is still a
 # violation, so the evaluator is told to scan spans rather than summarise.
-POLICY_SCAN_INSTRUCTION = (
-    "Read the ENTIRE text from beginning to end and judge each sentence "
-    "against the criteria on its own.\n"
-    "A violation ANYWHERE makes the whole text a violation, even when it is a "
-    "single clause inside a long message that is mostly about something else.\n"
-    "Do NOT weigh how routine or benign the overall request seems, and do NOT "
-    "let the opening sentences settle the verdict. Unrelated surrounding "
-    "content never excuses a violating span.\n"
-    "Where the policy describes intent rather than presence, judge the intent "
-    "of the specific span, not of the message as a whole."
+from core.text_utils import (  # noqa: E402,F401
+    POLICY_SCAN_INSTRUCTION,
+    build_custom_policy_prompt,
 )
 
 
@@ -324,32 +318,7 @@ class CustomPolicyOutputGuardrail(BaseGuardrail):
     async def _evaluate_policy_with_llm(self, text: str, policy: Dict, context: Dict) -> Dict:
         """Use LLM to evaluate if output text violates custom policy."""
 
-        evaluation_prompt = f"""You are a content policy evaluator. Analyze the given output text against the specified policy.
-
-POLICY INFORMATION:
-- Name: {policy['name']}
-- Description: {policy['description']}
-
-EVALUATION CRITERIA:
-{policy['prompt']}
-
-OUTPUT TEXT TO ANALYZE (everything between the markers):
-<<<BEGIN TEXT
-{text}
-END TEXT>>>
-
-CONTEXT:
-- User Role: {context.get('user_role', 'unknown')}
-- Session ID: {context.get('session_id', 'unknown')}
-- Stage: Output validation
-
-{POLICY_SCAN_INSTRUCTION}
-
-Respond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning
-Use "none" for violation_type when there is no violation. Do not quote fields;
-reasoning is last so a comma inside it is harmless.
-Example: true,0.95,pii_disclosure,output contains a customer name and card number
-Example: false,0.90,none,no policy violation found"""
+        evaluation_prompt = build_custom_policy_prompt("output", policy, text, context)
 
         try:
             # Opt-in multi-turn: prepend prior conversation turns so the policy

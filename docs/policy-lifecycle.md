@@ -194,6 +194,20 @@ policy that failed to evaluate. The default lets it pass, which is the historic
 behavior. Set it to `0` when your custom policies are the control rather than
 defense in depth, and an unevaluated policy will block instead.
 
+**`SHIELD_CUSTOM_POLICY_PROMPT_LAYOUT`** (default `cached`) sets how each
+policy's prompt is laid out. Every enabled natural-language policy is one
+model call on the same text, sent at the same time. `cached` puts the text
+first and the policy last, so a model server with prefix caching (vLLM with
+`--enable-prefix-caching`, as Shield starts it, or a hosted API that caches
+prefixes) reads the text once per request instead of once per policy. The
+answer format is the same, and a request that contains the text end marker
+can't close the text early. Read on every call, so it takes effect without a
+restart.
+
+**Upgrading:** earlier releases put the policy first. If a policy's verdicts
+change after upgrading, set `SHIELD_CUSTOM_POLICY_PROMPT_LAYOUT=legacy` to get
+the original prompt back exactly, and tell us which policy and text.
+
 ### A `redact` policy on output returns redacted text
 
 When an output policy's action is `redact`, the guardrail makes one extra model

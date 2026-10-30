@@ -1,6 +1,13 @@
 # Spec: custom-policy prompts laid out for prefix caching
 
-Status: **draft, awaiting approval.** Branch `spec/custom-policy-prefix-cache`.
+Status: **approved 2026-10-30.** Implemented on branch
+`feat/custom-policy-prefix-layout` with **`cached` as the default**: at the
+user's request (2026-10-30) task 3 (switch the default) ships with task 1,
+ahead of the task 2 accuracy run. Prefix caching is enabled on both the
+on-prem vLLM and the Together AI deployment of the same model. `legacy`
+restores the old prompt byte for byte. Task 2 (eval set and measurement) is
+still to do and is now the check after the switch rather than the gate
+before it.
 
 ## 1. Problem & outcome
 
@@ -58,7 +65,7 @@ switch. Observable success:
 | Deployment | Effect |
 |---|---|
 | vLLM (RunPod, on-prem), `--enable-prefix-caching` | Main benefit: the text is prefilled about once per request instead of once per policy. |
-| Ollama (Railway) | Little: parallel requests run in separate slots that don't share a cache. Unchanged, not worse. |
+| Ollama (Railway) | Little: parallel requests run in separate slots that don't share a cache. Not measured; keep `legacy` there. |
 | Cloud model behind an OpenAI-compatible API | Provider-dependent. Automatic caching often needs prompts over about 1,024 tokens; most of these are shorter. Unchanged, not worse. |
 
 ### 2.2 What must stay true for caching
@@ -133,7 +140,8 @@ Judge the text above against this policy only. Answer with the one CSV line.
   rewritten (`END TEXT>>>` becomes `END TEXT>>&gt;`) before insertion, so text
   can't close the fence early and append fake criteria. Today the criteria come
   before the text so this mattered less; with the policy last it must hold.
-  Applied to both layouts (it is a fix either way).
+  Applied in `cached` only, so `legacy` stays byte for byte (decided
+  2026-10-30: change only the order).
 - The response parser is unchanged (same CSV line).
 - **Escape hatch:** `SHIELD_CUSTOM_POLICY_PROMPT_LAYOUT=legacy` restores
   today's prompt byte for byte, read per call. Default `cached`.
@@ -168,7 +176,7 @@ Dockerfile change. The env var is documented with the custom-policy settings.
 | Policies of one request with different `multi_turn` settings | Two prefix groups (with and without history); each shares within itself |
 | Very long text, trimmed by the existing budget | Trimmed the same way for every policy, so still identical |
 | Model returns prose instead of CSV | Same parser and same failure handling as today; parse-error rate is a gate metric |
-| `SHIELD_CUSTOM_POLICY_PROMPT_LAYOUT=legacy` | Today's prompt byte for byte, except the end-marker fix |
+| `SHIELD_CUSTOM_POLICY_PROMPT_LAYOUT=legacy` | Today's prompt byte for byte |
 
 ## 8. Test plan (Definition of Done)
 
@@ -185,10 +193,12 @@ Dockerfile change. The env var is documented with the custom-policy settings.
 5. **End marker:** text containing `END TEXT>>>` yields exactly one end marker
    in the prompt, after the text.
 6. **Legacy:** `legacy` yields today's prompt byte for byte (golden string
-   captured from current code before the change) apart from the end-marker fix.
-7. **Parser unchanged:** existing custom-policy tests pass unmodified
+   captured from current code before the change), end marker included.
+7. **Parser unchanged:** existing custom-policy tests pass
    (`test_custom_policy_dilution.py`, `test_custom_policy_multiturn.py`,
-   `test_custom_policy_csv.py`).
+   `test_custom_policy_csv.py`). Three CSV tests read the guardrail modules'
+   source for the prompt; they now read the built prompt for both stages and
+   both layouts instead (the prompt moved to `core/text_utils.py`).
 8. Full suite green in a clean venv.
 
 ### Accuracy gate (real model; must pass before `cached` is the default)
@@ -215,14 +225,15 @@ do not increase. Results go in this spec.
   texts: p50/p99 of the custom-policy guardrail latency, and vLLM's
   prefix-cache counters (`/metrics`, prefix cache queries and hits) over a
   burst of 100 requests. Recorded here.
-- Same run on Ollama to confirm no regression.
+- No Ollama run (decided 2026-10-30): the layout targets vLLM; Ollama deployments can keep `legacy`.
 
 ## 9. Tasks
 
 1. **Prompt builder and tests** (one PR): shared builder in
    `core/text_utils.py`; both stages use it; `SHIELD_CUSTOM_POLICY_PROMPT_LAYOUT`
-   with **`legacy` as the default in this PR**, so nothing changes on deploy;
-   end-marker fix in both layouts; automated tests 1 to 8.
+   (shipped with `cached` as the default, see Status);
+   end-marker fix in `cached`; automated tests 1 to 8. Scope kept to the
+   order only (decided 2026-10-30): no usage reporting or server-flag change.
 2. **Evaluation set and script** (one PR): `tests/data/custom_policy_eval.jsonl`,
    `scripts/eval_custom_policy_layout.py`; run on both models; results and the
    caching/latency numbers recorded in this spec.

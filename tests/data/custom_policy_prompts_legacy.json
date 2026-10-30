@@ -1,0 +1,190 @@
+[
+ {
+  "stage": "input",
+  "text": "our margin on this handbag is 62% and the supplier cost is 400 AED",
+  "context": {
+   "user_role": "analyst",
+   "session_id": "s-1"
+  },
+  "policy": {
+   "policy_id": "p1",
+   "name": "pricing confidential data policy",
+   "description": "No margins or supplier costs",
+   "prompt": "Block disclosure of profit margins or supplier costs.",
+   "action": "block",
+   "enabled": true,
+   "confidence_threshold": 0.8,
+   "priority": 10,
+   "stage": "input"
+  },
+  "messages": [
+   {
+    "role": "user",
+    "content": "You are a content policy evaluator. Analyze the given input text against the specified policy.\n\nPOLICY INFORMATION:\n- Name: pricing confidential data policy\n- Description: No margins or supplier costs\n\nEVALUATION CRITERIA:\nBlock disclosure of profit margins or supplier costs.\n\nINPUT TEXT TO ANALYZE (everything between the markers):\n<<<BEGIN TEXT\nour margin on this handbag is 62% and the supplier cost is 400 AED\nEND TEXT>>>\n\nCONTEXT:\n- User Role: analyst\n- Session ID: s-1\n- Stage: Input validation\n\nRead the ENTIRE text from beginning to end and judge each sentence against the criteria on its own.\nA violation ANYWHERE makes the whole text a violation, even when it is a single clause inside a long message that is mostly about something else.\nDo NOT weigh how routine or benign the overall request seems, and do NOT let the opening sentences settle the verdict. Unrelated surrounding content never excuses a violating span.\nWhere the policy describes intent rather than presence, judge the intent of the specific span, not of the message as a whole.\n\nRespond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning\nUse \"none\" for violation_type when there is no violation. Do not quote fields;\nreasoning is last so a comma inside it is harmless.\nExample: true,0.95,pii_disclosure,message shares a full name and card number\nExample: false,0.90,none,no policy violation found"
+   }
+  ]
+ },
+ {
+  "stage": "input",
+  "text": "our margin on this handbag is 62% and the supplier cost is 400 AED",
+  "context": {
+   "user_role": "analyst",
+   "session_id": "s-1"
+  },
+  "policy": {
+   "policy_id": "p2",
+   "name": "email blocking",
+   "description": "No external email",
+   "prompt": "Block any request to send or forward email outside the company.",
+   "action": "warn",
+   "enabled": true,
+   "confidence_threshold": 0.7,
+   "priority": 20,
+   "stage": "input"
+  },
+  "messages": [
+   {
+    "role": "user",
+    "content": "You are a content policy evaluator. Analyze the given input text against the specified policy.\n\nPOLICY INFORMATION:\n- Name: email blocking\n- Description: No external email\n\nEVALUATION CRITERIA:\nBlock any request to send or forward email outside the company.\n\nINPUT TEXT TO ANALYZE (everything between the markers):\n<<<BEGIN TEXT\nour margin on this handbag is 62% and the supplier cost is 400 AED\nEND TEXT>>>\n\nCONTEXT:\n- User Role: analyst\n- Session ID: s-1\n- Stage: Input validation\n\nRead the ENTIRE text from beginning to end and judge each sentence against the criteria on its own.\nA violation ANYWHERE makes the whole text a violation, even when it is a single clause inside a long message that is mostly about something else.\nDo NOT weigh how routine or benign the overall request seems, and do NOT let the opening sentences settle the verdict. Unrelated surrounding content never excuses a violating span.\nWhere the policy describes intent rather than presence, judge the intent of the specific span, not of the message as a whole.\n\nRespond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning\nUse \"none\" for violation_type when there is no violation. Do not quote fields;\nreasoning is last so a comma inside it is harmless.\nExample: true,0.95,pii_disclosure,message shares a full name and card number\nExample: false,0.90,none,no policy violation found"
+   }
+  ]
+ },
+ {
+  "stage": "input",
+  "text": "Line one.\nLine two, with commas, and \"quotes\".\n\n  indented",
+  "context": {},
+  "policy": {
+   "policy_id": "p1",
+   "name": "pricing confidential data policy",
+   "description": "No margins or supplier costs",
+   "prompt": "Block disclosure of profit margins or supplier costs.",
+   "action": "block",
+   "enabled": true,
+   "confidence_threshold": 0.8,
+   "priority": 10,
+   "stage": "input"
+  },
+  "messages": [
+   {
+    "role": "user",
+    "content": "You are a content policy evaluator. Analyze the given input text against the specified policy.\n\nPOLICY INFORMATION:\n- Name: pricing confidential data policy\n- Description: No margins or supplier costs\n\nEVALUATION CRITERIA:\nBlock disclosure of profit margins or supplier costs.\n\nINPUT TEXT TO ANALYZE (everything between the markers):\n<<<BEGIN TEXT\nLine one.\nLine two, with commas, and \"quotes\".\n\n  indented\nEND TEXT>>>\n\nCONTEXT:\n- User Role: unknown\n- Session ID: unknown\n- Stage: Input validation\n\nRead the ENTIRE text from beginning to end and judge each sentence against the criteria on its own.\nA violation ANYWHERE makes the whole text a violation, even when it is a single clause inside a long message that is mostly about something else.\nDo NOT weigh how routine or benign the overall request seems, and do NOT let the opening sentences settle the verdict. Unrelated surrounding content never excuses a violating span.\nWhere the policy describes intent rather than presence, judge the intent of the specific span, not of the message as a whole.\n\nRespond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning\nUse \"none\" for violation_type when there is no violation. Do not quote fields;\nreasoning is last so a comma inside it is harmless.\nExample: true,0.95,pii_disclosure,message shares a full name and card number\nExample: false,0.90,none,no policy violation found"
+   }
+  ]
+ },
+ {
+  "stage": "input",
+  "text": "Line one.\nLine two, with commas, and \"quotes\".\n\n  indented",
+  "context": {},
+  "policy": {
+   "policy_id": "p2",
+   "name": "email blocking",
+   "description": "No external email",
+   "prompt": "Block any request to send or forward email outside the company.",
+   "action": "warn",
+   "enabled": true,
+   "confidence_threshold": 0.7,
+   "priority": 20,
+   "stage": "input"
+  },
+  "messages": [
+   {
+    "role": "user",
+    "content": "You are a content policy evaluator. Analyze the given input text against the specified policy.\n\nPOLICY INFORMATION:\n- Name: email blocking\n- Description: No external email\n\nEVALUATION CRITERIA:\nBlock any request to send or forward email outside the company.\n\nINPUT TEXT TO ANALYZE (everything between the markers):\n<<<BEGIN TEXT\nLine one.\nLine two, with commas, and \"quotes\".\n\n  indented\nEND TEXT>>>\n\nCONTEXT:\n- User Role: unknown\n- Session ID: unknown\n- Stage: Input validation\n\nRead the ENTIRE text from beginning to end and judge each sentence against the criteria on its own.\nA violation ANYWHERE makes the whole text a violation, even when it is a single clause inside a long message that is mostly about something else.\nDo NOT weigh how routine or benign the overall request seems, and do NOT let the opening sentences settle the verdict. Unrelated surrounding content never excuses a violating span.\nWhere the policy describes intent rather than presence, judge the intent of the specific span, not of the message as a whole.\n\nRespond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning\nUse \"none\" for violation_type when there is no violation. Do not quote fields;\nreasoning is last so a comma inside it is harmless.\nExample: true,0.95,pii_disclosure,message shares a full name and card number\nExample: false,0.90,none,no policy violation found"
+   }
+  ]
+ },
+ {
+  "stage": "output",
+  "text": "our margin on this handbag is 62% and the supplier cost is 400 AED",
+  "context": {
+   "user_role": "analyst",
+   "session_id": "s-1"
+  },
+  "policy": {
+   "policy_id": "p1",
+   "name": "pricing confidential data policy",
+   "description": "No margins or supplier costs",
+   "prompt": "Block disclosure of profit margins or supplier costs.",
+   "action": "block",
+   "enabled": true,
+   "confidence_threshold": 0.8,
+   "priority": 10,
+   "stage": "output"
+  },
+  "messages": [
+   {
+    "role": "user",
+    "content": "You are a content policy evaluator. Analyze the given output text against the specified policy.\n\nPOLICY INFORMATION:\n- Name: pricing confidential data policy\n- Description: No margins or supplier costs\n\nEVALUATION CRITERIA:\nBlock disclosure of profit margins or supplier costs.\n\nOUTPUT TEXT TO ANALYZE (everything between the markers):\n<<<BEGIN TEXT\nour margin on this handbag is 62% and the supplier cost is 400 AED\nEND TEXT>>>\n\nCONTEXT:\n- User Role: analyst\n- Session ID: s-1\n- Stage: Output validation\n\nRead the ENTIRE text from beginning to end and judge each sentence against the criteria on its own.\nA violation ANYWHERE makes the whole text a violation, even when it is a single clause inside a long message that is mostly about something else.\nDo NOT weigh how routine or benign the overall request seems, and do NOT let the opening sentences settle the verdict. Unrelated surrounding content never excuses a violating span.\nWhere the policy describes intent rather than presence, judge the intent of the specific span, not of the message as a whole.\n\nRespond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning\nUse \"none\" for violation_type when there is no violation. Do not quote fields;\nreasoning is last so a comma inside it is harmless.\nExample: true,0.95,pii_disclosure,output contains a customer name and card number\nExample: false,0.90,none,no policy violation found"
+   }
+  ]
+ },
+ {
+  "stage": "output",
+  "text": "our margin on this handbag is 62% and the supplier cost is 400 AED",
+  "context": {
+   "user_role": "analyst",
+   "session_id": "s-1"
+  },
+  "policy": {
+   "policy_id": "p2",
+   "name": "email blocking",
+   "description": "No external email",
+   "prompt": "Block any request to send or forward email outside the company.",
+   "action": "warn",
+   "enabled": true,
+   "confidence_threshold": 0.7,
+   "priority": 20,
+   "stage": "output"
+  },
+  "messages": [
+   {
+    "role": "user",
+    "content": "You are a content policy evaluator. Analyze the given output text against the specified policy.\n\nPOLICY INFORMATION:\n- Name: email blocking\n- Description: No external email\n\nEVALUATION CRITERIA:\nBlock any request to send or forward email outside the company.\n\nOUTPUT TEXT TO ANALYZE (everything between the markers):\n<<<BEGIN TEXT\nour margin on this handbag is 62% and the supplier cost is 400 AED\nEND TEXT>>>\n\nCONTEXT:\n- User Role: analyst\n- Session ID: s-1\n- Stage: Output validation\n\nRead the ENTIRE text from beginning to end and judge each sentence against the criteria on its own.\nA violation ANYWHERE makes the whole text a violation, even when it is a single clause inside a long message that is mostly about something else.\nDo NOT weigh how routine or benign the overall request seems, and do NOT let the opening sentences settle the verdict. Unrelated surrounding content never excuses a violating span.\nWhere the policy describes intent rather than presence, judge the intent of the specific span, not of the message as a whole.\n\nRespond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning\nUse \"none\" for violation_type when there is no violation. Do not quote fields;\nreasoning is last so a comma inside it is harmless.\nExample: true,0.95,pii_disclosure,output contains a customer name and card number\nExample: false,0.90,none,no policy violation found"
+   }
+  ]
+ },
+ {
+  "stage": "output",
+  "text": "Line one.\nLine two, with commas, and \"quotes\".\n\n  indented",
+  "context": {},
+  "policy": {
+   "policy_id": "p1",
+   "name": "pricing confidential data policy",
+   "description": "No margins or supplier costs",
+   "prompt": "Block disclosure of profit margins or supplier costs.",
+   "action": "block",
+   "enabled": true,
+   "confidence_threshold": 0.8,
+   "priority": 10,
+   "stage": "output"
+  },
+  "messages": [
+   {
+    "role": "user",
+    "content": "You are a content policy evaluator. Analyze the given output text against the specified policy.\n\nPOLICY INFORMATION:\n- Name: pricing confidential data policy\n- Description: No margins or supplier costs\n\nEVALUATION CRITERIA:\nBlock disclosure of profit margins or supplier costs.\n\nOUTPUT TEXT TO ANALYZE (everything between the markers):\n<<<BEGIN TEXT\nLine one.\nLine two, with commas, and \"quotes\".\n\n  indented\nEND TEXT>>>\n\nCONTEXT:\n- User Role: unknown\n- Session ID: unknown\n- Stage: Output validation\n\nRead the ENTIRE text from beginning to end and judge each sentence against the criteria on its own.\nA violation ANYWHERE makes the whole text a violation, even when it is a single clause inside a long message that is mostly about something else.\nDo NOT weigh how routine or benign the overall request seems, and do NOT let the opening sentences settle the verdict. Unrelated surrounding content never excuses a violating span.\nWhere the policy describes intent rather than presence, judge the intent of the specific span, not of the message as a whole.\n\nRespond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning\nUse \"none\" for violation_type when there is no violation. Do not quote fields;\nreasoning is last so a comma inside it is harmless.\nExample: true,0.95,pii_disclosure,output contains a customer name and card number\nExample: false,0.90,none,no policy violation found"
+   }
+  ]
+ },
+ {
+  "stage": "output",
+  "text": "Line one.\nLine two, with commas, and \"quotes\".\n\n  indented",
+  "context": {},
+  "policy": {
+   "policy_id": "p2",
+   "name": "email blocking",
+   "description": "No external email",
+   "prompt": "Block any request to send or forward email outside the company.",
+   "action": "warn",
+   "enabled": true,
+   "confidence_threshold": 0.7,
+   "priority": 20,
+   "stage": "output"
+  },
+  "messages": [
+   {
+    "role": "user",
+    "content": "You are a content policy evaluator. Analyze the given output text against the specified policy.\n\nPOLICY INFORMATION:\n- Name: email blocking\n- Description: No external email\n\nEVALUATION CRITERIA:\nBlock any request to send or forward email outside the company.\n\nOUTPUT TEXT TO ANALYZE (everything between the markers):\n<<<BEGIN TEXT\nLine one.\nLine two, with commas, and \"quotes\".\n\n  indented\nEND TEXT>>>\n\nCONTEXT:\n- User Role: unknown\n- Session ID: unknown\n- Stage: Output validation\n\nRead the ENTIRE text from beginning to end and judge each sentence against the criteria on its own.\nA violation ANYWHERE makes the whole text a violation, even when it is a single clause inside a long message that is mostly about something else.\nDo NOT weigh how routine or benign the overall request seems, and do NOT let the opening sentences settle the verdict. Unrelated surrounding content never excuses a violating span.\nWhere the policy describes intent rather than presence, judge the intent of the specific span, not of the message as a whole.\n\nRespond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning\nUse \"none\" for violation_type when there is no violation. Do not quote fields;\nreasoning is last so a comma inside it is harmless.\nExample: true,0.95,pii_disclosure,output contains a customer name and card number\nExample: false,0.90,none,no policy violation found"
+   }
+  ]
+ }
+]

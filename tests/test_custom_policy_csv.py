@@ -68,27 +68,34 @@ def test_a_non_boolean_verdict_is_rejected_not_guessed():
 import re
 
 
-def _prompt_of(module_path: str) -> str:
-    return open(module_path).read()
+# The prompt is built in core/text_utils.py (both stages, both layouts of
+# docs/specs/custom-policy-prefix-cache.md), so these read the built prompt
+# rather than a module's source.
+_POLICY = {"name": "n", "description": "d", "prompt": "p"}
+
+
+def _prompts(stage: str) -> list[str]:
+    from core.text_utils import CUSTOM_POLICY_LAYOUTS, build_custom_policy_prompt
+    return [build_custom_policy_prompt(stage, _POLICY, "text", {}, layout=layout)
+            for layout in CUSTOM_POLICY_LAYOUTS]
 
 
 def test_output_policy_asks_for_csv_not_json():
-    src = _prompt_of("guardrails/output/custom_policy.py")
-    assert "ONLY one CSV line" in src
-    assert "Respond with ONLY a JSON object" not in src
+    for src in _prompts("output"):
+        assert "ONLY one CSV line" in src
+        assert "Respond with ONLY a JSON object" not in src
 
 
 def test_input_policy_asks_for_csv_not_json():
-    src = _prompt_of("guardrails/input/custom_policy.py")
-    assert "ONLY one CSV line" in src
-    assert "Respond with ONLY a JSON object" not in src
+    for src in _prompts("input"):
+        assert "ONLY one CSV line" in src
+        assert "Respond with ONLY a JSON object" not in src
 
 
 def test_the_prompt_lists_the_fields_the_parser_reads():
     """A reordered prompt would put values in the wrong columns silently."""
-    for path in ("guardrails/output/custom_policy.py",
-                 "guardrails/input/custom_policy.py"):
-        src = _prompt_of(path)
-        m = re.search(r"ONLY one CSV line: ([a-z_,]+)", src)
-        assert m, f"no CSV field list in {path}"
-        assert m.group(1).split(",") == _CSV_FIELDS, f"field order drift in {path}"
+    for stage in ("output", "input"):
+        for src in _prompts(stage):
+            m = re.search(r"ONLY one CSV line: ([a-z_,]+)", src)
+            assert m, f"no CSV field list in the {stage} prompt"
+            assert m.group(1).split(",") == _CSV_FIELDS, f"field order drift in the {stage} prompt"

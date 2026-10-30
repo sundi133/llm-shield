@@ -143,6 +143,111 @@ def custom_policy_history_turns() -> int:
         return _CUSTOM_POLICY_DEFAULT_TURNS
 
 
+# ── Custom-policy prompt (docs/specs/custom-policy-prefix-cache.md) ──────────
+# One prompt per enabled policy, all sent concurrently for the same text. The
+# "cached" layout puts everything shared by those prompts first and the policy
+# last, so a server with prefix caching (vLLM --enable-prefix-caching)
+# processes the text once per request instead of once per policy. "legacy" is
+# the prompt as it was, policy first. Nothing per policy and nothing per call
+# (time, ids) may appear before the policy section in "cached".
+
+# Moved here from guardrails/output/custom_policy.py (which re-exports it) so
+# the builder can use it. Why it reads this way is documented there.
+POLICY_SCAN_INSTRUCTION = (
+    "Read the ENTIRE text from beginning to end and judge each sentence "
+    "against the criteria on its own.\n"
+    "A violation ANYWHERE makes the whole text a violation, even when it is a "
+    "single clause inside a long message that is mostly about something else.\n"
+    "Do NOT weigh how routine or benign the overall request seems, and do NOT "
+    "let the opening sentences settle the verdict. Unrelated surrounding "
+    "content never excuses a violating span.\n"
+    "Where the policy describes intent rather than presence, judge the intent "
+    "of the specific span, not of the message as a whole."
+)
+
+CUSTOM_POLICY_LAYOUT_ENV = "SHIELD_CUSTOM_POLICY_PROMPT_LAYOUT"
+CUSTOM_POLICY_LAYOUTS = ("legacy", "cached")
+
+_TEXT_END = "END TEXT>>>"
+_TEXT_END_SAFE = "END TEXT>>&gt;"
+
+# stage -> (noun, Stage line, example of a violation in the answer format)
+_POLICY_STAGES = {
+    "input": ("input", "Input validation", "message shares a full name and card number"),
+    "output": ("output", "Output validation", "output contains a customer name and card number"),
+}
+
+
+def custom_policy_prompt_layout() -> str:
+    """SHIELD_CUSTOM_POLICY_PROMPT_LAYOUT, read per call: cached (default) or
+    legacy. Only "legacy" selects the old prompt; anything else is the default."""
+    value = os.environ.get(CUSTOM_POLICY_LAYOUT_ENV, "").strip().lower()
+    return "legacy" if value == "legacy" else "cached"
+
+
+def _fence_safe(text: str) -> str:
+    """Stop the text from closing the fence early: with the policy after the
+    text, a literal end marker followed by fake criteria would otherwise read
+    as Shield's own. Cached layout only; legacy is left exactly as it was."""
+    return (text or "").replace(_TEXT_END, _TEXT_END_SAFE)
+
+
+def build_custom_policy_prompt(stage: str, policy: dict, text: str,
+                               context: Optional[dict] = None,
+                               layout: Optional[str] = None) -> str:
+    """The evaluation prompt for one natural-language custom policy."""
+    noun, stage_line, example = _POLICY_STAGES[stage]
+    context = context or {}
+    layout = layout or custom_policy_prompt_layout()
+    body = _fence_safe(text) if layout == "cached" else text
+    answer_format = f"""Respond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning
+Use "none" for violation_type when there is no violation. Do not quote fields;
+reasoning is last so a comma inside it is harmless.
+Example: true,0.95,pii_disclosure,{example}
+Example: false,0.90,none,no policy violation found"""
+    context_block = f"""CONTEXT:
+- User Role: {context.get('user_role', 'unknown')}
+- Session ID: {context.get('session_id', 'unknown')}
+- Stage: {stage_line}"""
+    policy_block = f"""POLICY INFORMATION:
+- Name: {policy['name']}
+- Description: {policy['description']}
+
+EVALUATION CRITERIA:
+{policy['prompt']}"""
+    text_block = f"""{noun.upper()} TEXT TO ANALYZE (everything between the markers):
+<<<BEGIN TEXT
+{body}
+{_TEXT_END}"""
+    if layout == "cached":
+        # Static, then per request, then per policy: see the comment above.
+        return f"""You are a content policy evaluator. You will be given a text and then ONE
+policy. Decide whether the text violates that policy.
+
+{POLICY_SCAN_INSTRUCTION}
+
+{answer_format}
+
+{context_block}
+
+{text_block}
+
+{policy_block}
+
+Judge the text above against this policy only. Answer with the one CSV line."""
+    return f"""You are a content policy evaluator. Analyze the given {noun} text against the specified policy.
+
+{policy_block}
+
+{text_block}
+
+{context_block}
+
+{POLICY_SCAN_INSTRUCTION}
+
+{answer_format}"""
+
+
 def build_policy_messages(
     eval_prompt: str,
     context: Optional[dict],
