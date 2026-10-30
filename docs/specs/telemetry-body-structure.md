@@ -1,6 +1,6 @@
 # Spec: keep request and response bodies structured in telemetry
 
-Status: **draft, awaiting approval.** Branch `fix/telemetry-body-structure`.
+Status: **approved 2026-10-29; implemented** on branch `fix/telemetry-body-structure`.
 
 ## 1. Problem & outcome
 
@@ -47,8 +47,18 @@ in `core/asim.py`); log shipping, retention or index templates.
   `asyncio.create_task(_record_request_async(...))` and the response
   equivalent, after the body is already parsed for other reasons. The new
   function runs on the event loop, so its cost still matters: budget **under
-  0.5 ms p99 for a 100 KB body**, measured in the task and recorded here. No
-  I/O.
+  0.5 ms p99 for a 100 KB body**. No I/O.
+- **Measured** (`_bounded_body`, 2,000 runs; 300 at 1 MB):
+
+  | Body | Median | p99 | Old `_truncate` (median / p99) |
+  |---|---|---|---|
+  | 4 KB LiteLLM | 13 µs | 15 µs | |
+  | 100 KB LiteLLM | 144 µs | 178 µs | 148 µs / 850 µs |
+  | 100 KB chat, 50 messages | 199 µs | 492 µs | |
+  | 1 MB LiteLLM | 1.4 ms | 2.1 ms | 1.8 ms / 4.1 ms |
+
+  The cost is dominated by encoding the whole body once to measure it, which
+  the old code also did, so it is no slower than before.
 
 ## 3. Data model
 
@@ -56,7 +66,7 @@ Event fields (dotted names, expanded to objects by Elasticsearch):
 
 | Field | Before | After |
 |---|---|---|
-| `request.body` | object if ≤ 2,000 chars encoded, else string | object always (or absent when the body wasn't JSON) |
+| `request.body` | object if ≤ 2,000 chars encoded, else string | same JSON type as the body at any size: an object for every JSON-object request (absent when the body wasn't JSON) |
 | `response.body` | same | same as `request.body` |
 | `request.body_truncated` | none | `true` when anything in the body was shortened or dropped; absent otherwise |
 | `response.body_truncated` | none | same |
