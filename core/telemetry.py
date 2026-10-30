@@ -874,9 +874,18 @@ _BODY_REDACT_KEYS = frozenset({
 })
 
 
-def _body_mode_legacy() -> bool:
-    """SHIELD_TELEMETRY_BODY_MODE=legacy: the old whole-or-string body, no redaction."""
-    return os.environ.get(BODY_MODE_ENV, "").strip().lower() == "legacy"
+# SHIELD_TELEMETRY_BODY_MODE, read per event:
+#   bounded (default)  shorten bodies over _BODY_MAX_CHARS, redact credentials
+#   full               whole bodies, credentials still redacted
+#   raw                whole bodies and HTTP headers, nothing redacted
+#   legacy             the pre-structure output: whole body or a 2,000-char string
+BODY_MODES = ("bounded", "full", "raw", "legacy")
+
+
+def _body_mode() -> str:
+    """An unknown value reads as bounded, so a typo never logs secrets."""
+    mode = os.environ.get(BODY_MODE_ENV, "").strip().lower()
+    return mode if mode in BODY_MODES else "bounded"
 
 
 def _redact_body(value: Any) -> Any:
@@ -954,8 +963,16 @@ def _bounded_body(body: Any) -> tuple[Any, bool]:
 
 def _body_fields(prefix: str, body: Any) -> dict:
     """``{prefix: body}`` plus ``{prefix + "_truncated": True}`` when shortened."""
-    if _body_mode_legacy():
+    mode = _body_mode()
+    if mode == "legacy":
         return {prefix: _truncate(body)}
+    if mode == "raw":
+        return {prefix: body}
+    if mode == "full":
+        try:
+            return {prefix: _redact_body(body)}
+        except Exception:       # noqa: BLE001 - never fall back to the raw body
+            return {prefix: None, f"{prefix}_truncated": True}
     out, cut = _bounded_body(body)
     return {prefix: out, f"{prefix}_truncated": True} if cut else {prefix: out}
 
@@ -963,6 +980,8 @@ def _body_fields(prefix: str, body: Any) -> dict:
 def _safe_headers(headers: Optional[dict]) -> Optional[dict]:
     if not headers:
         return None
+    if _body_mode() == "raw":
+        return dict(headers)
     # Redact sensitive headers
     safe = {}
     sensitive = {"authorization", "x-api-key", "cookie", "set-cookie"}

@@ -102,9 +102,18 @@ Replace `_truncate(body)` for the two body fields with
 Raising the whole-body limit from 2,000 to 4,000 is deliberate: LiteLLM's
 `request_headers` plus `request_data` alone are about 1.5 KB.
 
-**Escape hatch:** `SHIELD_TELEMETRY_BODY_MODE=legacy` restores the old
-behaviour exactly (whole body or a 2,000-character string, no redaction),
-read per event. For a pipeline that parses the string form.
+**Modes** (`SHIELD_TELEMETRY_BODY_MODE`, read per event; added at the user's
+request 2026-10-30 so every value can be seen when needed):
+
+| Value | Bodies | Credentials |
+|---|---|---|
+| `bounded` (default; any unknown value) | rules above | redacted in bodies and HTTP headers |
+| `full` | whole, never shortened, no `body_truncated` | redacted in bodies and HTTP headers |
+| `raw` | whole | nothing redacted, in bodies or HTTP headers (`request.headers`) |
+| `legacy` | old output: whole or a 2,000-character string | body not redacted; HTTP headers as before |
+
+An unknown value reads as `bounded` so a typo can never log credentials. In
+`full`, a redaction error drops the body rather than logging it raw.
 
 ## 5. Security & backward compatibility
 
@@ -156,6 +165,8 @@ New `tests/test_telemetry_body.py`:
 6. `build_request_event` / `build_response_event` set `body_truncated` only
    when something was shortened, and never emit a string body.
 7. Legacy mode reproduces the old output exactly.
+7a. `full` logs whole bodies with credentials redacted; `raw` logs bodies and
+    HTTP headers as sent; unknown values behave as `bounded`.
 8. A body that makes `_bounded_body` raise produces an event with no body.
 9. End to end through `TestClient`: a long LiteLLM call's recorded request
    event carries `request.body.request_headers.x-tf-api-key-id`.

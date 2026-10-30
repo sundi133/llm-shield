@@ -219,3 +219,58 @@ def test_long_litellm_call_is_logged_with_its_headers(monkeypatch):
     assert req["request.body"]["request_headers"]["x-tf-api-key-id"] == KEY_ID
     assert req["request.body"]["request_data"]["user_api_key_org_id"] == "7w2lnkp"
     assert req["request.body_truncated"] is True
+
+
+# ── SHIELD_TELEMETRY_BODY_MODE: full and raw ─────────────────────────────────
+
+SECRET_BODY = {
+    "texts": ["t" * 20_000],
+    "request_headers": {"authorization": "Bearer sk-abc", "x-tf-api-key-id": KEY_ID},
+    "api_key": "sk-body",
+}
+SECRET_HEADERS = {"Authorization": "Bearer sk-hdr", "X-API-Key": "sk-x", "x-tf-api-key-id": KEY_ID}
+
+
+def test_full_mode_logs_whole_bodies_with_credentials_redacted(monkeypatch):
+    monkeypatch.setenv(t.BODY_MODE_ENV, "full")
+    ev = build_request_event(trace_id="t", endpoint="/x", method="POST",
+                             body=SECRET_BODY, headers=SECRET_HEADERS)
+    body = ev["request.body"]
+    assert body["texts"] == SECRET_BODY["texts"]               # nothing shortened
+    assert "request.body_truncated" not in ev
+    assert body["request_headers"]["authorization"] == "[REDACTED]"
+    assert body["api_key"] == "[REDACTED]"
+    assert body["request_headers"]["x-tf-api-key-id"] == KEY_ID
+    assert ev["request.headers"]["Authorization"] == "[REDACTED]"
+    resp = build_response_event(trace_id="t", endpoint="/x", status_code=200, latency_ms=1.0,
+                                body={"items": ["w" * 9000], "api_key": "sk-new"})
+    assert resp["response.body"] == {"items": ["w" * 9000], "api_key": "[REDACTED]"}
+
+
+def test_raw_mode_logs_every_value(monkeypatch):
+    monkeypatch.setenv(t.BODY_MODE_ENV, "raw")
+    ev = build_request_event(trace_id="t", endpoint="/x", method="POST",
+                             body=SECRET_BODY, headers=SECRET_HEADERS)
+    assert ev["request.body"] == SECRET_BODY
+    assert ev["request.headers"] == SECRET_HEADERS
+    assert "request.body_truncated" not in ev
+
+
+@pytest.mark.parametrize("value", ["", "bounded", "BOUNDED", "nonsense", "fulll"])
+def test_default_and_unknown_modes_are_bounded(monkeypatch, value):
+    monkeypatch.setenv(t.BODY_MODE_ENV, value)
+    ev = build_request_event(trace_id="t", endpoint="/x", method="POST",
+                             body=SECRET_BODY, headers=SECRET_HEADERS)
+    assert ev["request.body_truncated"] is True
+    assert ev["request.body"]["api_key"] == "[REDACTED]"
+    assert ev["request.headers"]["Authorization"] == "[REDACTED]"
+
+
+def test_full_mode_failure_drops_the_body(monkeypatch):
+    monkeypatch.setenv(t.BODY_MODE_ENV, "full")
+
+    def boom(v):
+        raise RuntimeError("bug")
+    monkeypatch.setattr(t, "_redact_body", boom)
+    ev = build_request_event(trace_id="t", endpoint="/x", method="POST", body={"api_key": "sk-x"})
+    assert ev["request.body"] is None and ev["request.body_truncated"] is True

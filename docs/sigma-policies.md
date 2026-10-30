@@ -261,5 +261,20 @@ one string. If you search for that string, use `request.body_truncated : true`
 instead. If your Elasticsearch index first mapped `request.body` as text, it
 will reject the structured bodies: roll over to a new index when you upgrade.
 An index that mapped `request.body` as an object, the usual case, starts
-accepting long-request events it used to reject. To keep the old output, set
-`SHIELD_TELEMETRY_BODY_MODE=legacy`.
+accepting long-request events it used to reject.
+
+**Choosing how much is logged.** Set `SHIELD_TELEMETRY_BODY_MODE` on the
+server. It takes effect on the next event, without a restart:
+
+| Value | Bodies | Credentials |
+|---|---|---|
+| `bounded` (default, also used for an unknown value) | Whole up to 4,000 characters, shortened beyond | `[REDACTED]` in bodies and HTTP headers |
+| `full` | Always whole, never shortened | `[REDACTED]` in bodies and HTTP headers |
+| `raw` | Always whole, never shortened | Logged as sent, including `Authorization`, `X-API-Key` and API keys in bodies |
+| `legacy` | Whole up to 2,000 characters, otherwise one cut-off string (the old output) | In bodies, logged as sent |
+
+Use `full` to see every value in `request_headers` and the body. Use `raw`
+only when the SIEM is cleared to hold credentials: anyone who can read the
+logs can then use the keys in them. Whole bodies make large records; check
+your SIEM's document size limit (Elasticsearch's default
+`http.max_content_length` is 100 MB per request).
