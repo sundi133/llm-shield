@@ -580,7 +580,7 @@ keywords need different actions.
 
 ## 10. Addendum: team header forwarded by LiteLLM (task 6)
 
-Status: **draft, awaiting approval.**
+Status: **approved 2026-10-29; implemented** (task 6, branch `feat/policy-scope-litellm-headers`).
 
 ### 10.1 Problem & outcome
 A customer runs a LiteLLM gateway in front of Shield's LiteLLM guardrail route
@@ -620,9 +620,10 @@ or any other body field; body headers on any other route; a portal field for
   - scoped tenant, other routes: zero (path check).
   - scoped tenant, LiteLLM route: one `await request.body()` (already buffered
     by the server; Starlette replays it to the route) and one `json.loads`.
-    Task 6 measures p50/p99 for 4 KB and 100 KB bodies and puts the numbers
-    here. Budget: under 1 ms p99 at 100 KB. If it is over, the route stores the
-    parsed body on `request.state` so FastAPI does not parse twice.
+    Budget: under 1 ms p99 at 100 KB. Measured on the shipped
+    `_forwarded_headers` (read + parse + pick, 3,000 runs): **4 KB: 4.7 µs
+    median, 14.8 µs p99; 100 KB: 90 µs median, 173 µs p99.** Within budget,
+    so the route keeps parsing the body itself.
 - No I/O, no store read, no network call.
 
 ### 10.3 Data model
@@ -697,7 +698,7 @@ Automated, in `tests/test_policy_scopes_guard_path.py`:
 6. Key locked to team A, body value for team B: 403 `policy_scope_not_allowed`.
 7. Discovery records the body value under the configured header name.
 8. `SHIELD_POLICY_SCOPE_BODY_HEADERS=off`: body ignored.
-9. Check the tests fail with the body getter removed.
+9. Check the tests fail with the body getter removed. (Done: 5 fail.)
 
 Full suite green in a clean venv. Latency numbers from 10.2 recorded here.
 

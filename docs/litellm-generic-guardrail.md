@@ -126,6 +126,11 @@ Clients then send `x-agent-key` (the agent's name in your Shield registry) and
   users do not control; see the
   [runbook]({{ "/litellm-runbook/" | relative_url }}#what-role-authorization-does-not-cover).
 
+To give teams different policies, use [team policies]({{ "/team-policies/" | relative_url }}#behind-litellm-or-an-ai-gateway):
+add the header that names the team (for example `x-org-id`) to
+`extra_headers` and set it as the team header in Shield. Shield reads it from
+the forwarded headers.
+
 Shield records the LiteLLM user, team, key alias, model and call id with each
 call, so you can trace a decision back to the LiteLLM request.
 
