@@ -717,3 +717,135 @@ Manual (Railway or local):
    `docs/team-policies.md` (set the team header, add it to LiteLLM's
    `extra_headers` if it arrives as `[present]`, the gateway-overwrite check,
    the env var), and a one-line hint under Team settings in the portal.
+
+---
+
+## 11. Addendum: one form per team in the portal (task 7)
+
+Status: **approved 2026-10-30; implemented** on branch `feat/team-rule-one-flow`.
+
+### 11.1 Problem & outcome
+Setting up a team takes two places today: the header **name** goes in Team
+settings (tenant-wide `selectors`), the header **values** go in the team rule
+(`match`). A customer put the header name in the values box and the value in
+Patterns, never saved Team settings, and got a rule that could never match
+(2026-10-30). Separately, a team can't get its own custom policy from the
+portal: the team view has no **+ Custom Policy** button, and the Team JSON
+workaround needs a placeholder global custom policy.
+
+**Outcome:** a team is set up in one form, "When header `H` is `V`", and one
+Save makes it live. Team settings becomes optional (header order, what to do
+with no header, the off switch). A team view has **+ Custom Policy**.
+
+**Non-goals:** any API, storage or guard-path change; a per-rule header in
+the data model (11.5); Sigma custom policies per team (natural-language only
+in this task; Sigma needs server-side compilation that the team routes don't
+do).
+
+### 11.2 Plane & latency
+Portal only (`static/tenant.html`, served by both planes). No route, model or
+guard-path change, so no request latency change.
+
+### 11.3 Data model
+Unchanged on the server. A rule's `match` also records the header it was
+written for, as `match.header`; the server stores `match` as sent and
+selection ignores it (selection still uses the tenant's header order, 11.5).
+Rules saved earlier show the first team header. The form writes the same two
+things it writes today:
+`PUT /settings` (`selectors`, `enabled`) and `PUT /rules/{id}` (`match`,
+guardrails). Team custom policies are `custom_policy_input` /
+`custom_policy_output` entries in the rule, which section 4 and the merge
+already support.
+
+### 11.4 Interface (portal)
+
+Added at the user's request during the build (2026-10-30): the **Team keys**
+card moves into Advanced settings as a collapsed "Lock API keys to teams
+(optional)" section, since it is only needed when apps (not a gateway) set the
+header; Team settings is renamed **Advanced settings** and no longer opens on
+its own; Try it's placeholder uses one of the tenant's real values.
+
+**Team rule card**, replacing "Header values for this team" and "Patterns":
+
+> **When header** [header ▾] **is** [values] *(Patterns: optional, collapsed)*
+
+- The header box is a text field with a list of the tenant's saved team
+  headers plus the headers seen in Discovered values. With no team header
+  saved yet it suggests `X-Org-Id` as an example, never as a pre-filled value.
+- The same header and value boxes are in the **+ New team rule** form, and
+  **Create rule** from Discovered values fills both.
+- **Save Changes** in a team view:
+  1. if the header isn't in `selectors`, `PUT /settings` appending it (order
+     kept), and with `enabled: true` when this is the tenant's first team
+     header (11.6);
+  2. `PUT /rules/{id}` as today, with the version from step 1.
+  If step 2 fails, step 1 stays (a header with no rule matches nothing new)
+  and the error is shown as today.
+- **Mistake guards**, shown inline before saving:
+  - a value that equals a header name ("`x-tf-organization-id` is a header
+    name; put it in the header box");
+  - a value that looks like a header (`x-…`, contains `:`);
+  - a value in Patterns without `*` or `?` moves to values on save, with a note.
+- **Status badge**: Live / Not live / Not set up as today; "Not set up"
+  disappears after the first save.
+- **Team settings** keeps: header order (with "first one present wins"), the
+  no-header behaviour, the live switch. The button stays, as "Advanced".
+
+**+ Custom Policy in a team view**, on the team's input and output cards:
+- opens the existing custom-policy form (name, description, prompt, action,
+  confidence, priority) in natural-language mode, Sigma hidden;
+- adds the policy to the team draft under `custom_policy_<stage>` with a new
+  `policy_id` (`team-<rule>-<random>`); the global guardrail row is not
+  needed;
+- the team's custom policies are listed on the custom-policy row with Edit
+  and Remove; global ones are listed locked;
+- Save Changes saves them with the rule; the server's 422 (a team policy that
+  lowers a global one, or the per-stage cap) is shown as today.
+
+### 11.5 Why the header stays tenant-wide
+A request is matched on the first team header present, then its value against
+every rule. Keeping header names tenant-wide is what makes "first one present
+wins" and "no header" well defined. The portal now hides that: each rule shows
+the header it was written for. The only visible consequence: if a request
+carries two team headers, the first in Team settings order decides, which is
+the order headers were first added unless changed there. Team settings shows
+the order with a one-line explanation.
+
+### 11.6 Security & backward compatibility
+- Turning team policies on automatically, on the first header ever saved, is
+  a behaviour change for that tenant only, at the moment its admin creates
+  their first team. A team policy can only add to the global policy, so this
+  can only make requests stricter. A tenant that already has a header saved
+  keeps its current on/off state; the form never flips it.
+- No new write path: both writes go through the existing routes and their
+  config-write gate, audit and validation.
+- Values typed by the admin are escaped as today (`psEsc`).
+
+### 11.7 Test plan
+`tests/test_policy_scopes_portal.py` (static checks, as for task 5):
+1. The rule card and the new-rule form have a header box and a values box; no
+   "Header values for this team" label remains.
+2. The team save writes settings before the rule only when the header is new,
+   and sets `enabled: true` only when there were no selectors.
+3. Mistake guards: the header-name check, the `x-` / `:` check, the
+   glob-less pattern move.
+4. The team **+ Custom Policy** writes into `PS_DRAFT[...]custom_policy_<stage>`,
+   sets a `policy_id`, hides Sigma, and lists global policies locked.
+5. Script parses (existing node check).
+
+Browser, against a local data plane with no team header saved:
+1. Create rule "engineer", header `x-tf-organization-id`, value `7w2lnkp`,
+   Save Changes: badge Live; Try it on `7w2lnkp` names `engineer`; a real
+   request with that header gets it.
+2. Type `x-tf-organization-id` as a value: inline error, Save disabled.
+3. Second rule with header `x-tf-api-key-id`: Team settings shows both, in
+   order.
+4. Team custom policy: add, save, Try it shows it, Edit, Remove.
+5. A tenant with team policies switched off: adding a rule does not turn them on.
+
+Full suite in a clean venv.
+
+### 11.8 Task
+7. **One PR**: the rule card and new-rule form, the combined save, the
+   mistake guards, team **+ Custom Policy**, label and placeholder fixes,
+   `docs/team-policies.md` updated to the one-form flow, tests above.

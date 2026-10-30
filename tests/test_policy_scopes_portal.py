@@ -140,5 +140,74 @@ def test_new_team_rule_is_an_inline_form():
     assert "PS_NEW_RULE = true" in create and "ok.values" in create
     check = _fn("psNewCheck", SCRIPT)
     assert "'global'" in check and "'unmatched'" in check and "psRule(id)" in check
-    # Discovered values still opens it prefilled.
-    assert "onclick=\"psNewRule(this.dataset.value)\"" in SCRIPT
+    # Discovered values opens it with both the value and the header it came on.
+    assert "onclick=\"psNewRule(this.dataset.value, this.dataset.header)\"" in SCRIPT
+
+
+# ── Task 7: one form per team (spec section 11) ─────────────────────────────
+
+def test_header_and_value_are_set_in_the_same_form():
+    for el in ('id="ps-new-header"', 'id="ps-new-values"', 'id="ps-match-header"',
+               'id="ps-match-exact"', 'id="ps-match-glob"', 'id="ps-header-list"'):
+        assert el in PANE, el
+    assert "Header values for this team" not in HTML
+    assert 'placeholder="X-Org-Id"' not in HTML          # a placeholder that looked like a value
+    # Settings no longer open by themselves; the one form is the way in.
+    assert "getElementById('ps-settings').classList.remove('hidden')" not in _fn("loadPolicyScopes", SCRIPT)
+    create = _fn("psNewCreate", SCRIPT)
+    assert "header: ok.header" in create
+
+
+def test_save_adds_a_new_header_and_turns_on_only_the_first_time():
+    save = _fn("psSaveTeam", SCRIPT)
+    # Settings are written before the rule, and only when the header is new.
+    assert save.index("'/settings'", save.index("} else {")) < save.index("`/rules/${encodeURIComponent(PS_VIEW)}`")
+    assert "!selectors.some(x => (x.header || '').toLowerCase() === match.header.toLowerCase())" in save
+    assert "enabled: selectors.length ? !!s.enabled : true" in save
+    assert "selectors: [...selectors, { header: match.header }]" in save
+    assert "expected_version: version" in save
+
+
+def test_mistake_guards():
+    check = _fn("psCheckMatch", SCRIPT)
+    assert "is a header name, not a value" in check
+    assert "/^x-/i.test(v) || v.includes(':')" in check
+    assert "PS_FORBIDDEN_HEADERS.includes(lower)" in check
+    # Opening an existing rule runs the check too, so a broken rule says so.
+    assert "psShowMatchCheck();" in _fn("psRenderTeam", SCRIPT)
+    save = _fn("psSaveTeam", SCRIPT)
+    assert "!/[*?\\[]/.test(g)" in save                      # glob-less patterns become values
+    assert "if (check.error)" in save
+
+
+def test_server_and_portal_agree_on_names_and_values():
+    import core.policy_scopes as ps
+    assert ps._HEADER_RE.pattern.strip("^$") in SCRIPT
+    assert ps._VALUE_RE.pattern.strip("^$").replace("/", "\\/") in SCRIPT
+    for h in ("authorization", "x-api-key", "x-tenant-key", "x-admin-key", "x-agent-token"):
+        assert f"'{h}'" in SCRIPT and h in ps._FORBIDDEN_HEADERS
+
+
+def test_team_custom_policies():
+    for stage in ("input", "output"):
+        assert f"onclick=\"psOpenCustomPolicy('{stage}')\"" in PANE
+        assert f'id="ps-team-custom-{stage}"' in PANE
+    save = _fn("psSaveTeamCustomPolicy", SCRIPT)
+    assert "psLocal(stage + '_guardrails')" in save and "format: 'natural_language'" in save
+    assert "policy_id: policyId || `team-${PS_VIEW}-" in save
+    opened = _fn("psOpenCustomPolicy", SCRIPT)
+    assert "setCustomPolicyFormat('natural_language')" in opened
+    assert "closest('.field').style.display = 'none'" in opened      # Sigma hidden
+    assert "if (PS_CP_TEAM) return psSaveTeamCustomPolicy();" in _fn("saveCustomPolicy")
+    assert "PS_CP_TEAM = null;" in _fn("hideCustomPolicyModal")
+    listing = _fn("psRenderTeamCustom", SCRIPT)
+    assert "🔒 Global" in listing and "${psEsc(p.name || p.policy_id)}" in listing
+    assert not re.search(r"\$\{p\.(name|description|policy_id)\}", listing)
+    # The generic rows leave custom policies to that list.
+    assert "n !== psCpName(stage)" in _fn("psRenderTeamStage", SCRIPT)
+
+
+def test_key_locks_are_tucked_into_advanced_settings():
+    bar = HTML[HTML.index('id="ps-bar"'):HTML.index('id="ps-team-view"')]
+    assert 'id="ps-keys-card"' in bar and "<details" in bar
+    assert "Team keys" not in PANE

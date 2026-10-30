@@ -52,26 +52,40 @@ chat. Tool calls and MCP are not affected.
 Open **Input & Output Guardrails**. The **Editing policy for** bar sits above
 your guardrails.
 
-1. **Name your header.** Click **Team settings**, enter the header (for
-   example `X-Org-Id`), turn on **Apply team policies to live traffic**, and save. The badge
-   next to **Editing policy for** changes to **Live**.
-   You don't need any rules yet.
-2. **Watch what arrives.** Send traffic as usual. **Discovered values** lists
-   every value seen on your header, how many requests carried it, and which
-   policy it gets today.
-3. **Create a rule.** Click **Create rule** next to a value, or **+ New team rule**.
-   Enter a team name and the header values its requests carry, then
-   **Create team rule**. You can add a pattern such as `eng-*` afterwards to
-   cover teams that don't exist yet.
-4. **Edit the team's guardrails.** The page shows the same guardrail cards:
+1. **Add a team.** Click **+ New team rule** and fill in one line:
+   - **Team name**, a label for you (for example `engineering`);
+   - **When header**, the header name your requests carry (for example
+     `x-tf-organization-id`);
+   - **is**, the value that identifies the team (for example `7w2lnkp`;
+     several, comma-separated).
+
+   Click **Create team rule**.
+2. **Give the team its policy.** The page shows the same guardrail cards:
    - rows marked **Global** come from the global policy; you can pick a
      stricter action or add to their lists, nothing else;
-   - **+ Add guardrail** adds one for this team only.
-5. **Save Changes** saves the selected team. **Global** takes you
-   back to the global policy, which works exactly as before.
-6. **Try it.** Enter a header value to see which policy a request would get.
+   - **+ Add guardrail** adds one for this team only;
+   - **+ Custom Policy** adds a natural-language policy for this team only.
+     Global custom policies are listed locked; the team's own have **Edit**
+     and **Remove**.
+3. **Save Changes.** This saves the team, adds its header to your team
+   headers if it is new, and, for your first team, turns team policies on.
+   The badge next to **Editing policy for** shows **Live**. **Global** takes
+   you back to the global policy, which works exactly as before.
+4. **Try it.** Enter a header value to see which policy a request would get.
    It reflects a save immediately; live traffic picks changes up within a
    minute.
+
+If you put a header name where the value goes, the form says so and won't
+save until it is fixed.
+
+**Discovered values** lists every value seen on your team headers, how many
+requests carried it, and which policy it gets today. **Create rule** next to
+a value opens the form with the header and value filled in.
+
+**Advanced settings** holds what you rarely need: the order of your team
+headers (when a request carries two, the first decides), what to do with a
+request that has no team header, the switch that turns team policies off, and
+locking API keys to teams.
 
 **Other values** is the policy for any value no rule matches, including
 values you have never seen. Leave it empty to give them the global policy.
@@ -93,7 +107,7 @@ Values are compared after trimming spaces and lowercasing, so `TeamA`,
 Rules belong to values, not to a header name, so renaming a header loses
 nothing:
 
-1. In **Team settings**, list the new header first and keep the old one:
+1. In **Advanced settings**, list the new header first and keep the old one:
    `X-Team-Id, X-Org-Id`. The first header present on a request wins.
 2. Move your clients to the new header.
 3. **Discovered values** shows which header each value arrived on. When the old
@@ -107,7 +121,7 @@ could pick another team's rule. To prevent that, give each team its own API
 key and **lock** it to that team:
 
 1. Create a key per team on the **API keys** page, labelled with the team.
-2. On **Input & Output Guardrails**, find the **Team keys** card.
+2. On **Input & Output Guardrails**, open **Advanced settings** and expand **Lock API keys to teams**.
 3. Next to the team's key, enter the teams it may claim (for example `team-a`,
    or a pattern such as `eng-*`) and click **Lock**.
 
@@ -134,9 +148,9 @@ When a gateway calls Shield's LiteLLM guardrail route
 Shield as headers. The gateway copies them into the request body as
 `request_headers`. Shield looks there too, on that route only:
 
-1. In **Team settings**, enter the header your callers send, exactly as it
-   appears in `request_headers` (for example `x-tf-api-key-id`). Upper or
-   lower case doesn't matter.
+1. In a team rule's **When header**, enter the header your callers send,
+   exactly as it appears in `request_headers` (for example
+   `x-tf-organization-id`). Upper or lower case doesn't matter.
 2. Make sure the gateway forwards the header's value. LiteLLM sends
    `"[present]"` instead of the value for headers it isn't told to forward;
    list yours under the guardrail's `extra_headers`:
