@@ -389,7 +389,8 @@ def test_shared_custom_policy_keeps_the_stricter_action():
     assert merged["custom_policy_input"]["settings"]["policies"][0]["action"] == "block"
 
 
-def test_custom_policy_cap_keeps_every_global_policy():
+def test_custom_policy_cap_keeps_every_global_policy(monkeypatch):
+    monkeypatch.setenv("SHIELD_MAX_POLICIES_PER_STAGE", "10")
     g = custom(*[cp(f"g{i}") for i in range(9)])
     l = custom(cp("t1"), cp("t2"), cp("t3"))
     assert policy_ids(merge_stage(g, l)) == [f"g{i}" for i in range(9)] + ["t1"]
@@ -402,7 +403,8 @@ def test_sigma_policies_have_their_own_cap(monkeypatch):
     assert policy_ids(merge_stage(g, l))[-1] == "s1"
 
 
-def test_team_only_custom_policies_are_capped_too():
+def test_team_only_custom_policies_are_capped_too(monkeypatch):
+    monkeypatch.setenv("SHIELD_MAX_POLICIES_PER_STAGE", "10")
     l = custom(*[cp(f"t{i}") for i in range(12)])
     merged = merge_stage({"keyword_blocklist": kw(["ssn"])}, l)
     assert len(policy_ids(merged)) == 10
@@ -551,7 +553,8 @@ def test_allowlist_widening_and_disjoint_lists_are_rejected():
     assert validate_rule(rule(input_guardrails=narrower), t) == []
 
 
-def test_custom_policy_rules_are_validated():
+def test_custom_policy_rules_are_validated(monkeypatch):
+    monkeypatch.setenv("SHIELD_MAX_POLICIES_PER_STAGE", "10")
     t = tenant(input_guardrails=custom(*[cp(f"g{i}") for i in range(9)]))
     lowered = custom(cp("g1", "pass"))
     too_many = custom(cp("t1"), cp("t2"))
@@ -559,6 +562,61 @@ def test_custom_policy_rules_are_validated():
     assert any("can't lower it" in e for e in validate_rule(rule(input_guardrails=lowered), t))
     assert any("the limit is 10" in e for e in validate_rule(rule(input_guardrails=too_many), t))
     assert any("needs a policy_id" in e for e in validate_rule(rule(input_guardrails=no_id), t))
+
+
+def test_default_natural_language_cap_is_25(monkeypatch):
+    monkeypatch.delenv("SHIELD_MAX_POLICIES_PER_STAGE", raising=False)
+    g = custom(*[cp(f"g{i}") for i in range(10)])
+    l = custom(*[cp(f"t{i}") for i in range(20)])
+    assert len(policy_ids(merge_stage(g, l))) == 25
+    t = tenant(input_guardrails=custom(*[cp(f"g{i}") for i in range(10)]))
+    assert validate_rule(rule(input_guardrails=custom(*[cp(f"t{i}") for i in range(15)])), t) == []
+    errors = validate_rule(rule(input_guardrails=custom(*[cp(f"t{i}") for i in range(16)])), t)
+    assert any("26 enabled custom policies" in e and "the limit is 25" in e for e in errors)
+
+
+def test_disabled_global_policies_leave_room_for_teams(monkeypatch):
+    # The customer's case: 10 global policies, one switched off, cap 10.
+    monkeypatch.setenv("SHIELD_MAX_POLICIES_PER_STAGE", "10")
+    off = cp("g9")
+    off["enabled"] = False
+    g = custom(*[cp(f"g{i}") for i in range(9)], off)
+    t = tenant(input_guardrails=g)
+    assert validate_rule(rule(input_guardrails=custom(cp("t1"))), t) == []
+    assert "t1" in policy_ids(merge_stage(g, custom(cp("t1"))))
+    assert any("the limit is 10" in e for e in
+               validate_rule(rule(input_guardrails=custom(cp("t1"), cp("t2"))), t))
+
+
+def test_team_can_turn_on_a_policy_that_is_off_globally(monkeypatch):
+    monkeypatch.delenv("SHIELD_MAX_POLICIES_PER_STAGE", raising=False)
+    off = cp("weapons", "warn")
+    off["enabled"] = False
+    g = custom(cp("g1"), off)
+    mine = cp("weapons", "block")              # same id, on, stricter action
+    merged = merge_stage(g, custom(mine))
+    pol = {p["policy_id"]: p for p in merged["custom_policy_input"]["settings"]["policies"]}
+    assert pol["weapons"]["enabled"] is True and pol["weapons"]["action"] == "block"
+    assert policy_ids(merged) == ["g1", "weapons"]          # not added twice
+    # The global policy itself is untouched.
+    assert off["enabled"] is False and g["custom_policy_input"]["settings"]["policies"][1]["enabled"] is False
+    # A team can't turn a global policy off.
+    team_off = cp("g1")
+    team_off["enabled"] = False
+    merged = merge_stage(g, custom(team_off))
+    assert merged["custom_policy_input"]["settings"]["policies"][0]["enabled"] is not False
+
+
+def test_turning_on_a_global_policy_counts_against_the_cap(monkeypatch):
+    monkeypatch.setenv("SHIELD_MAX_POLICIES_PER_STAGE", "2")
+    off = cp("g3")
+    off["enabled"] = False
+    g = custom(cp("g1"), cp("g2"), off)
+    t = tenant(input_guardrails=g)
+    assert any("3 enabled custom policies" in e for e in
+               validate_rule(rule(input_guardrails=custom(cp("g3"))), t))
+    merged = merge_stage(g, custom(cp("g3")))
+    assert merged["custom_policy_input"]["settings"]["policies"][2]["enabled"] is False
 
 
 def test_local_stage_needs_a_global_stage():
