@@ -273,21 +273,27 @@ def _merge_settings(gs: dict, ls: dict, delegable: bool) -> dict:
 
 def _custom_policy_caps() -> tuple[int, int]:
     try:
-        from storage.custom_policies import MAX_POLICIES_PER_STAGE, sigma_max_policies_per_stage
-        return MAX_POLICIES_PER_STAGE, sigma_max_policies_per_stage()
+        from storage.custom_policies import max_policies_per_stage, sigma_max_policies_per_stage
+        return max_policies_per_stage(), sigma_max_policies_per_stage()
     except Exception:
-        return 10, 100
+        return 25, 100
 
 
 def _is_sigma(policy: dict) -> bool:
     return policy.get("format") == "sigma"
 
 
-def _merge_custom_policies(global_list: list, local_list: list) -> list:
-    """Union by ``policy_id``; a shared id keeps the stricter action.
+def _enabled(policy: dict) -> bool:
+    return bool(policy.get("enabled", True))
 
-    Global policies come first and are never dropped. Local policies past the
-    per-stage caps (NL and Sigma counted separately, as on the write path) are.
+
+def _merge_custom_policies(global_list: list, local_list: list) -> list:
+    """Union by ``policy_id``; a shared id keeps the stricter action, and a
+    team may turn on a policy that is off globally (stricter, never weaker).
+
+    Global policies come first and are never dropped. The per-stage caps count
+    enabled policies only (NL and Sigma separately, as on the write path), the
+    ones a request evaluates; team policies past them are dropped.
     """
     nl_cap, sigma_cap = _custom_policy_caps()
     out, index = [], {}
@@ -295,8 +301,21 @@ def _merge_custom_policies(global_list: list, local_list: list) -> list:
         if isinstance(p, dict):
             index[p.get("policy_id")] = len(out)
             out.append(dict(p))
-    nl = sum(1 for p in out if not _is_sigma(p))
-    sg = len(out) - nl
+    nl = sum(1 for p in out if _enabled(p) and not _is_sigma(p))
+    sg = sum(1 for p in out if _enabled(p) and _is_sigma(p))
+
+    def room(policy: dict) -> bool:
+        nonlocal nl, sg
+        if _is_sigma(policy):
+            if sg >= sigma_cap:
+                return False
+            sg += 1
+        else:
+            if nl >= nl_cap:
+                return False
+            nl += 1
+        return True
+
     for p in local_list or ():
         if not isinstance(p, dict) or not p.get("policy_id"):
             continue
@@ -305,19 +324,17 @@ def _merge_custom_policies(global_list: list, local_list: list) -> list:
             g = out[index[pid]]
             if _strictness(p.get("action")) > _strictness(g.get("action")):
                 g["action"] = p["action"]
+            if _enabled(p) and not _enabled(g):
+                if room(g):
+                    g["enabled"] = True
+                else:
+                    logger.warning("policy scope: enabling policy %s for a team is over the cap, skipped", pid)
             continue
-        if not p.get("enabled", True):
+        if not _enabled(p):
             continue
-        if _is_sigma(p):
-            if sg >= sigma_cap:
-                logger.warning("policy scope: local sigma policy %s over the cap, dropped", pid)
-                continue
-            sg += 1
-        else:
-            if nl >= nl_cap:
-                logger.warning("policy scope: local policy %s over the cap, dropped", pid)
-                continue
-            nl += 1
+        if not room(p):
+            logger.warning("policy scope: local policy %s over the cap, dropped", pid)
+            continue
         index[pid] = len(out)
         out.append(dict(p))
     return out
@@ -655,8 +672,9 @@ def _validate_custom_policies(where: str, global_list: list, local_list: list) -
     errors = []
     by_id = {p.get("policy_id"): p for p in global_list if isinstance(p, dict)}
     nl_cap, sigma_cap = _custom_policy_caps()
-    nl = sum(1 for p in global_list if isinstance(p, dict) and not _is_sigma(p))
-    sg = sum(1 for p in global_list if isinstance(p, dict) and _is_sigma(p))
+    # Only enabled policies count: they are the ones a request evaluates.
+    nl = sum(1 for p in global_list if isinstance(p, dict) and _enabled(p) and not _is_sigma(p))
+    sg = sum(1 for p in global_list if isinstance(p, dict) and _enabled(p) and _is_sigma(p))
     for p in local_list:
         if not isinstance(p, dict) or not p.get("policy_id"):
             errors.append(f"{where}: every custom policy needs a policy_id")
@@ -666,17 +684,19 @@ def _validate_custom_policies(where: str, global_list: list, local_list: list) -
             if _strictness(p.get("action")) < _strictness(g.get("action")):
                 errors.append(f"{where}: policy {p['policy_id']} is {g.get('action')} "
                               f"globally, a team policy can't lower it")
-            continue
-        if not p.get("enabled", True):
+            # Turning on a policy that is off globally uses a slot for this team.
+            if not (_enabled(p) and not _enabled(g)):
+                continue
+        elif not _enabled(p):
             continue
         if _is_sigma(p):
             sg += 1
         else:
             nl += 1
     if nl > nl_cap:
-        errors.append(f"{where}: {nl} custom policies with the global ones, the limit is {nl_cap}")
+        errors.append(f"{where}: {nl} enabled custom policies with the global ones, the limit is {nl_cap}")
     if sg > sigma_cap:
-        errors.append(f"{where}: {sg} Sigma policies with the global ones, the limit is {sigma_cap}")
+        errors.append(f"{where}: {sg} enabled Sigma policies with the global ones, the limit is {sigma_cap}")
     return errors
 
 

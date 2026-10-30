@@ -317,9 +317,10 @@ def test_hundred_rules_stay_fast():
 def test_nl_and_sigma_caps_are_separate(monkeypatch):
     cp = _fake_tenant_store(monkeypatch)
     monkeypatch.setenv("SHIELD_SIGMA_MAX_POLICIES_PER_STAGE", "3")
+    monkeypatch.setenv("SHIELD_MAX_POLICIES_PER_STAGE", "10")
     for i in range(10):
         cp.save_custom_policy("t1", {**NL, "name": f"nl{i}"}, stage="input")
-    with pytest.raises(ValueError, match="Maximum 10 policies"):
+    with pytest.raises(ValueError, match="Maximum 10 enabled policies"):
         cp.save_custom_policy("t1", {**NL, "name": "nl-over"}, stage="input")
     for i in range(3):   # NL cap full, Sigma still has room
         cp.save_custom_policy("t1", _sigma(load_rule(SSN), f"s{i}"), stage="input")
@@ -328,6 +329,34 @@ def test_nl_and_sigma_caps_are_separate(monkeypatch):
     stats = cp.get_policy_stats("t1")
     assert stats["remaining_input_slots"] == 0 and stats["remaining_sigma_input_slots"] == 0
     assert stats["max_sigma_per_stage"] == 3
+
+
+def test_default_nl_cap_is_25_and_counts_enabled_only(monkeypatch):
+    cp = _fake_tenant_store(monkeypatch)
+    monkeypatch.delenv("SHIELD_MAX_POLICIES_PER_STAGE", raising=False)
+    assert cp.max_policies_per_stage() == 25
+    ids = [cp.save_custom_policy("t1", {**NL, "name": f"nl{i}"}, stage="input")["policy_id"]
+           for i in range(25)]
+    with pytest.raises(ValueError, match="Maximum 25 enabled policies"):
+        cp.save_custom_policy("t1", {**NL, "name": "nl-over"}, stage="input")
+    # A disabled policy frees its slot; a policy created disabled needs none.
+    cp.update_custom_policy("t1", ids[0], {"enabled": False})
+    cp.save_custom_policy("t1", {**NL, "name": "nl-26"}, stage="input")
+    cp.save_custom_policy("t1", {**NL, "name": "parked", "enabled": False}, stage="input")
+    assert cp.get_policy_stats("t1")["remaining_input_slots"] == 0
+    # Turning a disabled policy back on needs a free slot.
+    with pytest.raises(ValueError, match="Maximum 25 enabled policies"):
+        cp.update_custom_policy("t1", ids[0], {"enabled": True})
+    cp.update_custom_policy("t1", ids[1], {"enabled": False})
+    cp.update_custom_policy("t1", ids[0], {"enabled": True})
+    assert cp.get_policy_stats("t1")["max_allowed_per_stage"] == 25
+
+
+def test_nl_cap_env_override(monkeypatch):
+    from storage.custom_policies import max_policies_per_stage
+    for value, expected in (("40", 40), ("0", 1), ("nonsense", 25)):
+        monkeypatch.setenv("SHIELD_MAX_POLICIES_PER_STAGE", value)
+        assert max_policies_per_stage() == expected
 
 
 def test_default_sigma_cap_is_100(monkeypatch):

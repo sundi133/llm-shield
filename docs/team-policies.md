@@ -238,6 +238,7 @@ Platform operators have the same routes under
 | Patterns, all rules together | 100 |
 | Team headers | 5 (credential headers such as `Authorization` and `X-API-Key` are refused) |
 | Discovered values kept | 2,000 per tenant for 30 days; further new values are counted as `(overflow)` |
+| Custom policies per stage, global and team together | 25 enabled natural-language and 100 enabled Sigma (`SHIELD_MAX_POLICIES_PER_STAGE`, `SHIELD_SIGMA_MAX_POLICIES_PER_STAGE`). Disabled policies don't count. A team can switch on a global policy that is off globally, which uses one of its slots |
 
 ## For operators
 

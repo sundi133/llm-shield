@@ -9,7 +9,7 @@ guardrails. Records written before `format` existed have no such key and are
 natural language.
 
 Stored within the existing tenant guardrail configuration structure.
-Max 10 policies per tenant per stage (input/output).
+Up to 25 enabled natural-language policies per stage (input/output), SHIELD_MAX_POLICIES_PER_STAGE.
 """
 
 import logging
@@ -22,7 +22,10 @@ from storage.tenant_store import get_tenant, set_tenant_policies
 
 logger = logging.getLogger(__name__)
 
-MAX_POLICIES_PER_STAGE = 10
+# Natural-language policies per stage. Each enabled one is a guardrail-model
+# call per request (run concurrently), so the cap counts enabled policies only:
+# a disabled policy costs nothing. SHIELD_MAX_POLICIES_PER_STAGE overrides it.
+MAX_POLICIES_PER_STAGE = 25
 
 FORMAT_NATURAL_LANGUAGE = "natural_language"
 FORMAT_SIGMA = "sigma"
@@ -64,8 +67,37 @@ def sigma_max_policies_per_stage() -> int:
         return 100
 
 
+def max_policies_per_stage() -> int:
+    """The natural-language cap: SHIELD_MAX_POLICIES_PER_STAGE, default 25."""
+    try:
+        return max(1, int(os.environ.get("SHIELD_MAX_POLICIES_PER_STAGE", str(MAX_POLICIES_PER_STAGE))))
+    except (TypeError, ValueError):
+        return MAX_POLICIES_PER_STAGE
+
+
 def _is_sigma(policy: Dict) -> bool:
     return policy.get("format") == FORMAT_SIGMA
+
+
+def _is_enabled(policy: Dict) -> bool:
+    return bool(policy.get("enabled", True))
+
+
+def _check_cap(policies: List[Dict], sigma: bool, stage: str, exclude_id: Optional[str] = None) -> None:
+    """Raise when one more enabled policy of this format would pass the cap.
+
+    Only enabled policies count: they are the ones evaluated on a request.
+    """
+    in_use = sum(1 for p in policies
+                 if _is_enabled(p) and _is_sigma(p) == sigma and p.get("policy_id") != exclude_id)
+    if sigma:
+        cap = sigma_max_policies_per_stage()
+        if in_use >= cap:
+            raise ValueError(f"Maximum {cap} enabled Sigma policies per {stage} stage exceeded")
+    else:
+        cap = max_policies_per_stage()
+        if in_use >= cap:
+            raise ValueError(f"Maximum {cap} enabled policies per {stage} stage exceeded")
 
 
 def _persist_policy_stage(tenant_id: str, tenant_config: Dict, stage: str) -> None:
@@ -143,12 +175,9 @@ def save_custom_policy(
 
         # Check policy limit: NL and Sigma are capped separately (an NL policy is
         # an LLM call per request; a Sigma policy is deterministic matching).
-        if fmt == FORMAT_SIGMA:
-            sigma_cap = sigma_max_policies_per_stage()
-            if sum(1 for p in existing_policies if _is_sigma(p)) >= sigma_cap:
-                raise ValueError(f"Maximum {sigma_cap} Sigma policies per {stage} stage exceeded")
-        elif sum(1 for p in existing_policies if not _is_sigma(p)) >= MAX_POLICIES_PER_STAGE:
-            raise ValueError(f"Maximum {MAX_POLICIES_PER_STAGE} policies per {stage} stage exceeded")
+        # A policy created disabled costs nothing, so it isn't checked.
+        if policy_data.get("enabled", True):
+            _check_cap(existing_policies, fmt == FORMAT_SIGMA, stage)
 
         # Generate policy ID and set defaults
         policy_id = str(uuid.uuid4())
@@ -320,6 +349,13 @@ def update_custom_policy(
                                     updates.pop(key, None)
                                     policy.pop(key, None)
 
+                        # Turning a policy on, or switching an enabled one to the
+                        # other format, takes a slot under that format's cap.
+                        will_enable = updates.get("enabled", _is_enabled(policy))
+                        will_sigma = updates.get("format", policy.get("format")) == FORMAT_SIGMA
+                        if will_enable and (not _is_enabled(policy) or will_sigma != _is_sigma(policy)):
+                            _check_cap(policies, will_sigma, stage, exclude_id=policy_id)
+
                         # Apply updates
                         policy.update(updates)
                         policy["updated_at"] = datetime.utcnow().isoformat()
@@ -414,8 +450,12 @@ def get_policy_stats(tenant_id: str) -> Dict:
         input_policies = get_tenant_custom_policies(tenant_id, enabled_only=False, stage="input")
         output_policies = get_tenant_custom_policies(tenant_id, enabled_only=False, stage="output")
 
-        nl_input = [p for p in input_policies if not _is_sigma(p)]
-        nl_output = [p for p in output_policies if not _is_sigma(p)]
+        # Slots are used by enabled policies only (see _check_cap).
+        nl_input = [p for p in input_policies if not _is_sigma(p) and _is_enabled(p)]
+        nl_output = [p for p in output_policies if not _is_sigma(p) and _is_enabled(p)]
+        sg_input = [p for p in input_policies if _is_sigma(p) and _is_enabled(p)]
+        sg_output = [p for p in output_policies if _is_sigma(p) and _is_enabled(p)]
+        cap = max_policies_per_stage()
         sigma_cap = sigma_max_policies_per_stage()
         stats = {
             "total_policies": len(all_policies),
@@ -423,14 +463,14 @@ def get_policy_stats(tenant_id: str) -> Dict:
             "disabled_policies": len([p for p in all_policies if not p.get("enabled", True)]),
             "input_policies": len(input_policies),
             "output_policies": len(output_policies),
-            # The 10-per-stage cap applies to natural-language policies.
-            "max_allowed_per_stage": MAX_POLICIES_PER_STAGE,
-            "remaining_input_slots": MAX_POLICIES_PER_STAGE - len(nl_input),
-            "remaining_output_slots": MAX_POLICIES_PER_STAGE - len(nl_output),
+            # The per-stage cap applies to enabled natural-language policies.
+            "max_allowed_per_stage": cap,
+            "remaining_input_slots": max(0, cap - len(nl_input)),
+            "remaining_output_slots": max(0, cap - len(nl_output)),
             "sigma_policies": len([p for p in all_policies if _is_sigma(p)]),
             "max_sigma_per_stage": sigma_cap,
-            "remaining_sigma_input_slots": sigma_cap - (len(input_policies) - len(nl_input)),
-            "remaining_sigma_output_slots": sigma_cap - (len(output_policies) - len(nl_output)),
+            "remaining_sigma_input_slots": max(0, sigma_cap - len(sg_input)),
+            "remaining_sigma_output_slots": max(0, sigma_cap - len(sg_output)),
             "actions": {}
         }
 
@@ -449,9 +489,9 @@ def get_policy_stats(tenant_id: str) -> Dict:
             "disabled_policies": 0,
             "input_policies": 0,
             "output_policies": 0,
-            "max_allowed_per_stage": MAX_POLICIES_PER_STAGE,
-            "remaining_input_slots": MAX_POLICIES_PER_STAGE,
-            "remaining_output_slots": MAX_POLICIES_PER_STAGE,
+            "max_allowed_per_stage": max_policies_per_stage(),
+            "remaining_input_slots": max_policies_per_stage(),
+            "remaining_output_slots": max_policies_per_stage(),
             "actions": {}
         }
 

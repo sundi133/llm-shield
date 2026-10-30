@@ -211,3 +211,13 @@ def test_key_locks_are_tucked_into_advanced_settings():
     bar = HTML[HTML.index('id="ps-bar"'):HTML.index('id="ps-team-view"')]
     assert 'id="ps-keys-card"' in bar and "<details" in bar
     assert "Team keys" not in PANE
+
+
+def test_team_can_turn_on_a_globally_disabled_policy():
+    listing = _fn("psRenderTeamCustom", SCRIPT)
+    assert "Turn on for this team" in listing and "Off globally" in listing
+    assert "'psTurnOnGlobalPolicy'" in listing
+    turn_on = _fn("psTurnOnGlobalPolicy", SCRIPT)
+    # The team entry only switches the global policy on, with its own action.
+    assert "{ policy_id: policyId, enabled: true, action: gp.action" in turn_on
+    assert "psMarkDirty()" in turn_on

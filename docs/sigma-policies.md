@@ -123,8 +123,10 @@ mapped; keep the natural-language and adversarial guardrails for those.
 
 ### Limits and performance
 
-* Up to **100 Sigma policies per stage** (`SHIELD_SIGMA_MAX_POLICIES_PER_STAGE`),
-  separate from the 10 natural-language policies per stage.
+* Up to **100 enabled Sigma policies per stage** (`SHIELD_SIGMA_MAX_POLICIES_PER_STAGE`),
+  separate from the **25 enabled natural-language policies per stage**
+  (`SHIELD_MAX_POLICIES_PER_STAGE`). Disabled policies don't count toward
+  either limit; turning one back on needs a free slot.
 * All Sigma policies of a stage are evaluated together in one pass. Each rule is
   prepared once, and a single scan of the text skips every rule whose required
   words are absent, so 100 rules cost well under a millisecond on a typical
@@ -136,7 +138,8 @@ mapped; keep the natural-language and adversarial guardrails for those.
 
 | Setting | Default | Effect |
 |---|---|---|
-| `SHIELD_SIGMA_MAX_POLICIES_PER_STAGE` | `100` | Sigma policy cap per stage |
+| `SHIELD_SIGMA_MAX_POLICIES_PER_STAGE` | `100` | Enabled Sigma policy cap per stage |
+| `SHIELD_MAX_POLICIES_PER_STAGE` | `25` | Enabled natural-language policy cap per stage. Each enabled policy is one guardrail-model call per request (run in parallel), so raising it raises model load |
 | `SHIELD_SIGMA_NORMALIZE` | `1` | `0` matches raw, unnormalized text |
 | `SHIELD_SIGMA_PREFILTER` | `1` | `0` fully evaluates every rule (same verdicts, slower) |
 | `SHIELD_SIGMA_EVAL_TIMEOUT_MS` | `250` | Time limit per rule |
