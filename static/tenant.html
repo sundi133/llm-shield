@@ -3239,7 +3239,7 @@
             <div>
               <label for="ps-headers">Team header</label>
               <input type="text" id="ps-headers" placeholder="X-Org-Id">
-              <div class="ps-hint">The header your callers send to say which team they are. List several, comma-separated, to accept the first one present (useful when renaming a header).</div>
+              <div class="ps-hint">The header your callers send to say which team they are. List several, comma-separated, to accept the first one present (useful when renaming a header). Calls from LiteLLM or an AI gateway: Shield also reads it from the forwarded <code>request_headers</code>.</div>
             </div>
             <div>
               <label for="ps-missing">When no team header is sent</label>

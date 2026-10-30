@@ -40,6 +40,11 @@ from typing import Callable, Optional, Sequence
 logger = logging.getLogger("votal.policy_scopes")
 
 DISABLE_ENV = "SHIELD_DISABLE_POLICY_SCOPES"
+# Escape hatch for reading team headers that a gateway forwarded in the body
+# (spec section 10). On unless set to off.
+BODY_HEADERS_ENV = "SHIELD_POLICY_SCOPE_BODY_HEADERS"
+# What LiteLLM sends in place of a header it is not configured to forward.
+FORWARDED_PLACEHOLDER = "[present]"
 
 # Reserved normalized values. Parentheses can't survive normalization, so a
 # caller can't send one of these and have it read as anything but itself.
@@ -106,6 +111,46 @@ def scopes_disabled() -> bool:
     flipped without a restart.
     """
     return os.environ.get(DISABLE_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def body_headers_enabled() -> bool:
+    """SHIELD_POLICY_SCOPE_BODY_HEADERS=off stops reading forwarded headers. Read live."""
+    return os.environ.get(BODY_HEADERS_ENV, "").strip().lower() not in ("off", "0", "false", "no")
+
+
+def selects_by_header(tenant_config: Optional[dict]) -> bool:
+    """Whether ``resolve`` would look at any header for this tenant.
+
+    Lets a caller skip work that only feeds selection, such as reading a
+    request body, for every tenant that doesn't use team policies.
+    """
+    scopes = (tenant_config or {}).get("policy_scopes")
+    return (isinstance(scopes, dict) and bool(scopes.get("enabled"))
+            and not scopes_disabled() and bool(_selector_headers(scopes)))
+
+
+def with_forwarded_headers(header_values: Callable[[str], Sequence[str]],
+                           forwarded: object) -> Callable[[str], Sequence[str]]:
+    """A header getter that falls back to headers a gateway forwarded in the body.
+
+    ``forwarded`` is LiteLLM's ``request_headers`` object. A real header with a
+    value always wins, so direct callers behave as before. Keys match without
+    regard to case; non-string values and LiteLLM's ``[present]`` placeholder
+    are not values. The same header under two casings with different values
+    reaches ``normalize_header_values`` as two values, which is INVALID.
+    """
+    if not isinstance(forwarded, dict) or not forwarded:
+        return header_values
+
+    def get(name: str) -> Sequence[str]:
+        real = header_values(name)
+        if any(isinstance(v, str) and v.strip() for v in real or ()):
+            return real
+        wanted = name.lower()
+        return [v for k, v in forwarded.items()
+                if isinstance(k, str) and k.lower() == wanted and isinstance(v, str)
+                and v.strip() and v.strip() != FORWARDED_PLACEHOLDER]
+    return get
 
 
 @dataclass(frozen=True)

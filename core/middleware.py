@@ -23,6 +23,8 @@ from core import policy_scopes
 
 logger = logging.getLogger(__name__)
 
+LITELLM_GUARDRAIL_PATH = "/beta/litellm_basic_guardrail_api"
+
 # In-memory cache for tenant lookups to reduce Redis hits
 _tenant_cache: dict[str, tuple[Optional[str], Optional[dict], float]] = {}
 _CACHE_TTL_SECONDS = 60  # Cache tenant data for 1 minute
@@ -303,7 +305,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
         "/v1/chat/completions",              # OpenAI-compatible proxy
         "/v1/shield/chat/completions",       # gateway proxy
         "/v1/shield/chat/agent",             # agent chat
-        "/beta/litellm_basic_guardrail_api",
+        LITELLM_GUARDRAIL_PATH,
     })
 
     # Paths that must carry a resolvable tenant key when
@@ -516,7 +518,16 @@ class ShieldMiddleware(BaseHTTPMiddleware):
                     # request does not spend it; after the agent checks, so a
                     # refused caller is still recorded.
                     if path in self._POLICY_SCOPE_PATHS:
-                        _scope_stop = _apply_policy_scope(request, tenant_id, tenant_config, api_key)
+                        # LiteLLM sends the caller's headers in the body, so a
+                        # team header may only be there (spec section 10). The
+                        # body is read only for tenants that select by header.
+                        forwarded = None
+                        if path == LITELLM_GUARDRAIL_PATH \
+                                and policy_scopes.selects_by_header(tenant_config) \
+                                and policy_scopes.body_headers_enabled():
+                            forwarded = await _forwarded_headers(request)
+                        _scope_stop = _apply_policy_scope(request, tenant_id, tenant_config, api_key,
+                                                          forwarded)
                         if _scope_stop is not None:
                             return _scope_stop
 
@@ -563,8 +574,24 @@ class ShieldMiddleware(BaseHTTPMiddleware):
         return response
 
 
+async def _forwarded_headers(request: Request) -> Optional[dict]:
+    """LiteLLM's ``request_headers`` from the body, or None.
+
+    Starlette keeps the body it read here and hands it to the route, which
+    parses it itself; a body that isn't a JSON object reads as no headers and
+    the route returns its own 400.
+    """
+    try:
+        body = json.loads(await request.body() or b"null")
+    except Exception:       # noqa: BLE001
+        return None
+    headers = body.get("request_headers") if isinstance(body, dict) else None
+    return headers if isinstance(headers, dict) else None
+
+
 def _apply_policy_scope(request: Request, tenant_id: str, tenant_config: dict,
-                        api_key: Optional[str]) -> Optional[JSONResponse]:
+                        api_key: Optional[str],
+                        forwarded: Optional[dict] = None) -> Optional[JSONResponse]:
     """Swap ``request.state.tenant_config`` for the team's merged view.
 
     Costs one dict lookup for a tenant without policy scopes. With scopes, the
@@ -575,10 +602,13 @@ def _apply_policy_scope(request: Request, tenant_id: str, tenant_config: dict,
     Returns a 403 when the tenant requires the header and it is missing, or
     when a key bound to some teams claims another. The body names the header
     or the normalized value, never a rule's policy.
+
+    ``forwarded`` is the headers a gateway put in the body (LiteLLM route
+    only); a real header still wins over it.
     """
     from storage.tenant_store import _KEY_PREFIX_LEN
     resolution = policy_scopes.resolve(
-        tenant_config, request.headers.getlist,
+        tenant_config, policy_scopes.with_forwarded_headers(request.headers.getlist, forwarded),
         key_prefix=api_key[:_KEY_PREFIX_LEN] if api_key else None)
     decision = resolution.decision
     if decision is None:

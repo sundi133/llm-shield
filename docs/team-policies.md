@@ -127,6 +127,44 @@ curl -X PUT "$SHIELD/v1/tenant/me/policy-scopes/key-bindings/sk-acme-team" \
 If the header is added by your own gateway rather than by apps, you don't need
 to lock keys.
 
+## Behind LiteLLM or an AI gateway
+
+When a gateway calls Shield's LiteLLM guardrail route
+(`/beta/litellm_basic_guardrail_api`), your callers' headers don't reach
+Shield as headers. The gateway copies them into the request body as
+`request_headers`. Shield looks there too, on that route only:
+
+1. In **Team settings**, enter the header your callers send, exactly as it
+   appears in `request_headers` (for example `x-tf-api-key-id`). Upper or
+   lower case doesn't matter.
+2. Make sure the gateway forwards the header's value. LiteLLM sends
+   `"[present]"` instead of the value for headers it isn't told to forward;
+   list yours under the guardrail's `extra_headers`:
+
+   ```yaml
+           extra_headers: [x-tf-api-key-id]
+   ```
+
+   Shield treats `"[present]"` as no header, so until this is set every call
+   gets the **When no team header is sent** behaviour.
+3. Send a request through the gateway and check **Discovered values**. The
+   value appears under your header name.
+
+If a request carries the header both as a real header and in the body, the
+real header is used. Other routes, such as `/guardrails/input`, read real
+headers only.
+
+When the gateway fills the header in itself (for example from the
+authenticated gateway key, as `x-tf-api-key-id` is), check that it overwrites
+a value a client sends rather than passing it through. Otherwise a client
+could pick another team's rule (never anything weaker than the global
+policy); lock keys as described above if you can't rule that out.
+
+**Upgrading:** before this release, team headers inside `request_headers`
+were ignored and those calls got the global policy. Now they get their team's
+policy, which can only add to the global one. To keep the old behaviour, set
+`SHIELD_POLICY_SCOPE_BODY_HEADERS=off`.
+
 ## What a request sees
 
 Each response from `/guardrails/input`, `/guardrails/output` and
@@ -194,9 +232,12 @@ Platform operators have the same routes under
 | `SHIELD_DISABLE_POLICY_SCOPES=1` | Every tenant gets its global policy only. Takes effect without a restart. |
 | `SHIELD_POLICY_SCOPE_DISCOVERY=off` | Stop recording discovered values. |
 | `SHIELD_POLICY_SCOPE_FLUSH_SECONDS` | How often discovered values are written to Redis (default 15). |
+| `SHIELD_POLICY_SCOPE_BODY_HEADERS=off` | Don't read team headers from `request_headers` in LiteLLM guardrail calls; real headers only. Takes effect without a restart. |
 
 Selecting a team adds a few microseconds to a guarded request (about 2.5 µs
 median, 6 µs p99, measured with 200 rules), with no network or database call,
 and nothing measurable for tenants that don't use team policies.
+On the LiteLLM route, a tenant with team policies also pays for reading the
+team header from the body: about 0.1 ms median, 0.2 ms p99 for a 100 KB body.
 The guardrails a team adds cost what they always cost: a custom LLM policy adds
 an LLM call to that team's requests.

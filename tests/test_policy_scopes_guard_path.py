@@ -319,3 +319,144 @@ def test_global_edit_reaches_every_team_after_cache_reload(client, env):
     reload_tenant_cache()
     for value in ("team-a", "eng-x", "sales-emea"):
         assert action(client, "my pin", **{"X-Org-Id": value}) == "block", value
+
+
+# ── Team header forwarded in LiteLLM's body (spec section 10, task 6) ────────
+
+LITELLM = "/beta/litellm_basic_guardrail_api"
+KEY_ID = "XTZSE4KWMU7RCEMNMVRQ"
+TF_SCOPES = {
+    **SCOPES,
+    "selectors": [{"header": "x-tf-api-key-id"}],
+    "rules": [{"id": "key-a", "match": {"exact": [KEY_ID.lower()]},
+               "input_guardrails": {"keyword_blocklist": kw(["zebra"])}}],
+    "unmatched": None,
+}
+
+
+@pytest.fixture
+def tf(env):
+    import copy
+    env.update_tenant("acme", {"policy_scopes": copy.deepcopy(TF_SCOPES)})
+    reload_tenant_cache()
+    return env
+
+
+def litellm(client, text, forwarded=None, key=A, **headers):
+    body = {"input_type": "request", "texts": [text]}
+    if forwarded is not None:
+        body["request_headers"] = forwarded
+    return client.post(LITELLM, headers={**key, **headers}, json=body)
+
+
+def test_body_header_selects_the_team(client, tf):
+    r = litellm(client, "project zebra", {"x-tf-api-key-id": KEY_ID})
+    assert r.status_code == 200 and r.json()["action"] == "BLOCKED"
+    assert r.headers["X-Shield-Policy-Scope"] == "key-a"
+    other = litellm(client, "project zebra", {"x-tf-api-key-id": "SOMEOTHERKEY"})
+    assert other.json()["action"] == "NONE"
+    # The global policy still holds for every key id.
+    assert litellm(client, "my ssn is 1", {"x-tf-api-key-id": KEY_ID}).json()["action"] == "BLOCKED"
+
+
+def test_body_header_name_ignores_case(client, tf):
+    r = litellm(client, "project zebra", {"X-TF-API-KEY-ID": KEY_ID})
+    assert r.json()["action"] == "BLOCKED"
+
+
+@pytest.mark.parametrize("forwarded", [
+    {"x-tf-api-key-id": "[present]"},
+    {"x-tf-api-key-id": ""},
+    {"x-tf-api-key-id": 123},
+    {"x-tf-api-key-id": [KEY_ID]},
+    {"other": KEY_ID},
+    "x-tf-api-key-id: " + KEY_ID,
+    None,
+])
+def test_no_usable_body_value_is_a_missing_header(client, tf, forwarded):
+    r = litellm(client, "project zebra", forwarded)
+    assert r.status_code == 200 and r.json()["action"] == "NONE"
+    assert r.headers["X-Shield-Policy-Scope"] == "global"
+
+
+def test_no_usable_body_value_is_refused_when_required(client, tf):
+    tf.update_tenant("acme", {"policy_scopes": {**TF_SCOPES, "missing": "reject"}})
+    reload_tenant_cache()
+    r = litellm(client, "hello", {"x-tf-api-key-id": "[present]"})
+    assert r.status_code == 403 and r.json()["error"] == "policy_scope_required"
+    assert litellm(client, "hello", {"x-tf-api-key-id": KEY_ID}).status_code == 200
+
+
+def test_two_casings_with_different_values_are_invalid(client, tf):
+    r = litellm(client, "project zebra", {"x-tf-api-key-id": KEY_ID, "X-TF-API-KEY-ID": "OTHER"})
+    assert r.json()["action"] == "NONE"
+
+
+def test_real_header_wins_over_the_body(client, tf):
+    r = litellm(client, "project zebra", {"x-tf-api-key-id": KEY_ID}, **{"x-tf-api-key-id": "OTHER"})
+    assert r.json()["action"] == "NONE"
+    r = litellm(client, "project zebra", {"x-tf-api-key-id": "OTHER"}, **{"x-tf-api-key-id": KEY_ID})
+    assert r.json()["action"] == "BLOCKED"
+
+
+def test_real_header_still_works_on_the_litellm_route(client, tf):
+    assert litellm(client, "project zebra", **{"x-tf-api-key-id": KEY_ID}).json()["action"] == "BLOCKED"
+
+
+def test_body_only_read_on_the_litellm_route(client, tf):
+    # /guardrails/input never looks in the body for a team header.
+    r = client.post("/guardrails/input", headers=A,
+                    json={"message": "project zebra", "request_headers": {"x-tf-api-key-id": KEY_ID}})
+    assert r.json()["action"] == "pass"
+
+
+def test_body_not_read_for_tenants_without_team_policies(client, env, monkeypatch):
+    import core.middleware as mw
+    calls = []
+    real = mw._forwarded_headers
+
+    async def spy(request):
+        calls.append(request.url.path)
+        return await real(request)
+    monkeypatch.setattr(mw, "_forwarded_headers", spy)
+    r = litellm(client, "my ssn is 1", {"x-tf-api-key-id": KEY_ID}, key={"X-API-Key": PLAIN_KEY})
+    assert r.json()["action"] == "BLOCKED"
+    assert calls == []
+    # The scoped tenant does read it, so the spy is wired to the right place.
+    env.update_tenant("acme", {"policy_scopes": TF_SCOPES})
+    reload_tenant_cache()
+    litellm(client, "hi", {"x-tf-api-key-id": KEY_ID})
+    assert calls == [LITELLM]
+
+
+def test_bound_key_cannot_claim_another_team_from_the_body(client, tf):
+    team_key = "sk-psgtfkeyA-" + uuid.uuid4().hex[:8]
+    tf.add_api_key("acme", team_key)
+    tf.update_tenant("acme", {"policy_scopes": {
+        **TF_SCOPES,
+        "rules": TF_SCOPES["rules"] + [{"id": "key-b", "match": {"exact": ["otherkey"]}}],
+        "key_bindings": {team_key[:12]: [KEY_ID.lower()]}}})   # locks list values
+    reload_tenant_cache()
+    h = {"X-API-Key": team_key}
+    r = litellm(client, "hi", {"x-tf-api-key-id": "OTHERKEY"}, key=h)
+    assert r.status_code == 403 and r.json()["error"] == "policy_scope_not_allowed"
+    ok = litellm(client, "project zebra", {"x-tf-api-key-id": KEY_ID}, key=h)
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["action"] == "BLOCKED"
+
+
+def test_discovery_records_the_body_value(client, tf):
+    from storage.policy_scopes_store import read_seen
+    litellm(client, "hi", {"x-tf-api-key-id": KEY_ID})
+    seen = {e["value"]: e for e in read_seen("acme")}
+    assert KEY_ID.lower() in seen
+    assert seen[KEY_ID.lower()]["header"] == "x-tf-api-key-id"
+
+
+def test_body_headers_escape_hatch(client, tf, monkeypatch):
+    monkeypatch.setenv("SHIELD_POLICY_SCOPE_BODY_HEADERS", "off")
+    assert litellm(client, "project zebra", {"x-tf-api-key-id": KEY_ID}).json()["action"] == "NONE"
+    # A real header is unaffected by the switch.
+    assert litellm(client, "project zebra", **{"x-tf-api-key-id": KEY_ID}).json()["action"] == "BLOCKED"
+    monkeypatch.setenv("SHIELD_POLICY_SCOPE_BODY_HEADERS", "on")
+    assert litellm(client, "project zebra", {"x-tf-api-key-id": KEY_ID}).json()["action"] == "BLOCKED"

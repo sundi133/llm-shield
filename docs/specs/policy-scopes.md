@@ -575,3 +575,145 @@ keywords need different actions.
    - a Try it box backed by `POST /preview` plus `/guardrails/input`;
    - a Team keys card: each of the tenant's keys with the teams it may claim, Lock / Unlock (`PUT`/`DELETE /key-bindings/{prefix}`); keys without metadata or sharing a prefix say why they can't be locked; locks whose key was revoked stay removable;
    - `docs/team-policies.md` (`/team-policies/`) built from the walkthrough (no em dashes).
+
+---
+
+## 10. Addendum: team header forwarded by LiteLLM (task 6)
+
+Status: **approved 2026-10-29; implemented** (task 6, branch `feat/policy-scope-litellm-headers`).
+
+### 10.1 Problem & outcome
+A customer runs a LiteLLM gateway in front of Shield's LiteLLM guardrail route
+(`/beta/litellm_basic_guardrail_api`). The value that identifies their team
+does not reach Shield as an HTTP header: LiteLLM copies the caller's headers
+into the JSON body as `request_headers`, for example
+
+```json
+{"input_type": "request", "texts": ["..."],
+ "request_headers": {"x-tf-api-key-id": "XTZSE4KWMU7RCEMNMVRQ", "x-tf-organization-id": "[present]"}}
+```
+
+Today `_apply_policy_scope` reads only `request.headers`, so with team header
+`x-tf-api-key-id` every LiteLLM call gets the "no team header" outcome (global
+policy, or 403 when `missing: reject`).
+
+**Outcome:** on the LiteLLM route, a team header named in Team settings is also
+found in `body.request_headers`. Observable: with team header `x-tf-api-key-id`
+and a rule matching `XTZSE4KWMU7RCEMNMVRQ`, a LiteLLM call carrying that value
+gets the team's policy, `X-Shield-Policy-Scope` names the rule, and Discovered
+values lists the value.
+
+Telemetry from the customer (Oct 29) shows `x-tf-api-key-id` always carries a
+value while `x-tf-organization-id` and `x-tf-project-id` are absent, so the
+first deployment will select on `x-tf-api-key-id` (one rule per gateway key).
+
+**Non-goals:** reading `request_data` (`user_api_key_org_id`, `user_api_key_team_id`)
+or any other body field; body headers on any other route; a portal field for
+"where to read the header" (the source is fixed by the route).
+
+### 10.2 Plane & latency contract
+- **Data plane only** (`core/middleware.py`). The admin plane is unchanged; it
+  never serves the LiteLLM route.
+- **Guard path: yes, one route.** Cost by case:
+  - tenant without enabled team policies: **zero**. The enabled check happens
+    before the body is touched, so the body is not read or parsed.
+  - scoped tenant, other routes: zero (path check).
+  - scoped tenant, LiteLLM route: one `await request.body()` (already buffered
+    by the server; Starlette replays it to the route) and one `json.loads`.
+    Budget: under 1 ms p99 at 100 KB. Measured on the shipped
+    `_forwarded_headers` (read + parse + pick, 3,000 runs): **4 KB: 4.7 µs
+    median, 14.8 µs p99; 100 KB: 90 µs median, 173 µs p99.** Within budget,
+    so the route keeps parsing the body itself.
+- No I/O, no store read, no network call.
+
+### 10.3 Data model
+None. `policy_scopes.selectors` already holds the header names; the same
+names are looked up in the body. No new tenant fields, Redis keys or TTLs.
+
+### 10.4 Interface
+In `ShieldMiddleware.dispatch`, for `/beta/litellm_basic_guardrail_api` only and
+only when the tenant's `policy_scopes.enabled` is true and it has selectors:
+
+1. read the body and take `request_headers` if it is a JSON object;
+2. pass `resolve()` a getter that returns, for header `name`:
+   - the real HTTP header's values when present (same as every other route);
+   - otherwise the body value whose key matches `name` case-insensitively,
+     when it is a non-empty string other than `"[present]"`;
+   - otherwise nothing.
+
+Everything after that is unchanged: normalization, rule matching, key
+bindings, the two 403s, discovery, the response header and audit field.
+
+Unparseable bodies, a non-object `request_headers`, and non-string values all
+read as "no value"; the route itself still returns its own 400 for a bad body.
+
+**Escape hatch:** `SHIELD_POLICY_SCOPE_BODY_HEADERS=off` stops reading the
+body, read live (same pattern as `SHIELD_DISABLE_POLICY_SCOPES`).
+
+### 10.5 Security & backward compatibility
+- **Trust is the same as a real header.** The caller authenticates to Shield
+  with its API key and could already send any header it likes; the body copy
+  gives it nothing new. The tenant still comes only from the key.
+- **Tighten-only still holds.** A wrong or spoofed value can select another
+  team's policy, never one weaker than global.
+- **Spoofing between teams** is stopped the same way as for real headers: lock
+  a Shield key to its teams (Team keys). For `x-tf-api-key-id` the customer
+  must also confirm their gateway overwrites that header from the
+  authenticated key and does not pass a client-supplied value through (manual
+  step 4 below). The guide says so.
+- **Real header wins** when both are present, so direct callers behave exactly
+  as today.
+- **Behavior change, non-breaking:** a tenant that already set a team header
+  which LiteLLM forwards in the body starts getting its team policies on
+  LiteLLM calls. Team policies only add to the global policy, so this can make
+  a request stricter, never weaker, and the escape hatch turns it off.
+  Migration note in the guide.
+- Credential header names stay refused as team headers (`_FORBIDDEN_HEADERS`);
+  `x-tf-api-key-id` is an identifier, not a credential, and is allowed.
+
+### 10.6 Packaging & deploy
+No new module, dependency or Dockerfile line (`core/middleware.py` is already
+in every image). New env var documented in `docs/team-policies.md`.
+
+### 10.7 Failure modes
+| Case | Result |
+|---|---|
+| Body not JSON / `request_headers` missing | No body value; "no team header" behaviour |
+| Value `"[present]"` (LiteLLM not forwarding it) | Same as missing; the guide says to add the header to LiteLLM's `extra_headers` |
+| Value not a valid header value (spaces, over 64 chars) | Existing `INVALID` handling: global policy, recorded in Discovered values |
+| Same header in body under two casings | Ambiguous, so treated as invalid (same rule as two different real values) |
+| `SHIELD_POLICY_SCOPE_BODY_HEADERS=off` | Body ignored; today's behaviour |
+
+### 10.8 Test plan
+Automated, in `tests/test_policy_scopes_guard_path.py`:
+1. Team header `x-tf-api-key-id`, rule for `XTZSE4KWMU7RCEMNMVRQ` adding a
+   keyword: a LiteLLM call with that body value and the keyword is BLOCKED; the
+   same call with another value is NONE; response header names the rule.
+2. Key name case-insensitive (`X-TF-API-KEY-ID` in the body matches).
+3. `"[present]"`, missing key, non-object `request_headers`, non-string value:
+   "no team header" outcome, including the 403 under `missing: reject`.
+4. Real header and body value both present: the real header decides.
+5. The body is not read for a tenant without enabled team policies (assert
+   with a patched `Request.body`), nor on `/guardrails/input`.
+6. Key locked to team A, body value for team B: 403 `policy_scope_not_allowed`.
+7. Discovery records the body value under the configured header name.
+8. `SHIELD_POLICY_SCOPE_BODY_HEADERS=off`: body ignored.
+9. Check the tests fail with the body getter removed. (Done: 5 fail.)
+
+Full suite green in a clean venv. Latency numbers from 10.2 recorded here.
+
+Manual (Railway or local):
+1. Team settings: header `x-tf-api-key-id`, live on.
+2. Send one LiteLLM-shaped call; Discovered values shows the key id.
+3. Create rule from it, add a stricter guardrail, Save Changes; the next call
+   from that key gets it (`X-Shield-Policy-Scope`).
+4. Customer side: send a request through the gateway with a forged
+   `x-tf-api-key-id` header and confirm the forwarded value is still the
+   authenticated key's id.
+
+### 10.9 Task
+6. **Body headers on the LiteLLM route** (one PR): the middleware change, the
+   escape hatch, the tests above, a "Behind LiteLLM" section in
+   `docs/team-policies.md` (set the team header, add it to LiteLLM's
+   `extra_headers` if it arrives as `[present]`, the gateway-overwrite check,
+   the env var), and a one-line hint under Team settings in the portal.
