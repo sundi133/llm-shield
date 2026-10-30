@@ -8,14 +8,17 @@ from typing import Dict, Optional
 from guardrails.base import BaseGuardrail, safe_float
 from core.llm_backend import async_llm_call
 from guardrails.output.custom_policy import (
-    POLICY_SCAN_INSTRUCTION,
     _parse_policy_csv,
     custom_policy_fail_open,
     evaluate_sigma_policies,
     is_sigma_policy,
 )
 from core.models import GuardrailResult
-from core.text_utils import build_policy_messages, custom_policy_history_turns
+from core.text_utils import (
+    build_custom_policy_prompt,
+    build_policy_messages,
+    custom_policy_history_turns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,32 +134,7 @@ class CustomPolicyInputGuardrail(BaseGuardrail):
     async def _evaluate_policy_with_llm(self, text: str, policy: Dict, context: Dict) -> Dict:
         """Use LLM to evaluate if input text violates custom policy."""
 
-        evaluation_prompt = f"""You are a content policy evaluator. Analyze the given input text against the specified policy.
-
-POLICY INFORMATION:
-- Name: {policy['name']}
-- Description: {policy['description']}
-
-EVALUATION CRITERIA:
-{policy['prompt']}
-
-INPUT TEXT TO ANALYZE (everything between the markers):
-<<<BEGIN TEXT
-{text}
-END TEXT>>>
-
-CONTEXT:
-- User Role: {context.get('user_role', 'unknown')}
-- Session ID: {context.get('session_id', 'unknown')}
-- Stage: Input validation
-
-{POLICY_SCAN_INSTRUCTION}
-
-Respond with ONLY one CSV line: violates_policy,confidence,violation_type,reasoning
-Use "none" for violation_type when there is no violation. Do not quote fields;
-reasoning is last so a comma inside it is harmless.
-Example: true,0.95,pii_disclosure,message shares a full name and card number
-Example: false,0.90,none,no policy violation found"""
+        evaluation_prompt = build_custom_policy_prompt("input", policy, text, context)
 
         try:
             # Opt-in multi-turn: prepend prior conversation turns so the policy
