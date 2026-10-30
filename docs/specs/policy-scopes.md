@@ -246,7 +246,7 @@ the selected local policy:
 | In both, any other setting | Global, **unless** the global guardrail has `"delegable": true`, in which case local settings override (a team that needs its own threshold). `delegable` never lets a team lower the action. |
 | Local `enabled: false` on any guardrail | Rejected on save, dropped at merge. Even for a guardrail global does not name: on the chat proxies (UNION mode) a disabled entry switches off a server default. |
 | Local stage when global has no such stage | Rejected on save ("set a global input_guardrails first"), ignored at merge. A tenant stage *replaces* the server defaults on `/guardrails/*`, so a one-guardrail local stage would drop the rest. |
-| `custom_policy_input` / `_output` | Policies unioned by `policy_id`; same id keeps the stricter action; capped like the write path (`MAX_POLICIES_PER_STAGE` for NL, `SHIELD_SIGMA_MAX_POLICIES_PER_STAGE` for Sigma, counted separately), global policies first. The caps also apply to a team-only custom policy guardrail. Over the cap: 422 on save; at merge, extra local policies dropped with a warning. |
+| `custom_policy_input` / `_output` | Policies unioned by `policy_id`; same id keeps the stricter action, and a team may turn on a policy that is off globally; capped like the write path, counting **enabled** policies only (`SHIELD_MAX_POLICIES_PER_STAGE`, default 25, for NL; `SHIELD_SIGMA_MAX_POLICIES_PER_STAGE` for Sigma, counted separately), global policies first. The caps also apply to a team-only custom policy guardrail. Over the cap: 422 on save; at merge, extra local policies dropped with a warning. |
 | `tool_allowlist` | Not allowed in a local policy (422). Global passes through untouched. |
 
 `delegable` is a new optional boolean on the global `GuardrailPolicy`
@@ -849,3 +849,30 @@ Full suite in a clean venv.
 7. **One PR**: the rule card and new-rule form, the combined save, the
    mistake guards, team **+ Custom Policy**, label and placeholder fixes,
    `docs/team-policies.md` updated to the one-form flow, tests above.
+
+---
+
+## 12. Addendum: custom policy caps count enabled policies; limit 25 (fix)
+
+Status: **implemented** on branch `fix/custom-policy-cap`, at the user's
+request (2026-10-30), after a team custom policy on tenant `bankco` was
+refused: 10 natural-language global policies, one of them disabled, against a
+cap of 10.
+
+- **Only enabled policies count** toward the per-stage caps, on every path:
+  creating a policy (`storage/custom_policies.py`), updating one (turning it
+  on, or switching an enabled policy's format, needs a free slot), the stats
+  the portal shows, and team validation and merge (`core/policy_scopes.py`).
+  The guardrail evaluates enabled policies only, so this is what a request
+  costs.
+- **The natural-language cap is 25** (was 10), overridable with
+  `SHIELD_MAX_POLICIES_PER_STAGE` like the Sigma cap. Enabled policies run
+  concurrently, one guardrail-model call each, so a tenant that uses the room
+  adds model load, not sequential latency.
+- **A team can turn on a policy that is off globally** (same `policy_id`,
+  `enabled: true`): stricter, so allowed. It takes a slot for that team. A
+  team still can't turn a global policy off or lower its action.
+- **Off the hot path:** caps are checked on writes and when the merged team
+  view is built (memoized per cached config); no per-request change.
+- **Non-breaking:** every config valid before stays valid (the cap only grew
+  and counts fewer policies); the admin plane imports the same module.

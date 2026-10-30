@@ -9225,29 +9225,63 @@ function psRenderTeamCustom(stage) {
   const el = document.getElementById(`ps-team-custom-${stage}`);
   const g = (POLICIES[stage + '_guardrails'] || {})[psCpName(stage)];
   const team = psTeamCustomList(stage);
-  const teamIds = new Set(team.map(p => p.policy_id));
-  const global = ((g && g.enabled !== false && (g.settings || {}).policies) || [])
-    .filter(p => p && p.enabled !== false && !teamIds.has(p.policy_id));
-  if (!global.length && !team.length) {
+  const byTeam = Object.fromEntries(team.map(p => [p.policy_id, p]));
+  const globalAll = ((g && g.enabled !== false && (g.settings || {}).policies) || []).filter(p => p && p.policy_id);
+  const globalIds = new Set(globalAll.map(p => p.policy_id));
+  // Global policies: on (locked), or off globally, which a team may turn on
+  // for itself (stricter). A team entry sharing a global id only switches it on.
+  const globalRows = globalAll.map(p => {
+    const mine = byTeam[p.policy_id];
+    if (p.enabled !== false) return { p, kind: 'global' };
+    return { p: { ...p, ...(mine ? { enabled: true } : {}) }, kind: mine && mine.enabled !== false ? 'turned-on' : 'off' };
+  });
+  const own = team.filter(p => !globalIds.has(p.policy_id));
+  if (!globalRows.length && !own.length) {
     el.innerHTML = `<div class="muted" style="font-size:12px;margin-bottom:0.75rem;">No custom policies for this team. <b>+ Custom Policy</b> adds one only this team gets.</div>`;
     return;
   }
-  const row = (p, mine) => `
-    <div class="guardrail-row" style="flex-wrap:wrap;">
+  const btn = (label, fn, p, danger) =>
+    `<button class="small" data-stage="${stage}" data-id="${psEsc(p.policy_id)}" onclick="${fn}(this.dataset.stage, this.dataset.id)"${danger ? ' style="color:var(--danger);"' : ''}${psW()}>${label}</button>`;
+  const row = (p, kind) => {
+    const badge = {
+      own: '<span class="badge badge-success">This team only</span>',
+      global: '<span class="badge" title="From the global policy">🔒 Global</span>',
+      'turned-on': '<span class="badge badge-success">On for this team</span>',
+      off: '<span class="badge" style="background:rgba(113,113,122,0.2);color:#a1a1aa;">Off globally</span>',
+    }[kind];
+    const controls = kind === 'own' ? btn('Edit', 'psOpenCustomPolicy', p) + btn('Remove', 'psRemoveCustomPolicy', p, true)
+      : kind === 'off' ? btn('Turn on for this team', 'psTurnOnGlobalPolicy', p)
+      : kind === 'turned-on' ? btn('Turn off for this team', 'psRemoveCustomPolicy', p) : '';
+    return `
+    <div class="guardrail-row" style="flex-wrap:wrap;opacity:${kind === 'off' ? 0.6 : 1};">
       <div class="guardrail-icon" style="background:#6366f120;color:#6366f1;">✎</div>
       <div class="guardrail-info">
-        <div class="gr-name">${psEsc(p.name || p.policy_id)}
-          ${mine ? '<span class="badge badge-success">This team only</span>' : '<span class="badge" title="From the global policy">🔒 Global</span>'}
+        <div class="gr-name">${psEsc(p.name || p.policy_id)} ${badge}
           <span class="badge">${psEsc(p.action || '')}</span></div>
         <div class="gr-desc">${psEsc(p.description || '')}</div>
       </div>
-      ${mine ? `<div class="guardrail-controls">
-        <button class="small" data-stage="${stage}" data-id="${psEsc(p.policy_id)}" onclick="psOpenCustomPolicy(this.dataset.stage, this.dataset.id)"${psW()}>Edit</button>
-        <button class="small" data-stage="${stage}" data-id="${psEsc(p.policy_id)}" onclick="psRemoveCustomPolicy(this.dataset.stage, this.dataset.id)" style="color:var(--danger);"${psW()}>Remove</button>
-      </div>` : ''}
+      ${controls ? `<div class="guardrail-controls">${controls}</div>` : ''}
     </div>`;
+  };
   el.innerHTML = `<div style="font-size:12.5px;font-weight:600;margin-bottom:0.4rem;">Custom policies</div>
-    <div class="policy-grid" style="margin-bottom:1rem;">${team.map(p => row(p, true)).join('')}${global.map(p => row(p, false)).join('')}</div>`;
+    <div class="policy-grid" style="margin-bottom:1rem;">${own.map(p => row(p, 'own')).join('')}${globalRows.map(r => row(r.p, r.kind)).join('')}</div>`;
+}
+
+// Switch a globally disabled custom policy on for the selected team only. The
+// team entry carries just the id, enabled and the global action: the merge
+// takes the global policy and turns it on (docs/specs/policy-scopes.md 12).
+function psTurnOnGlobalPolicy(stage, policyId) {
+  const key = psCpName(stage);
+  const g = (POLICIES[stage + '_guardrails'] || {})[key];
+  const gp = (((g && g.settings) || {}).policies || []).find(p => p.policy_id === policyId);
+  if (!gp) return;
+  const local = psLocal(stage + '_guardrails');
+  if (!local[key]) local[key] = { enabled: true, action: (g && g.action) || 'pass', settings: {} };
+  local[key].settings = local[key].settings || {};
+  const list = local[key].settings.policies = (local[key].settings.policies || []).filter(p => p.policy_id !== policyId);
+  list.push({ policy_id: policyId, enabled: true, action: gp.action, format: gp.format || 'natural_language' });
+  psMarkDirty();
+  psShow(`"${psEsc(gp.name || policyId)}" will be on for team ${psEsc(PS_VIEW)}. Click Save Changes to apply it.`, true);
 }
 
 function psOpenCustomPolicy(stage, policyId) {

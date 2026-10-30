@@ -28,7 +28,7 @@ from storage.custom_policies import (
     disable_custom_policy,
     get_policy_stats,
     validate_policy_prompt,
-    MAX_POLICIES_PER_STAGE,
+    max_policies_per_stage,
     sigma_max_policies_per_stage,
 )
 from core.auth import require_config_write
@@ -1542,7 +1542,7 @@ async def get_policy_limits(request: Request):
     return {
         "tenant_id": tenant_id,
         "limits": {
-            "max_policies_per_stage": MAX_POLICIES_PER_STAGE,
+            "max_policies_per_stage": max_policies_per_stage(),
             "max_sigma_policies_per_stage": sigma_max_policies_per_stage(),
             "valid_stages": ["input", "output"],
             "min_prompt_length": 20,
