@@ -190,7 +190,7 @@ def build_request_event(
         "votal.session_id": session_id,
         "votal.role_name": role_name,
         "votal.input_text": _truncate_str(input_text, 1000),
-        "request.body": _truncate(body),
+        **_body_fields("request.body", body),
         "request.headers": _safe_headers(headers),
     }
 
@@ -271,7 +271,7 @@ def build_response_event(
         "votal.guardrail_count": len(guardrail_results) if guardrail_results else 0,
         "votal.guardrail_results": guardrail_results,
         "votal.latency_ms": round(latency_ms, 2),
-        "response.body": _truncate(body),
+        **_body_fields("response.body", body),
         **conversation_context,
         **prompt_chain_context,
     }
@@ -855,9 +855,133 @@ def _truncate(obj: Any, max_len: int = 2000) -> Any:
     return obj
 
 
+# Request and response bodies (docs/specs/telemetry-body-structure.md). A body
+# keeps its shape at any size: Elasticsearch maps a field from the first value
+# it sees, so a body that is an object on one event and a string on the next
+# gets the second event rejected, and a string hides every field inside it.
+BODY_MODE_ENV = "SHIELD_TELEMETRY_BODY_MODE"
+REDACTED = "[REDACTED]"
+_BODY_MAX_CHARS = 4000
+_BODY_PASSES = ((500, 10), (200, 3), (50, 1))   # (chars per string, items per list)
+_BODY_MAX_DEPTH = 6
+# Small metadata worth keeping when everything else has to go.
+_BODY_KEEP_OBJECTS = ("request_headers", "request_data", "metadata")
+_BODY_REDACT_KEYS = frozenset({
+    "authorization", "proxy-authorization", "cookie", "set-cookie",
+    "x-api-key", "x-admin-key", "x-tenant-key", "x-agent-token", "x-shield-proxy-token",
+    "api_key", "api_keys", "password", "secret", "client_secret", "private_key",
+    "access_token", "refresh_token",
+})
+
+
+# SHIELD_TELEMETRY_BODY_MODE, read per event:
+#   bounded (default)  shorten bodies over _BODY_MAX_CHARS, redact credentials
+#   full               whole bodies, credentials still redacted
+#   raw                whole bodies and HTTP headers, nothing redacted
+#   legacy             the pre-structure output: whole body or a 2,000-char string
+BODY_MODES = ("bounded", "full", "raw", "legacy")
+
+
+def _body_mode() -> str:
+    """An unknown value reads as bounded, so a typo never logs secrets."""
+    mode = os.environ.get(BODY_MODE_ENV, "").strip().lower()
+    return mode if mode in BODY_MODES else "bounded"
+
+
+def _redact_body(value: Any) -> Any:
+    """Replace credential-named fields at any depth, keeping each field's type
+    where it can (a list stays a list, an object stays an object)."""
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            if isinstance(k, str) and k.lower() in _BODY_REDACT_KEYS:
+                out[k] = [REDACTED] if isinstance(v, list) else {} if isinstance(v, dict) else REDACTED
+            else:
+                out[k] = _redact_body(v)
+        return out
+    if isinstance(value, list):
+        return [_redact_body(v) for v in value]
+    return value
+
+
+def _shorten(value: Any, max_chars: int, max_items: int, depth: int, cut: list) -> Any:
+    """Shorten long strings and lists in place of the value, never changing a
+    type except to null past the depth limit. Appends to ``cut`` when it
+    shortened anything."""
+    if isinstance(value, str):
+        if len(value) > max_chars:
+            cut.append(1)
+            return value[:max_chars] + "...[truncated]"
+        return value
+    if isinstance(value, (dict, list)) and depth >= _BODY_MAX_DEPTH:
+        cut.append(1)
+        return None
+    if isinstance(value, dict):
+        return {k: _shorten(v, max_chars, max_items, depth + 1, cut) for k, v in value.items()}
+    if isinstance(value, list):
+        if len(value) > max_items:
+            cut.append(1)
+            value = value[-max_items:]     # the newest messages are the ones checked
+        return [_shorten(v, max_chars, max_items, depth + 1, cut) for v in value]
+    return value
+
+
+def _fits(value: Any) -> bool:
+    return len(json.dumps(value, default=str)) <= _BODY_MAX_CHARS
+
+
+def _bounded_body(body: Any) -> tuple[Any, bool]:
+    """A body to log: credentials redacted, at most ``_BODY_MAX_CHARS`` encoded,
+    same JSON type as the input. Returns (body, whether anything was shortened).
+
+    Never raises and never falls back to the raw body: on any error the body
+    is left out and reported as shortened.
+    """
+    if body is None:
+        return None, False
+    try:
+        redacted = _redact_body(body)
+        if _fits(redacted):
+            return redacted, False
+        for max_chars, max_items in _BODY_PASSES:
+            out = _shorten(redacted, max_chars, max_items, 0, [])
+            if _fits(out):
+                return out, True
+        if not isinstance(redacted, dict):
+            return (type(redacted)() if isinstance(redacted, list) else None), True
+        # Last resort: scalars and the small metadata objects, shortened hard.
+        keep = {k: v for k, v in redacted.items()
+                if not isinstance(v, (dict, list)) or (k in _BODY_KEEP_OBJECTS and isinstance(v, dict))}
+        max_chars, max_items = _BODY_PASSES[-1]
+        out = _shorten(keep, max_chars, max_items, 0, [])
+        if not _fits(out):
+            out = {k: v for k, v in out.items() if not isinstance(v, (dict, list))}
+        return (out if _fits(out) else {}), True
+    except Exception:       # noqa: BLE001 - telemetry must never fail a request
+        return None, True
+
+
+def _body_fields(prefix: str, body: Any) -> dict:
+    """``{prefix: body}`` plus ``{prefix + "_truncated": True}`` when shortened."""
+    mode = _body_mode()
+    if mode == "legacy":
+        return {prefix: _truncate(body)}
+    if mode == "raw":
+        return {prefix: body}
+    if mode == "full":
+        try:
+            return {prefix: _redact_body(body)}
+        except Exception:       # noqa: BLE001 - never fall back to the raw body
+            return {prefix: None, f"{prefix}_truncated": True}
+    out, cut = _bounded_body(body)
+    return {prefix: out, f"{prefix}_truncated": True} if cut else {prefix: out}
+
+
 def _safe_headers(headers: Optional[dict]) -> Optional[dict]:
     if not headers:
         return None
+    if _body_mode() == "raw":
+        return dict(headers)
     # Redact sensitive headers
     safe = {}
     sensitive = {"authorization", "x-api-key", "cookie", "set-cookie"}

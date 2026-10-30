@@ -236,3 +236,45 @@ configuration file:
 
 Records in `both` are larger than before. If your Elasticsearch index uses a
 strict mapping (`dynamic: strict`), add the ASIM fields to it or use `native`.
+
+### Request and response bodies
+
+`request.body` and `response.body` keep their structure at any size, so every
+field inside them can be searched, for example
+`request.body.request_headers.x-tf-api-key-id` on a LiteLLM call:
+
+- A body up to 4,000 characters is logged whole.
+- A longer body keeps every field and its type, but long strings are cut to
+  500 characters (ending in `...[truncated]`) and long lists keep their last
+  10 items, tighter if it still doesn't fit. Small metadata such as
+  `request_headers` and `request_data` is kept to the end.
+- `request.body_truncated: true` (or `response.body_truncated`) marks a body
+  that was shortened.
+- Credential fields (`authorization`, `cookie`, `x-api-key`, `api_key`,
+  `api_keys`, `password`, `secret`, `client_secret`, `private_key`,
+  `access_token`, `refresh_token` and Shield's own key headers) are logged as
+  `[REDACTED]` at any depth.
+- The ASIM fields never include bodies.
+
+**Upgrading.** Before this release a body over 2,000 characters was logged as
+one string. If you search for that string, use `request.body_truncated : true`
+instead. If your Elasticsearch index first mapped `request.body` as text, it
+will reject the structured bodies: roll over to a new index when you upgrade.
+An index that mapped `request.body` as an object, the usual case, starts
+accepting long-request events it used to reject.
+
+**Choosing how much is logged.** Set `SHIELD_TELEMETRY_BODY_MODE` on the
+server. It takes effect on the next event, without a restart:
+
+| Value | Bodies | Credentials |
+|---|---|---|
+| `bounded` (default, also used for an unknown value) | Whole up to 4,000 characters, shortened beyond | `[REDACTED]` in bodies and HTTP headers |
+| `full` | Always whole, never shortened | `[REDACTED]` in bodies and HTTP headers |
+| `raw` | Always whole, never shortened | Logged as sent, including `Authorization`, `X-API-Key` and API keys in bodies |
+| `legacy` | Whole up to 2,000 characters, otherwise one cut-off string (the old output) | In bodies, logged as sent |
+
+Use `full` to see every value in `request_headers` and the body. Use `raw`
+only when the SIEM is cleared to hold credentials: anyone who can read the
+logs can then use the keys in them. Whole bodies make large records; check
+your SIEM's document size limit (Elasticsearch's default
+`http.max_content_length` is 100 MB per request).
