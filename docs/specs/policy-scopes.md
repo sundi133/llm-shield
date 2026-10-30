@@ -722,7 +722,7 @@ Manual (Railway or local):
 
 ## 11. Addendum: one form per team in the portal (task 7)
 
-Status: **draft, awaiting approval.** Branch `feat/team-rule-one-flow`.
+Status: **approved 2026-10-30; implemented** on branch `feat/team-rule-one-flow`.
 
 ### 11.1 Problem & outcome
 Setting up a team takes two places today: the header **name** goes in Team
@@ -747,13 +747,24 @@ Portal only (`static/tenant.html`, served by both planes). No route, model or
 guard-path change, so no request latency change.
 
 ### 11.3 Data model
-Unchanged. The form writes the same two things it writes today:
+Unchanged on the server. A rule's `match` also records the header it was
+written for, as `match.header`; the server stores `match` as sent and
+selection ignores it (selection still uses the tenant's header order, 11.5).
+Rules saved earlier show the first team header. The form writes the same two
+things it writes today:
 `PUT /settings` (`selectors`, `enabled`) and `PUT /rules/{id}` (`match`,
 guardrails). Team custom policies are `custom_policy_input` /
 `custom_policy_output` entries in the rule, which section 4 and the merge
 already support.
 
 ### 11.4 Interface (portal)
+
+Added at the user's request during the build (2026-10-30): the **Team keys**
+card moves into Advanced settings as a collapsed "Lock API keys to teams
+(optional)" section, since it is only needed when apps (not a gateway) set the
+header; Team settings is renamed **Advanced settings** and no longer opens on
+its own; Try it's placeholder uses one of the tenant's real values.
+
 **Team rule card**, replacing "Header values for this team" and "Patterns":
 
 > **When header** [header ▾] **is** [values] *(Patterns: optional, collapsed)*
