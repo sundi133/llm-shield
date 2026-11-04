@@ -156,9 +156,12 @@ def test_cli(tmp_path):
 def test_release_inputs_are_not_gitignored():
     """`*.env` in .gitignore once kept versions.env out of the commit, so CI and
     the release workflow had no pinned inputs."""
-    for p in sorted(REL.iterdir()):
-        res = subprocess.run(["git", "check-ignore", "-q", str(p.relative_to(ROOT))], cwd=ROOT)
-        assert res.returncode == 1, f"{p.relative_to(ROOT)} is gitignored"
+    needed = ["versions.env", "make_bundle.py", "mirror.sh", "BUNDLE_README.md", "README.md"]
+    for name in needed:
+        path = f"deploy/release/{name}"
+        assert (ROOT / path).is_file(), path
+        res = subprocess.run(["git", "check-ignore", "-q", path], cwd=ROOT)
+        assert res.returncode == 1, f"{path} is gitignored"
 
 
 def test_mirror_script_parses():
