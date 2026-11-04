@@ -102,6 +102,30 @@ existing key layout.
 
 ### 4.1 Chart: `deploy/helm/shield/`
 
+**Topologies.** RunPod runs the model and the guard API in one pod
+(`start_vllm.sh` starts vLLM, then `exec python3 handler.py`). On OpenShift the
+default splits them:
+
+| `dataPlane.topology` | Pods | Use |
+|---|---|---|
+| `split` (default) | `shield-model` (GPU, vLLM only, internal Service :8000) + `shield-guardrail` (CPU, `llm-shield-cloud` image, `SKIP_VLLM=true`, `LLM_BACKEND_TYPE=vllm`, `LLM_BACKEND_URL=http://shield-model:8000`) | Guardrail replicas scale on CPU and share one GPU; NetworkPolicy lets only guardrail pods reach the model |
+| `combined` | one GPU pod running `start_vllm.sh` as on RunPod | Smallest footprint, one GPU per replica |
+| `external` | `shield-guardrail` only, `LLM_BACKEND_URL` to a model served elsewhere (OpenShift AI, another cluster) | Customer already serves the model |
+
+The model pod uses the same `llm-shield` image as RunPod (the vLLM version
+proven with this model) with the command overridden to run only vLLM, and every
+cache variable plus `HOME` on the cache PVC. Task 2b replaces the duplicated
+vLLM flags with a `VLLM_ONLY=true` mode in `start_vllm.sh`.
+
+Guardrail replicas must share `SHIELD_AGENT_TOKEN_PRIVATE_KEY` and
+`SHIELD_CAP_TOKEN_PRIVATE_KEY` from one Secret: without them each process
+generates an ephemeral key (`core/signers.py`), so a token minted by one
+replica fails on another. `CONFIG_PATH` is not set: `handler.py` overwrites
+that file with the image default on every boot, so it holds no state.
+
+A working hand-written version of `split` (used to validate this design on a
+real cluster before the chart exists) is attached to PR #540's discussion.
+
 Values (abridged; defaults shown):
 
 ```yaml
@@ -128,7 +152,8 @@ admin:
   resources: { requests: { cpu: 250m, memory: 256Mi }, limits: { cpu: "1", memory: 512Mi } }
 
 dataPlane:
-  profile: gpu                           # gpu | remote-model
+  topology: split                        # split | combined | external
+  profile: gpu                           # gpu | remote-model (model placement for combined/external)
   replicas: 1
   workers: 4                             # WORKERS; 32 is the handler default
   requireKey: enforce                    # SHIELD_GUARD_REQUIRE_KEY
@@ -332,13 +357,14 @@ Per task, in CI unless stated:
 | 1a | Images run under restricted-v2: group-writable app and cache dirs, no `USER` change | both images | none |
 | 1b | `GET /health/ready` on both planes | both | none |
 | 2 | `vllm` mode: optional `LLM_BACKEND_API_KEY` bearer and `LLM_MODEL_NAME` | data | none |
+| 2b | `start_vllm.sh` `VLLM_ONLY=true`: run vLLM with the same flags and wait on it, without starting `handler.py` (the `split` model pod) | model | none |
 | 3 | Helm chart `deploy/helm/shield` (gpu + remote-model), CI lint/template/kubeconform | deploy | 1a, 1b |
 | 4 | `scripts/render_manifests.sh`, `rendered/<profile>` with kustomization, regenerate `openshift/*.yaml` and docs copies, drift guard, runbook | deploy, docs | 3 |
 | 5 | Release workflow: semver tags, pinned vLLM base, cosign, SBOM, chart OCI, bundle on GitHub Release, PR dry run | CI | 3, 4 |
 | 6 | **Optional, air-gapped only:** model image (modelcar) + chart wiring (init-container copy into the cache PVC for gpu, optional `InferenceService`). Connected clusters keep `start_vllm.sh` pulling from Hugging Face | deploy | 3 |
 | 7 | Acceptance on real OpenShift (Sandbox and a GPU cluster); fixes found there | all | 4, 5, 6 |
 
-Tasks 1a, 1b and 2 are independent and can run in parallel.
+Tasks 1a, 1b, 2 and 2b are independent and can run in parallel.
 
 ## 10. Decisions taken (change any before approval)
 
