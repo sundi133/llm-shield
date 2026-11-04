@@ -1,0 +1,92 @@
+# vLLM only, in the same llm-shield image RunPod runs (the vLLM version proven
+# with this model). VLLM_ONLY=true makes scripts/start_vllm.sh exec vLLM with
+# its usual flags and never start the guard API. The model downloads from
+# Hugging Face once into the PVC; later starts load it from there.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shield-model-cache
+  labels: { app: shield-model }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 50Gi } }      # 9.3 GB model + compile caches
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shield-model
+  labels: { app: shield-model, shield.votal.ai/runs-vllm: "true" }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }                    # the cache volume is RWO
+  selector: { matchLabels: { app: shield-model } }
+  template:
+    metadata:
+      labels: { app: shield-model }
+    spec:
+      tolerations:
+        - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
+      containers:
+        - name: vllm
+          image: shield-vllm
+          ports: [{ name: http, containerPort: 8000 }]
+          env:
+            - { name: VLLM_ONLY, value: "true" }
+            - { name: MODEL_NAME, value: votal-ai/vai35-4B-v2 }
+            - { name: SERVED_MODEL_NAME, value: votal-ai/vai35-4B-v2 }
+            - { name: VLLM_PORT, value: "8000" }
+            # Every cache on the volume: the model downloads once, and the
+            # random OpenShift UID can write there.
+            - { name: HOME, value: /model-cache/home }
+            - { name: XDG_CACHE_HOME, value: /model-cache/xdg }
+            - { name: HF_HOME, value: /model-cache/huggingface }
+            - { name: HUGGINGFACE_HUB_CACHE, value: /model-cache/huggingface/hub }
+            - { name: VLLM_CACHE_ROOT, value: /model-cache/vllm }
+            - { name: TRITON_CACHE_DIR, value: /model-cache/triton }
+            - { name: TORCHINDUCTOR_CACHE_DIR, value: /model-cache/inductor }
+            - { name: FLASHINFER_CACHE_DIR, value: /model-cache/flashinfer }
+            - name: HUGGING_FACE_HUB_TOKEN       # only for a private or gated model
+              valueFrom: { secretKeyRef: { name: shield-model, key: HUGGING_FACE_HUB_TOKEN, optional: true } }
+          startupProbe:                         # first start downloads 9.3 GB and compiles
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 10
+            failureThreshold: 180               # up to 30 minutes
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests: { cpu: "2", memory: 16Gi, nvidia.com/gpu: "1" }
+            limits: { cpu: "8", memory: 32Gi, nvidia.com/gpu: "1" }
+          volumeMounts:
+            - { name: model-cache, mountPath: /model-cache }
+            - { name: dshm, mountPath: /dev/shm }
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim: { claimName: shield-model-cache }
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: 8Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shield-model
+  labels: { app: shield-model }
+spec:
+  selector: { app: shield-model }
+  ports: [{ name: http, port: 8000, targetPort: 8000 }]
+---
+# Only guardrail pods reach the model. No Route: it is never exposed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: shield-model-ingress
+spec:
+  podSelector: { matchLabels: { app: shield-model } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: shield-guardrail } } }]
+      ports: [{ port: 8000, protocol: TCP }]

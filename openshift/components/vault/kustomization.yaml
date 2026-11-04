@@ -1,0 +1,13 @@
+# The secret vault (Shield LLM gateway vault mode): upstream keys stored
+# encrypted, materialized only at egress. The key-encryption key comes from
+# Secret shield-vault (key: kek), mounted as a file on both planes: the admin
+# plane stores secrets, the data plane decrypts them.
+#   oc create secret generic shield-vault --from-literal=kek=$(openssl rand -hex 32)
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - target: { kind: Deployment, name: shield-guardrail }
+    path: vault-guardrail.yaml
+  - target: { kind: Deployment, name: shield-admin }
+    path: vault-admin.yaml

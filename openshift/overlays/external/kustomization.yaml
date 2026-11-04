@@ -1,0 +1,41 @@
+# No GPU here: the guardrail service calls a model served elsewhere
+# (OpenShift AI, another cluster, any OpenAI-compatible endpoint).
+#
+#   oc apply -k openshift/overlays/external
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# namespace: shield
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/redis-auth
+  # - ../../components/vault
+  # - ../../components/external-redis
+
+# SET THIS: the model endpoint (base URL; /v1/chat/completions is appended).
+# A bearer token, if needed, goes in Secret shield-guardrail as LLM_BACKEND_API_KEY.
+configMapGenerator:
+  - name: shield-model-endpoint
+    literals:
+      - LLM_BACKEND_URL=https://set-your-model-url.invalid
+      # - LLM_MODEL_NAME=votal-ai/vai35-4B-v2
+
+# Images: the ONE place to point Shield at your registry (air-gapped mirror)
+# or a release. Keep the logical names on the left. Base and components use
+# those names, so this rewrites every pod, including ones components add.
+images:
+  - name: shield-admin
+    newName: docker.io/sundi133/llm-shield-admin
+    newTag: SET-AFTER-PR-541-MERGES
+  - name: shield-cloud
+    newName: docker.io/sundi133/llm-shield-cloud
+    newTag: SET-AFTER-PR-541-MERGES
+  - name: shield-vllm
+    newName: docker.io/sundi133/llm-shield
+    newTag: SET-AFTER-PR-541-MERGES
+  - name: redis
+    newName: docker.io/library/redis
+    newTag: 7.4-alpine

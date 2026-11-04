@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shield-model-cache
+  labels: { app: shield-guardrail }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 50Gi } }      # 9.3 GB model + compile caches

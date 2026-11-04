@@ -1,0 +1,22 @@
+# Shield on OpenShift: the parts every install has (Redis, admin portal,
+# guardrail service). Do not apply this directly; apply an overlay:
+#   oc apply -k openshift/overlays/split      (GPU model pod + CPU guardrail pods)
+#   oc apply -k openshift/overlays/combined   (one GPU pod, the RunPod shape)
+#   oc apply -k openshift/overlays/external   (model served elsewhere)
+# See openshift/README.md. Spec: docs/specs/onprem-release-bundle.md
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: shield
+    includeSelectors: false
+
+resources:
+  - redis.yaml
+  - admin.yaml
+  - guardrail.yaml
+  - networkpolicies.yaml
+
+# Images keep logical names here (shield-admin, shield-cloud, shield-vllm,
+# redis); each overlay rewrites them, after its components have run.

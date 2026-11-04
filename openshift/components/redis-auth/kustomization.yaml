@@ -1,0 +1,9 @@
+# Redis requires a password, from Secret shield-redis (key: password).
+# Put the same password in REDIS_URL in BOTH shield-guardrail and
+# shield-admin-secrets:  redis://:<password>@redis:6379/0
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - target: { kind: Deployment, name: redis }
+    path: redis-requirepass.yaml

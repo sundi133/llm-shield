@@ -1,0 +1,56 @@
+# Admin plane: the portal and admin/tenant APIs (admin_app.py). CPU only.
+# Secret shield-admin-secrets (you create it): REDIS_URL, SHIELD_ADMIN_KEY.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shield-admin
+  labels: { app: shield-admin }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: shield-admin } }
+  template:
+    metadata:
+      labels: { app: shield-admin }
+    spec:
+      containers:
+        - name: shield-admin
+          image: shield-admin
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - { name: PORT, value: "8080" }
+          envFrom:
+            - secretRef: { name: shield-admin-secrets }
+          readinessProbe:                     # 503 while Redis is unreachable
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shield-admin
+  labels: { app: shield-admin }
+spec:
+  selector: { app: shield-admin }
+  ports: [{ name: http, port: 8080, targetPort: 8080 }]
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: shield-admin
+  labels: { app: shield-admin }
+spec:
+  to: { kind: Service, name: shield-admin }
+  port: { targetPort: http }
+  tls: { termination: edge, insecureEdgeTerminationPolicy: Redirect }

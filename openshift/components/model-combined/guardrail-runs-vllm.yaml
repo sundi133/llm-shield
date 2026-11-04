@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shield-guardrail
+  labels: { shield.votal.ai/runs-vllm: "true" }
+spec:
+  replicas: 1                                     # one GPU per replica
+  strategy: { type: Recreate, rollingUpdate: null }   # the cache volume is RWO
+  template:
+    spec:
+      tolerations:
+        - { key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }
+      containers:
+        - name: shield
+          image: shield-vllm
+          env:
+            - { name: SKIP_VLLM, value: "false" }
+            - { name: MODEL_NAME, value: votal-ai/vai35-4B-v2 }
+            - { name: VLLM_PORT, value: "8000" }
+            - { name: HOME, value: /model-cache/home }
+            - { name: XDG_CACHE_HOME, value: /model-cache/xdg }
+            - { name: HF_HOME, value: /model-cache/huggingface }
+            - { name: HUGGINGFACE_HUB_CACHE, value: /model-cache/huggingface/hub }
+            - { name: VLLM_CACHE_ROOT, value: /model-cache/vllm }
+            - { name: TRITON_CACHE_DIR, value: /model-cache/triton }
+            - { name: TORCHINDUCTOR_CACHE_DIR, value: /model-cache/inductor }
+            - { name: FLASHINFER_CACHE_DIR, value: /model-cache/flashinfer }
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom: { secretKeyRef: { name: shield-model, key: HUGGING_FACE_HUB_TOKEN, optional: true } }
+          startupProbe:                           # vLLM loads first, then the guard API starts
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 10
+            failureThreshold: 180                 # up to 30 minutes on a cold start
+          resources:
+            requests: { cpu: "2", memory: 16Gi, nvidia.com/gpu: "1" }
+            limits: { cpu: "8", memory: 32Gi, nvidia.com/gpu: "1" }
+          volumeMounts:
+            - { name: model-cache, mountPath: /model-cache }
+            - { name: dshm, mountPath: /dev/shm }
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim: { claimName: shield-model-cache }
+        - name: dshm
+          emptyDir: { medium: Memory, sizeLimit: 8Gi }

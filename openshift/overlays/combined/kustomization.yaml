@@ -1,0 +1,37 @@
+# One GPU pod runs the model and the guard API together, the RunPod shape.
+# Smallest footprint; each replica needs its own GPU. Also the drop-in
+# replacement for the old openshift/shield-guardrail-vllm.yaml (same Secret
+# and Service names; Redis without a password, as before).
+#
+#   oc apply -k openshift/overlays/combined
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# namespace: shield
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/model-combined
+  # - ../../components/redis-auth      # recommended for new installs
+  # - ../../components/fp16
+  # - ../../components/vault
+  # - ../../components/external-redis
+
+# Images: the ONE place to point Shield at your registry (air-gapped mirror)
+# or a release. Keep the logical names on the left. Base and components use
+# those names, so this rewrites every pod, including ones components add.
+images:
+  - name: shield-admin
+    newName: docker.io/sundi133/llm-shield-admin
+    newTag: SET-AFTER-PR-541-MERGES
+  - name: shield-cloud
+    newName: docker.io/sundi133/llm-shield-cloud
+    newTag: SET-AFTER-PR-541-MERGES
+  - name: shield-vllm
+    newName: docker.io/sundi133/llm-shield
+    newTag: SET-AFTER-PR-541-MERGES
+  - name: redis
+    newName: docker.io/library/redis
+    newTag: 7.4-alpine

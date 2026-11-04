@@ -1,0 +1,64 @@
+# Redis: the store of record for tenants, API keys, policies, token
+# revocations and replay nonces. Standalone, persistent, never evicts.
+# Requirements for a Redis you bring yourself: openshift/README.md.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  labels: { app: redis }
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 10Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  labels: { app: redis }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }            # one writer on the RWO volume
+  selector: { matchLabels: { app: redis } }
+  template:
+    metadata:
+      labels: { app: redis }
+    spec:
+      containers:
+        - name: redis
+          image: redis
+          command: [redis-server]
+          args:
+            - --appendonly
+            - "yes"
+            - --dir
+            - /data
+            - --maxmemory
+            - 2gb
+            # noeviction: an LRU policy could silently delete tenants or keys
+            # (allkeys-lru) or token revocations (volatile-lru). Writes are
+            # refused instead when full; alert on used_memory.
+            - --maxmemory-policy
+            - noeviction
+          ports: [{ name: redis, containerPort: 6379 }]
+          readinessProbe:
+            exec: { command: [sh, -c, "redis-cli ping | grep -q PONG"] }
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: [sh, -c, "redis-cli ping | grep -q PONG"] }
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 3Gi }      # above --maxmemory, for AOF rewrite headroom
+          volumeMounts: [{ name: data, mountPath: /data }]
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: redis-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels: { app: redis }
+spec:
+  selector: { app: redis }
+  ports: [{ name: redis, port: 6379, targetPort: 6379 }]
