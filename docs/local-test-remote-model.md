@@ -74,16 +74,18 @@ runtime. Pick one column and keep those variables for Step 4.
 |---|---|---|---|---|
 | `LLM_BACKEND_TYPE` | `ollama` | `ollama` | `openrouter` | `vllm` |
 | `LLM_BACKEND_URL` | `http://host:11434` | `https://ollama.com` | `https://openrouter.ai/api/v1` | your server base URL |
-| `LLM_MODEL_NAME` | e.g. `qwen2.5:3b` | e.g. `gemma4:31b` | e.g. `qwen/qwen3.5-27b` | the served model name |
-| Auth | none | `OLLAMA_API_KEY` | `OPENROUTER_API_KEY` | none is sent |
+| `LLM_MODEL_NAME` | e.g. `qwen2.5:3b` | e.g. `gemma4:31b` | e.g. `qwen/qwen3.5-27b` | optional: sent as `model` when set, so it must match the served name |
+| Auth | none | `OLLAMA_API_KEY` | `OPENROUTER_API_KEY` | optional `LLM_BACKEND_API_KEY` |
 
 Two things worth knowing before you pick:
 
-**A bearer token is only sent for Ollama and OpenRouter.** The `vllm` backend
-sends no `Authorization` header at all, so an endpoint that sits behind a
-token-checking proxy (a RunPod proxy URL, for example) will reject every call.
-Use an endpoint that is reachable without a token, over a private network or a
-tunnel.
+**The `vllm` backend sends a bearer token only when you set one.** With
+`LLM_BACKEND_API_KEY` set, every call carries `Authorization: Bearer <key>`, which
+an endpoint behind a token-checking gateway needs (a model served on OpenShift AI
+with token auth, for example). Left unset, no `Authorization` header is sent, as
+before. Only `LLM_BACKEND_API_KEY` is used here: `OPENROUTER_API_KEY` and
+`OLLAMA_API_KEY` are never sent to a `vllm` endpoint. Likewise `LLM_MODEL_NAME` is
+sent as `model` only when set; a single vLLM server answers without it.
 
 **Every prompt the guardrails inspect is sent to this endpoint.** Pointing at a
 third-party cloud is a data-egress decision. For a local test with real content,

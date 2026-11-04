@@ -255,14 +255,35 @@ def _is_openrouter_mode() -> bool:
     return os.getenv("ENABLE_LITELLM") != "true" and _get_backend_type() == "openrouter"
 
 
+def _is_vllm_mode() -> bool:
+    """True when the backend is a vLLM (or other OpenAI-compatible) server."""
+    return os.getenv("ENABLE_LITELLM") != "true" and _get_backend_type() == "vllm"
+
+
+def _vllm_api_key() -> Optional[str]:
+    """Bearer token for a vLLM server that requires one, e.g. a model served on
+    OpenShift AI with token auth (docs/specs/onprem-release-bundle.md, task 2).
+
+    Only LLM_BACKEND_API_KEY counts here, never OPENROUTER_API_KEY or
+    OLLAMA_API_KEY: a key meant for another service must not be sent to the
+    model endpoint. Unset (the default) sends no header, as before.
+    """
+    return (os.getenv("LLM_BACKEND_API_KEY") or "").strip() or None
+
+
 def _auth_headers() -> dict:
     """Authorization headers for the LLM backend, if configured.
 
-    Attached for Bearer-authed hosted backends — ollama.com cloud and OpenRouter.
-    (Local `ollama serve` / self-hosted vLLM need none.) Never log the key itself.
+    Attached for Bearer-authed hosted backends — ollama.com cloud and OpenRouter
+    — and for vLLM only when LLM_BACKEND_API_KEY is set. (Local `ollama serve` /
+    self-hosted vLLM need none.) Never log the key itself.
     """
     if _get_backend_type() in ("ollama", "openrouter"):
         key = _get_backend_api_key()
+        if key:
+            return {"Authorization": f"Bearer {key}"}
+    if _is_vllm_mode():
+        key = _vllm_api_key()
         if key:
             return {"Authorization": f"Bearer {key}"}
     return {}
@@ -595,6 +616,12 @@ def _build_payload(
     else:
         # vLLM mode - add chat template kwargs
         payload["chat_template_kwargs"] = {"enable_thinking": False}
+        # A served model name, only when set: a gateway in front of vLLM (e.g.
+        # OpenShift AI) may route on it. Unset sends no model field, as before;
+        # a lone vLLM then answers with its only model.
+        model_name = (os.getenv("LLM_MODEL_NAME") or "").strip() if _is_vllm_mode() else ""
+        if model_name:
+            payload["model"] = model_name
 
     if response_format:
         payload["response_format"] = {
