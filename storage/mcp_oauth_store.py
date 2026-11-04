@@ -30,7 +30,7 @@ import secrets
 import time
 from typing import Any, Optional
 
-from storage.tenant_store import _fallback_store, _get_redis
+from storage.tenant_store import _fallback_store, _get_redis, run_pipeline
 
 #: How long an operator has to complete the browser redirect. Doubles as the CSRF
 #: window: a `state` is single-use and dies with the record, so a replayed or
@@ -246,7 +246,7 @@ def take_pending(state: str) -> Optional[dict]:
             pipe = r.pipeline()
             pipe.get(key)
             pipe.delete(key)
-            raw = pipe.execute()[0]
+            raw = run_pipeline(pipe)[0]
     else:
         raw = _fallback_store.pop(key, None)
     rec = _decode(raw)

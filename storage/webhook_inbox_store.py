@@ -162,7 +162,7 @@ def create_inbox(owner: str, *, name: str, source: str = "",
     pipe.set(f"inboxtoken:{inbox['token_hash']}", inbox["inbox_id"])
     pipe.sadd(f"inboxes:{owner}", inbox["inbox_id"])
     pipe.sadd("inboxes:owners", owner)
-    pipe.execute()
+    _ts.run_pipeline(pipe)
     return inbox, token, secret
 
 
@@ -201,7 +201,7 @@ def rotate_token(inbox_id: str) -> Optional[str]:
     pipe.set(f"inboxtoken:old:{old}", inbox_id, ex=OLD_TOKEN_TTL_S)
     pipe.set(f"inboxtoken:{new}", inbox_id)
     pipe.set(f"inbox:{inbox_id}", json.dumps(inbox))
-    pipe.execute()
+    _ts.run_pipeline(pipe)
     return token
 
 
@@ -236,7 +236,7 @@ def delete_inbox(inbox_id: str) -> bool:
     pipe = r.pipeline()
     pipe.delete(*keys)
     pipe.srem(f"inboxes:{owner}", inbox_id)
-    pipe.execute()
+    _ts.run_pipeline(pipe)
     if not r.scard(f"inboxes:{owner}"):
         r.srem("inboxes:owners", owner)
     return True
@@ -318,7 +318,7 @@ def record_delivery(inbox: dict, delivery: dict) -> None:
     excess = r.zcard(zkey) - len(old) + 1 - MAX_DELIVERIES
     if excess > 0:
         old += [_decode(m) for m in (r.zrange(zkey, len(old), len(old) + excess - 1) or [])]
-    pipe = r.pipeline(transaction=True)
+    pipe = _ts.open_transaction(r)
     pipe.zadd(zkey, {delivery["id"]: score})
     pipe.hset(hkey, delivery["id"], data)
     if old:
@@ -327,7 +327,7 @@ def record_delivery(inbox: dict, delivery: dict) -> None:
     ttl = days * 86400
     pipe.expire(zkey, ttl)
     pipe.expire(hkey, ttl)
-    pipe.execute()
+    _ts.run_pipeline(pipe)
 
 
 def list_deliveries(inbox_id: str, *, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
@@ -343,7 +343,9 @@ def list_deliveries(inbox_id: str, *, limit: int = 50, offset: int = 0) -> tuple
     else:
         total = int(r.zcard(zkey) or 0)
         page = [_decode(m) for m in (r.zrevrange(zkey, offset, offset + limit - 1) or [])]
-        raws = r.hmget(hkey, page) if page else []
+        # Fields unpacked: upstash_redis takes hmget(key, *fields) and would send
+        # a list as ONE field (its JSON text); redis-py accepts either form.
+        raws = r.hmget(hkey, *page) if page else []
     out = []
     for raw in raws:
         try:

@@ -310,7 +310,9 @@ tcp-keepalive 300
 timeout 0
 maxclients 10000
 maxmemory 8gb
-maxmemory-policy allkeys-lru
+# noeviction: Redis is the store of record for tenants, API keys and policies.
+# An LRU policy can silently delete them (or token revocations) when memory fills.
+maxmemory-policy noeviction
 
 # Security
 rename-command FLUSHDB ""

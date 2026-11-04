@@ -34,6 +34,36 @@ jobs:
         # packages (core/, api/, storage/) import without a src layout.
         run: python -m pytest tests -q
 
+  redis-clients:
+    # The cloud runs on the upstash_redis REST client, on-prem on redis-py over
+    # TCP, and their pipelines differ. The suite above uses the in-process
+    # fallback, which hid four cloud-only failures. Run the store flows with
+    # BOTH real clients against a real Redis 7 (tests/test_redis_client_compat.py).
+    name: redis clients (upstash + redis-py)
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s
+          --health-timeout 3s --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt
+      - name: Run the store flows on both clients
+        env:
+          SHIELD_TEST_REDIS_URL: redis://localhost:6379/15
+        run: python -m pytest tests/test_redis_client_compat.py -q -rs
+
   hook-windows:
     # The PowerShell hook, run for real under pwsh and Windows PowerShell 5.1,
     # including the managed-mode ACL checks (docs/specs/hooks-plugin-production.md).

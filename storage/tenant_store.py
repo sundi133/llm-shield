@@ -87,6 +87,33 @@ def _get_redis():
         return None
 
 
+# ── Pipelines on both clients ────────────────────────────────────────────────
+# _get_redis() hands back one of two clients whose pipelines differ:
+#   redis-py (REDIS_URL):      pipeline(transaction=...) opens, execute() runs.
+#   upstash_redis (REST):      pipeline() / multi() open, exec() runs, and
+#                              execute(command) only QUEUES one more command,
+#                              so execute() with no argument raises TypeError.
+# Callers open and run pipelines through these two helpers so the same code
+# works on both.
+
+def open_transaction(r):
+    """A pipeline whose commands apply atomically (MULTI/EXEC)."""
+    try:
+        return r.pipeline(transaction=True)      # redis-py
+    except TypeError:
+        return r.multi()                         # upstash_redis: pipeline() takes no args
+
+
+def run_pipeline(pipe) -> list:
+    """Send the queued commands and return their results, in order."""
+    # exec first: the upstash pipeline has BOTH, and its execute() only queues.
+    # Looked up on the class, not the instance, so a wrapper that answers any
+    # attribute through __getattr__ is not mistaken for the upstash client.
+    if callable(getattr(type(pipe), "exec", None)):
+        return pipe.exec()
+    return pipe.execute()
+
+
 def _cache_get(key: str) -> Optional[dict]:
     """Get from in-memory cache if not expired."""
     if key in _cache:
