@@ -12,7 +12,11 @@ themselves. Today they get:
   `docs/assets/openshift/*.yaml`;
 - images on public Docker Hub tagged `:latest`, `:v2` and `:<sha>`
   (`.github/workflows/build.yml`), unsigned, amd64 only;
-- a model that the GPU pod downloads from Hugging Face on first start.
+- a model that the GPU pod downloads from Hugging Face on first start:
+  `scripts/start_vllm.sh` runs vLLM with `--model "$MODEL_NAME"` (default
+  `votal-ai/vai35-4B-v2`, public, about 9.3 GB). That stays the default
+  model path; this spec only makes the download land on the PVC once, and
+  adds an opt-in model image for clusters with no route to Hugging Face.
 
 The manifests have known problems, each of which breaks or degrades an install:
 
@@ -49,8 +53,10 @@ Success: on a real OpenShift cluster, `oc apply -k rendered/remote-model/`
 (after creating one Secret) brings up Redis, the admin portal and the
 guardrail service, and the end-to-end check passes: a tenant created on the
 admin plane is enforced by the data plane. The same with `helm install`. The
-GPU profile does the same on a GPU node, with the model loaded from the
-mirrored model image and no Hugging Face access.
+GPU profile does the same on a GPU node, with `start_vllm.sh` pulling the
+model from Hugging Face once into the cache PVC (a restart does not
+re-download); and, for an air-gapped cluster, from the mirrored model image
+with no Hugging Face access.
 
 **Non-goals.**
 
@@ -128,9 +134,10 @@ dataPlane:
   requireKey: enforce                    # SHIELD_GUARD_REQUIRE_KEY
   gpu:
     model:
-      source: modelImage                 # modelImage | huggingface
-      image: vai35-4b-modelcar@sha256:...
-      name: votal-ai/vai35-4B-v2         # SERVED_MODEL_NAME, so callers see the same name
+      source: huggingface                # huggingface (start_vllm.sh pulls it, as today) | modelImage (air-gapped)
+      name: votal-ai/vai35-4B-v2         # MODEL_NAME; with modelImage also SERVED_MODEL_NAME, so callers see the same name
+      revision: ""                       # optional pinned HF commit for repeatable installs
+      image: ""                          # modelImage only: vai35-4b-modelcar@sha256:...
     quantization: fp8                    # none on A100/V100/T4
     maxModelLen: 8196
     gpuMemoryUtilization: 0.85
@@ -166,7 +173,9 @@ Environment the chart sets, per plane (secrets by reference only):
 | `SHIELD_GUARD_REQUIRE_KEY` | | `enforce` | tenant isolation |
 | `REDIS_URL`, `SHIELD_ADMIN_KEY` | secret | secret | must match across planes |
 | `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `VLLM_CACHE_ROOT`, `TRITON_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR`, `FLASHINFER_CACHE_DIR` | | all under the cache PVC | fixes the re-download |
-| `HF_HUB_OFFLINE=1`, `MODEL_NAME=/model-cache/models/<name>` | | when `source: modelImage` | air-gapped |
+| `MODEL_NAME=votal-ai/vai35-4B-v2` | | `source: huggingface` (default) | `start_vllm.sh` unchanged; vLLM downloads into the PVC cache once |
+| `HUGGING_FACE_HUB_TOKEN` | | optional, from `secrets.dataPlane` | only for a private or gated model |
+| `HF_HUB_OFFLINE=1`, `MODEL_NAME=/model-cache/models/<name>`, `SERVED_MODEL_NAME=<name>` | | `source: modelImage` | air-gapped; `start_vllm.sh` passes the local path to `--model` unchanged |
 | `SKIP_VLLM=true`, `LLM_BACKEND_TYPE=vllm`, `LLM_BACKEND_URL` | | remote-model profile | |
 | `SECRET_VAULT_ENABLED`, `SECRET_VAULT_KEK` (path) | | when `vault.enabled` | |
 
@@ -266,7 +275,8 @@ for RunPod and Railway).
 | Redis full | `noeviction` refuses writes; nonce store fails closed; runbook says alert on `used_memory`. |
 | GPU without fp8 (A100, V100, T4) | `quantization: none`; values comment and runbook table. |
 | Model image not mirrored (air-gapped) | init container `ImagePullBackOff`; `mirror.sh` covers it via `images.txt`. |
-| `source: huggingface` on a cluster without egress | vLLM start fails; startup probe fails; runbook says use `modelImage`. |
+| `source: huggingface` (default) on a cluster without egress to huggingface.co | vLLM download fails, `start_vllm.sh` exits ("vLLM process died"), startup probe fails; runbook says allow huggingface.co or switch to `modelImage`. |
+| Hugging Face rate limit or outage on first start | Same as above, retried by the pod restart; once cached on the PVC, later starts need no Hugging Face access. |
 | Model load slower than probes | startup probe budget sized for a cold 9.3 GB load; values allow raising it. |
 | Customer cannot create namespaces (Developer Sandbox) | chart installs into the current namespace; no Namespace object. |
 | No KServe CRDs | `modelServing.inferenceService.enabled=false` by default; enabling it without the CRD fails `oc apply` with a clear error. |
@@ -306,8 +316,11 @@ Per task, in CI unless stated:
     OpenAI-compatible endpoint: install once with `oc apply -k` and once with
     `helm install`; run the runbook's end-to-end check (tenant on admin,
     blocked prompt on data plane, `401` without a key, restart survives).
-  - A GPU OpenShift cluster, `gpu` profile, model from the model image with
-    `HF_HUB_OFFLINE=1`: same check, plus no Hugging Face request in pod logs.
+  - A GPU OpenShift cluster, `gpu` profile, default `source: huggingface`:
+    same check; then delete the pod and confirm the restart loads from the PVC
+    with no download (pod logs, and start time well under the first one).
+  - If task 6 is built: the same with `source: modelImage` and
+    `HF_HUB_OFFLINE=1`, plus no Hugging Face request in pod logs.
 - Full suite green in a clean venv (`requirements-test.txt` only); CI
   `pytest` gate passes.
 
@@ -322,7 +335,7 @@ Per task, in CI unless stated:
 | 3 | Helm chart `deploy/helm/shield` (gpu + remote-model), CI lint/template/kubeconform | deploy | 1a, 1b |
 | 4 | `scripts/render_manifests.sh`, `rendered/<profile>` with kustomization, regenerate `openshift/*.yaml` and docs copies, drift guard, runbook | deploy, docs | 3 |
 | 5 | Release workflow: semver tags, pinned vLLM base, cosign, SBOM, chart OCI, bundle on GitHub Release, PR dry run | CI | 3, 4 |
-| 6 | Model image (modelcar) + chart wiring (init-container copy for gpu, optional `InferenceService`) | deploy | 3 |
+| 6 | **Optional, air-gapped only:** model image (modelcar) + chart wiring (init-container copy into the cache PVC for gpu, optional `InferenceService`). Connected clusters keep `start_vllm.sh` pulling from Hugging Face | deploy | 3 |
 | 7 | Acceptance on real OpenShift (Sandbox and a GPU cluster); fixes found there | all | 4, 5, 6 |
 
 Tasks 1a, 1b and 2 are independent and can run in parallel.
@@ -343,9 +356,11 @@ Tasks 1a, 1b and 2 are independent and can run in parallel.
 
 ## 11. Open questions (need an answer, not a design choice)
 
-1. **Model redistribution:** Hugging Face lists `votal-ai/vai35-4B-v2` as
+1. **Model redistribution (task 6 only):** Hugging Face lists `votal-ai/vai35-4B-v2` as
    `license: other`, based on `Qwen/Qwen3.5-4B`. Confirm Votal may ship the
    weights inside a customer-mirrored image.
-2. **RTA's OpenShift AI version:** OCI model images in KServe
+2. **Does RTA's GPU cluster reach huggingface.co?** If yes, the default
+   path (`start_vllm.sh` download) is all they need and task 6 can wait.
+3. **RTA's OpenShift AI version:** OCI model images in KServe
    (`storageUri: oci://...`) need a recent OpenShift AI release; task 6's
    `InferenceService` path depends on it. The init-container path does not.
