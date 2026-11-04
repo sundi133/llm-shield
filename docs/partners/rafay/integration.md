@@ -419,50 +419,50 @@ guardrail chart).
 
 ### A.8 OpenShift (Rafay runs OpenShift)
 
-Ready-to-apply OpenShift manifests live in the repo's `openshift/` directory:
+Ready-to-apply OpenShift install files live in the repo's
+[`openshift/`](https://github.com/sundi133/llm-shield/tree/main/openshift)
+folder, applied with plain `oc apply -k` (no Helm). The full step-by-step
+install and test runbook is
+[`openshift/README.md`](https://github.com/sundi133/llm-shield/blob/main/openshift/README.md).
 
-| Manifest | Deploys |
+| Overlay | Deploys |
 |---|---|
-| [`redis.yaml`](/assets/openshift/redis.yaml) | Redis (tenant store + policy cache): the dependency from A.2 |
-| [`shield-guardrail-vllm.yaml`](/assets/openshift/shield-guardrail-vllm.yaml) | The **guardrail data plane with in-cluster vLLM** (GPU): Deployment + Service + `Route` + model-cache PVC |
-| [`shield-admin.yaml`](/assets/openshift/shield-admin.yaml) | *(optional)* the admin/tenant portal (`Route`, port 8080) |
-
-The vLLM manifest is a thin wrapper; the image's entrypoint
-(`scripts/start_vllm.sh`) already launches vLLM on `:8000`, waits for it, then
-runs the guard API; the manifest only schedules that image on a GPU with the
-volumes, `Route`, and env it needs. Model runs **in-cluster** (full residency).
+| `openshift/overlays/split` | **Default.** Redis, the admin portal, the guardrail API on CPU, and the guardrail model (vLLM) in its own GPU pod |
+| `openshift/overlays/combined` | One GPU pod running the model and the guardrail API together (the same shape as the GPU image on RunPod) |
+| `openshift/overlays/external` | No GPU: the guardrail API calls a model served elsewhere |
 
 ```bash
 oc new-project shield || oc project shield
-oc apply -f openshift/redis.yaml
-# edit the Secret (REDIS_URL, SHIELD_ADMIN_KEY, optional HF token) first, then:
-oc apply -f openshift/shield-guardrail-vllm.yaml
+# create the Secrets first (openshift/README.md, step 2), then:
+oc apply -k openshift/overlays/split
 oc get route shield-guardrail -o jsonpath='{.spec.host}'   # Rafay's base URL
 ```
 
-OpenShift specifics baked into the manifest (and why):
+OpenShift specifics built into the files (and why):
 - **App on port 8080**, not 80: the restricted SCC can't bind privileged ports.
+- **No `anyuid`:** the images run as OpenShift's random UID (group-writable app and cache folders).
 - **`/dev/shm` as an in-memory `emptyDir`**: vLLM/NCCL need more than the 64 MB default.
-- **Model-cache PVC** (`HF_HOME`) so the 4B model isn't re-pulled on restart.
+- **Model-cache PVC** with every Hugging Face and vLLM cache on it, so the model downloads once.
 - **`Route` timeout 120s**: Tier-2/agentic calls exceed the 30s default.
 - **GPU toleration + `nvidia.com/gpu: 1`**: needs the **NVIDIA GPU Operator** installed.
-- **fp8 by default** (L40S/L4/H100); set `VLLM_QUANTIZATION=none` on A100/V100/T4.
-- **SCC:** if the vLLM image needs root, `oc adm policy add-scc-to-user anyuid -z shield-guardrail -n shield`.
+- **fp8 by default** (L40S/L4/H100); add `components/fp16` on A100/V100/T4.
+- **Readiness on `/health/ready`**: a pod that loses Redis leaves the Service instead of serving from an empty in-memory store.
 
-For the no-GPU option (app calls a remote model), use the `llm-shield-cloud`
-image with `SKIP_VLLM=true` + `LLM_BACKEND_URL` instead: same Deployment shape,
-no GPU, no model-cache PVC.
+For the no-GPU option (the guardrail API calls a remote model), use
+`openshift/overlays/external` and set the model URL in its `kustomization.yaml`.
 
 ### A.9 Before a customer's on-prem install goes live
 
-The manifests are a working reference. For a customer's production cluster:
+The overlays are a working reference. For a customer's production cluster:
 
-1. **Pin image versions.** The manifests pull `:latest`. Use a fixed version tag
-   from the registry Votal provides, mirrored into the customer's registry for
+1. **Pin image versions.** The overlays pin every Shield image to one build.
+   For production use a release tag from the registry Votal provides, set in
+   the overlay's `images:` block and mirrored into the customer's registry for
    disconnected clusters.
-2. **Give Redis a password.** `redis.yaml` relies only on a `NetworkPolicy`, so
-   anything in the namespace can read tenant data. Add `requirepass` and put the
-   password in `REDIS_URL` (`redis://:<password>@redis:6379/0`).
+2. **Give Redis a password.** On by default in `overlays/split` and
+   `overlays/external` (`components/redis-auth`); the password also goes in
+   `REDIS_URL` (`redis://:<password>@redis:6379/0`). `overlays/combined` keeps
+   the old passwordless Redis unless you add the component.
 3. **The root admin key belongs to the customer.** Each install generates its
    own `SHIELD_ADMIN_KEY` into the Secret; Votal never holds it. Rafay's
    automation gets a managed `shadm_` credential minted on that install
@@ -472,6 +472,7 @@ The manifests are a working reference. For a customer's production cluster:
    `SHIELD_OAUTH_ISSUER_URL` (the data plane `Route`) and
    `SHIELD_PORTAL_BASE_URL` (the portal `Route`), on both deployments.
 5. **Disconnected clusters:** load the model into the model-cache volume
-   (`HF_HOME`) ahead of time and set `HF_HUB_OFFLINE=1`.
+   (`/model-cache/huggingface`) ahead of time and set `HF_HUB_OFFLINE=1` on the
+   model pod.
 6. **Same checks as hosted:** a screening call with no key returns `401`, and the
    per-customer verification in the [onboarding runbook](/partners/rafay/onboarding/#34-verify-before-telling-the-customer-it-is-on).

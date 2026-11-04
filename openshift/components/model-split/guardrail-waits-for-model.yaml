@@ -1,0 +1,16 @@
+# Guardrail pods start serving only once the model answers, so a fresh
+# install never routes guard calls to a model still downloading.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shield-guardrail
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: wait-for-model
+          image: shield-cloud
+          command: [sh, -c, "until curl -sf http://shield-model:8000/health; do echo waiting for the model at shield-model:8000; sleep 10; done"]
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { cpu: 100m, memory: 64Mi }

@@ -1,0 +1,28 @@
+# Use your own Redis instead of the bundled one. Put its address in REDIS_URL
+# in BOTH shield-guardrail and shield-admin-secrets. It must be standalone or
+# primary/replica (NOT Cluster), Redis 6.2+ or Valkey 7.2+, Lua enabled,
+# maxmemory-policy noeviction, persistence on. See openshift/README.md.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: { name: redis }
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata: { name: redis }
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata: { name: redis-data }
+  - patch: |-
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata: { name: redis-ingress }

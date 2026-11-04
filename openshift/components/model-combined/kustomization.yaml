@@ -1,0 +1,17 @@
+# The RunPod shape: one GPU pod runs vLLM and the guard API together
+# (scripts/start_vllm.sh starts vLLM on 127.0.0.1:8000, then handler.py).
+# Smallest footprint; every replica needs its own GPU.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - model-cache-pvc.yaml
+
+configMapGenerator:
+  - name: shield-model-endpoint
+    literals:
+      - LLM_BACKEND_URL=http://127.0.0.1:8000
+
+patches:
+  - target: { kind: Deployment, name: shield-guardrail }
+    path: guardrail-runs-vllm.yaml

@@ -64,6 +64,31 @@ jobs:
           SHIELD_TEST_REDIS_URL: redis://localhost:6379/15
         run: python -m pytest tests/test_redis_client_compat.py -q -rs
 
+  openshift-manifests:
+    # The openshift/ Kustomize tree customers install with `oc apply -k`
+    # (docs/specs/onprem-release-bundle.md). Build every overlay with the
+    # Kustomize built into kubectl and validate it against the Kubernetes
+    # schemas. Route (OpenShift-only) has no schema here; its fields are checked
+    # by tests/test_openshift_manifests.py in the pytest job.
+    name: openshift manifests
+    runs-on: ubuntu-latest
+    env:
+      KUBECONFORM_VERSION: v0.6.7
+      KUBECONFORM_SHA256: 95f14e87aa28c09d5941f11bd024c1d02fdc0303ccaa23f61cef67bc92619d73
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kubeconform (pinned, checksum-verified)
+        run: |
+          curl -sSLo /tmp/kubeconform.tgz "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tgz" | sha256sum -c -
+          tar -xzf /tmp/kubeconform.tgz -C /tmp kubeconform
+      - name: Build and validate every overlay
+        run: |
+          for overlay in openshift/overlays/*/; do
+            echo "== ${overlay}"
+            kubectl kustomize "${overlay}" | /tmp/kubeconform -strict -summary -skip Route -kubernetes-version 1.28.0
+          done
+
   hook-windows:
     # The PowerShell hook, run for real under pwsh and Windows PowerShell 5.1,
     # including the managed-mode ACL checks (docs/specs/hooks-plugin-production.md).

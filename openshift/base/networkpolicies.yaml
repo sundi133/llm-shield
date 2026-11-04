@@ -1,0 +1,15 @@
+# Only Shield's own pods may reach Redis. (The model pod's policy comes with
+# the model-split component.) The admin and guardrail pods take traffic from
+# the OpenShift router through their Routes and are not restricted here.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-ingress
+spec:
+  podSelector: { matchLabels: { app: redis } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchLabels: { app: shield-guardrail } }
+        - podSelector: { matchLabels: { app: shield-admin } }
+      ports: [{ port: 6379, protocol: TCP }]

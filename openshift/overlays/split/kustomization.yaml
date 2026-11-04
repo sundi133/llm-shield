@@ -1,0 +1,40 @@
+# DEFAULT for OpenShift: the model in its own GPU pod, the guard API in CPU
+# pods that scale independently and share that GPU.
+#
+#   apps / LiteLLM -> shield-guardrail (CPU, 2+) -> shield-model (GPU, internal)
+#                            |
+#                          redis  <- shield-admin (portal)
+#
+# Before applying, create the Secrets (openshift/README.md), then:
+#   oc apply -k openshift/overlays/split
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# namespace: shield          # uncomment to pin; otherwise the current project
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/model-split
+  - ../../components/redis-auth
+  # - ../../components/fp16            # A100 / V100 / T4 (no fp8)
+  # - ../../components/vault           # LLM gateway vault mode
+  # - ../../components/external-redis  # your own Redis instead of the bundled one
+
+# Images: the ONE place to point Shield at your registry (air-gapped mirror)
+# or a release. Keep the logical names on the left. Base and components use
+# those names, so this rewrites every pod, including ones components add.
+images:
+  - name: shield-admin
+    newName: docker.io/sundi133/llm-shield-admin
+    newTag: a62db23a38dc4edd3958cadbd9aea675d8c55fd4
+  - name: shield-cloud
+    newName: docker.io/sundi133/llm-shield-cloud
+    newTag: a62db23a38dc4edd3958cadbd9aea675d8c55fd4
+  - name: shield-vllm
+    newName: docker.io/sundi133/llm-shield
+    newTag: a62db23a38dc4edd3958cadbd9aea675d8c55fd4
+  - name: redis
+    newName: docker.io/library/redis
+    newTag: 7.4-alpine

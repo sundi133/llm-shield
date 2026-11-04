@@ -1,0 +1,72 @@
+# Data plane: the guard API (handler.py -> core/app.py). CPU only in the
+# split and external overlays; the combined overlay turns it into one GPU pod.
+#
+# Secret shield-guardrail (you create it): REDIS_URL, SHIELD_ADMIN_KEY,
+#   SHIELD_AGENT_TOKEN_PRIVATE_KEY, SHIELD_CAP_TOKEN_PRIVATE_KEY (the SAME
+#   keys on every replica, or a token minted by one replica fails on another),
+#   and optionally LLM_BACKEND_API_KEY (bearer for a model that needs one).
+# ConfigMap shield-model-endpoint (made by the overlay): LLM_BACKEND_URL,
+#   optionally LLM_MODEL_NAME.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shield-guardrail
+  labels: { app: shield-guardrail }
+spec:
+  replicas: 1                      # scale with: oc scale deploy/shield-guardrail --replicas=N
+  selector: { matchLabels: { app: shield-guardrail } }
+  template:
+    metadata:
+      labels: { app: shield-guardrail }
+    spec:
+      containers:
+        - name: shield
+          image: shield-cloud                       # no vLLM, no GPU
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - { name: PORT, value: "8080" }         # restricted SCC cannot bind :80
+            - { name: WORKERS, value: "4" }         # handler.py defaults to 32 processes
+            - { name: SKIP_VLLM, value: "true" }
+            - { name: LLM_BACKEND_TYPE, value: vllm }   # the cloud image defaults to ollama
+            - { name: SHIELD_MAX_MODEL_LEN, value: "8196" }
+            - { name: SHIELD_GUARD_REQUIRE_KEY, value: enforce }
+          envFrom:
+            - secretRef: { name: shield-guardrail }
+            - configMapRef: { name: shield-model-endpoint }
+          readinessProbe:                           # 503 while Redis is unreachable
+            httpGet: { path: /health/ready, port: 8080 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests: { cpu: "1", memory: 2Gi }
+            limits: { cpu: "4", memory: 6Gi }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shield-guardrail
+  labels: { app: shield-guardrail }
+spec:
+  selector: { app: shield-guardrail }
+  ports: [{ name: http, port: 80, targetPort: 8080 }]
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: shield-guardrail
+  labels: { app: shield-guardrail }
+  annotations:
+    # Tier-2 and agentic checks can run past the router's 30 s default.
+    haproxy.router.openshift.io/timeout: 120s
+spec:
+  to: { kind: Service, name: shield-guardrail }
+  port: { targetPort: http }
+  tls: { termination: edge, insecureEdgeTerminationPolicy: Redirect }

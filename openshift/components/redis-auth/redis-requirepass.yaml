@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  template:
+    spec:
+      containers:
+        - name: redis
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom: { secretKeyRef: { name: shield-redis, key: password } }
+          # The full list (a patch replaces args as a whole): the base flags
+          # plus --requirepass, expanded by Kubernetes from the env above.
+          args:
+            - --appendonly
+            - "yes"
+            - --dir
+            - /data
+            - --maxmemory
+            - 2gb
+            - --maxmemory-policy
+            - noeviction
+            - --requirepass
+            - $(REDIS_PASSWORD)
+          readinessProbe:
+            exec: { command: [sh, -c, 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG'] }
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: [sh, -c, 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG'] }
+            periodSeconds: 15

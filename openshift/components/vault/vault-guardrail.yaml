@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shield-guardrail
+spec:
+  template:
+    spec:
+      containers:
+        - name: shield
+          env:
+            - { name: SECRET_VAULT_ENABLED, value: "true" }
+            - { name: SECRET_VAULT_KEK, value: /etc/shield/vault/kek }
+          volumeMounts:
+            - { name: vault-kek, mountPath: /etc/shield/vault, readOnly: true }
+      volumes:
+        - name: vault-kek
+          secret: { secretName: shield-vault, defaultMode: 0440 }

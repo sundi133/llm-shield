@@ -1,0 +1,16 @@
+# The model in its own GPU pod; the guardrail pods (CPU) call it at
+# http://shield-model:8000. Many guardrail replicas share one GPU.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - model.yaml
+
+configMapGenerator:
+  - name: shield-model-endpoint
+    literals:
+      - LLM_BACKEND_URL=http://shield-model:8000
+
+patches:
+  - target: { kind: Deployment, name: shield-guardrail }
+    path: guardrail-waits-for-model.yaml
