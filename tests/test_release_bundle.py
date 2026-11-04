@@ -151,6 +151,16 @@ def test_cli(tmp_path):
     assert res.returncode == 1 and "no image given" in res.stderr
 
 
+@pytest.mark.skipif(shutil.which("git") is None or not (ROOT / ".git").exists(),
+                    reason="needs a git checkout")
+def test_release_inputs_are_not_gitignored():
+    """`*.env` in .gitignore once kept versions.env out of the commit, so CI and
+    the release workflow had no pinned inputs."""
+    for p in sorted(REL.iterdir()):
+        res = subprocess.run(["git", "check-ignore", "-q", str(p.relative_to(ROOT))], cwd=ROOT)
+        assert res.returncode == 1, f"{p.relative_to(ROOT)} is gitignored"
+
+
 def test_mirror_script_parses():
     assert subprocess.run(["bash", "-n", str(REL / "mirror.sh")]).returncode == 0
 

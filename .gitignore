@@ -26,6 +26,8 @@ Thumbs.db
 .env
 *.env
 !.env.example
+# Pinned release inputs, not secrets (.github/workflows/release.yml)
+!deploy/release/versions.env
 agent.crt
 agent.key
 
