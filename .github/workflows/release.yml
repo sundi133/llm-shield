@@ -1,0 +1,185 @@
+name: Release
+
+# A version tag (v1.2.3) builds the images a customer runs, signs them, and
+# publishes the OpenShift install bundle as a GitHub Release
+# (docs/specs/onprem-release-bundle.md, task 5).
+#
+#   git tag v1.2.3 && git push origin v1.2.3
+#
+# Needs repository secrets: DOCKER_PASSWORD (already used by build.yml),
+# COSIGN_PRIVATE_KEY and COSIGN_PASSWORD (from `cosign generate-key-pair`).
+# Builds on main (build.yml) are unchanged.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Existing tag to (re)build, e.g. v1.2.3"
+        required: true
+
+permissions:
+  contents: write          # create the GitHub Release
+
+concurrency:
+  group: release-${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+  cancel-in-progress: false
+
+env:
+  DOCKERHUB_USER: sundi133
+  VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+
+jobs:
+  images:
+    name: Build ${{ matrix.logical }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - logical: shield-vllm
+            dockerfile: Dockerfile
+            image: llm-shield
+          - logical: shield-cloud
+            dockerfile: Dockerfile.cloud
+            image: llm-shield-cloud
+          - logical: shield-admin
+            dockerfile: Dockerfile.admin
+            image: llm-shield-admin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.VERSION }}
+
+      - name: Check the version
+        run: |
+          echo "${VERSION}" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' \
+            || { echo "::error::version must look like v1.2.3, got ${VERSION}"; exit 1; }
+
+      - name: Load pinned inputs
+        run: grep -v '^\s*#' deploy/release/versions.env | grep -v '^\s*$' >> "$GITHUB_ENV"
+
+      - name: Free disk space (vllm only)
+        if: matrix.logical == 'shield-vllm'
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: false
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push ${{ matrix.image }}:${{ env.VERSION }}
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            VLLM_BASE_IMAGE=${{ env.VLLM_BASE_IMAGE }}
+            SHIELD_BUILD_SHA=${{ github.sha }}
+          sbom: true
+          provenance: mode=max
+          tags: ${{ env.DOCKERHUB_USER }}/${{ matrix.image }}:${{ env.VERSION }}
+
+      - name: Record the digest
+        run: |
+          mkdir -p digests
+          printf '{"%s": {"ref": "docker.io/%s/%s", "digest": "%s", "tag": "%s"}}\n' \
+            "${{ matrix.logical }}" "${DOCKERHUB_USER}" "${{ matrix.image }}" \
+            "${{ steps.build.outputs.digest }}" "${VERSION}" > "digests/${{ matrix.logical }}.json"
+          cat "digests/${{ matrix.logical }}.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.logical }}
+          path: digests/${{ matrix.logical }}.json
+
+  bundle:
+    name: Sign and publish the bundle
+    needs: images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.VERSION }}
+
+      - name: Load pinned inputs
+        run: grep -v '^\s*#' deploy/release/versions.env | grep -v '^\s*$' >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USER }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Collect image digests (and pin Redis)
+        run: |
+          redis_ref="${REDIS_IMAGE%:*}"; redis_tag="${REDIS_IMAGE##*:}"
+          redis_digest=$(docker buildx imagetools inspect "${REDIS_IMAGE}" | awk '/^Digest:/{print $2; exit}')
+          printf '{"redis": {"ref": "%s", "digest": "%s", "tag": "%s"}}\n' \
+            "${redis_ref}" "${redis_digest}" "${redis_tag}" > digests/redis.json
+          jq -s 'add' digests/*.json > images.json
+          cat images.json
+
+      - name: Require the signing key
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+        run: |
+          [ -n "${COSIGN_PRIVATE_KEY}" ] || { echo "::error::COSIGN_PRIVATE_KEY secret is not set; releases must be signed"; exit 1; }
+
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v2.4.1
+
+      - name: Sign the Votal images (key-based, verifiable offline)
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          cosign public-key --key env://COSIGN_PRIVATE_KEY > cosign.pub
+          for name in shield-admin shield-cloud shield-vllm; do
+            ref=$(jq -r --arg n "$name" '.[$n].ref + "@" + .[$n].digest' images.json)
+            cosign sign --yes --tlog-upload=false --key env://COSIGN_PRIVATE_KEY "$ref"
+            cosign verify --key cosign.pub --insecure-ignore-tlog=true "$ref" > /dev/null
+            echo "signed and verified $ref"
+          done
+
+      - name: Assemble the bundle
+        run: python3 deploy/release/make_bundle.py --version "${VERSION}" --images images.json --out dist --cosign-pub cosign.pub
+
+      - name: Every overlay in the bundle builds
+        run: |
+          for o in dist/shield-openshift-${VERSION}/openshift/overlays/*/; do
+            kubectl kustomize "$o" > /dev/null && echo "ok $o"
+          done
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files="dist/shield-openshift-${VERSION}.tar.gz dist/shield-openshift-${VERSION}.tar.gz.sha256 cosign.pub"
+          if gh release view "${VERSION}" > /dev/null 2>&1; then
+            gh release upload "${VERSION}" $files --clobber
+          else
+            gh release create "${VERSION}" $files --title "Shield ${VERSION}" --notes "OpenShift install bundle. Download shield-openshift-${VERSION}.tar.gz, then follow its README.md. Images are pinned by digest and signed (cosign.pub)."
+          fi
