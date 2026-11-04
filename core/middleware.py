@@ -269,7 +269,7 @@ class ShieldMiddleware(BaseHTTPMiddleware):
     4. Attaches context to request.state for downstream handlers
     """
 
-    _SKIP_PATHS = {"/health", "/ping", "/docs", "/redoc", "/openapi.json"}
+    _SKIP_PATHS = {"/health", "/health/ready", "/ping", "/docs", "/redoc", "/openapi.json"}
     _GUARDED_PREFIXES = (
         "/v1/shield",
         "/v1/tenant",

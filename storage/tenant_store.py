@@ -87,6 +87,55 @@ def _get_redis():
         return None
 
 
+# ── Readiness (GET /health/ready on both planes) ─────────────────────────────
+# When Redis is configured but unreachable, the stores above quietly fall back
+# to per-process memory, so a pod keeps answering with a store nobody else
+# sees. Readiness reports that, so Kubernetes stops routing to the pod.
+#
+# It never calls _get_redis(): that client has no socket timeouts, and a probe
+# blocked on an unreachable host would hold a worker thread for minutes, every
+# probe period, from the pool the guard path also uses. The probe uses its own
+# connection with hard timeouts instead, against the same backend _get_redis()
+# would pick (Upstash REST when both its vars are set, else REDIS_URL).
+
+READY_TIMEOUT_S = 2.0
+_ready_client = None        # redis-py client used only by redis_ready()
+_ready_client_url = ""
+
+
+def redis_ready(timeout: float = READY_TIMEOUT_S) -> Optional[bool]:
+    """None: no Redis configured (in-memory is the intended store).
+    True: the configured Redis answered PING. False: it did not."""
+    global _ready_client, _ready_client_url
+    upstash_url = os.environ.get("UPSTASH_REDIS_REST_URL", "").strip()
+    upstash_token = os.environ.get("UPSTASH_REDIS_REST_TOKEN", "").strip()
+    redis_url = os.environ.get("REDIS_URL", "").strip()
+    try:
+        if upstash_url and upstash_token and upstash_url.startswith(("http://", "https://")):
+            import httpx
+            resp = httpx.get(f"{upstash_url.rstrip('/')}/ping", timeout=timeout,
+                             headers={"Authorization": f"Bearer {upstash_token}"})
+            return resp.status_code == 200 and resp.json().get("result") == "PONG"
+        if not redis_url:
+            return None
+        if _ready_client is None or _ready_client_url != redis_url:
+            import redis as redis_lib
+            _ready_client = redis_lib.Redis.from_url(
+                redis_url, socket_connect_timeout=timeout, socket_timeout=timeout)
+            _ready_client_url = redis_url
+        return bool(_ready_client.ping())
+    except Exception as e:      # noqa: BLE001 - any failure means "not ready"
+        logger.warning("readiness: Redis did not answer (%s)", e.__class__.__name__)
+        return False
+
+
+def readiness_body(ok: Optional[bool]) -> tuple[int, dict]:
+    """(status code, body) for GET /health/ready. Names no host or error."""
+    if ok is False:
+        return 503, {"status": "not_ready", "reason": "redis_unreachable"}
+    return 200, {"status": "ready", "redis": "ok" if ok else "not_configured"}
+
+
 def _cache_get(key: str) -> Optional[dict]:
     """Get from in-memory cache if not expired."""
     if key in _cache:

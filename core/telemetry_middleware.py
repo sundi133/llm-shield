@@ -129,7 +129,7 @@ async def _process_response_telemetry_async(
 class TelemetryMiddleware(BaseHTTPMiddleware):
     """Capture every request and response as telemetry events."""
 
-    _SKIP_PATHS = {"/health", "/ping", "/docs", "/redoc", "/openapi.json"}
+    _SKIP_PATHS = {"/health", "/health/ready", "/ping", "/docs", "/redoc", "/openapi.json"}
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path in self._SKIP_PATHS:

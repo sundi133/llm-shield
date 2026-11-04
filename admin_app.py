@@ -1245,6 +1245,13 @@ def create_admin_app() -> FastAPI:
     async def health():
         return {"status": "ok"}
 
+    @app.get("/health/ready")
+    async def ready():
+        # Same check as the data plane (storage/tenant_store.py redis_ready).
+        from storage.tenant_store import readiness_body, redis_ready
+        code, body = readiness_body(await asyncio.to_thread(redis_ready))
+        return JSONResponse(status_code=code, content=body)
+
     @app.get("/ping")
     async def ping():
         return {"status": "ok"}
