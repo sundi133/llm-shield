@@ -13,7 +13,7 @@ metadata:
   name: shield-guardrail
   labels: { app: shield-guardrail }
 spec:
-  replicas: 2
+  replicas: 1                      # scale with: oc scale deploy/shield-guardrail --replicas=N
   selector: { matchLabels: { app: shield-guardrail } }
   template:
     metadata:

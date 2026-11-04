@@ -188,6 +188,13 @@ def test_split_guardrail_is_cpu_only_and_waits_for_the_model():
     assert [i["name"] for i in init] == ["wait-for-model"]
 
 
+def test_split_is_four_single_pods():
+    """Redis, admin portal, GPU model, guardrail service: one pod each."""
+    deps = _deployments(built("split"))
+    assert sorted(deps) == ["redis", "shield-admin", "shield-guardrail", "shield-model"]
+    assert {n: d["spec"]["replicas"] for n, d in deps.items()} == dict.fromkeys(deps, 1)
+
+
 def test_split_model_is_internal_and_reachable_only_by_guardrail_pods():
     docs = built("split")
     assert not [d for d in docs if d["kind"] == "Route" and d["spec"]["to"]["name"] == "shield-model"]
