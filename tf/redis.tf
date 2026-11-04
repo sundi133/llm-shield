@@ -66,7 +66,7 @@ resource "kubernetes_deployment_v1" "redis" {
             "--appendonly", "yes",
             "--dir", "/data",
             "--maxmemory", var.redis_max_memory,
-            "--maxmemory-policy", "allkeys-lru",
+            "--maxmemory-policy", var.redis_maxmemory_policy,
             "--save", "900 1",
             "--save", "300 100",
             "--tcp-keepalive", "60",

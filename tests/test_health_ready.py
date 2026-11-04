@@ -27,10 +27,36 @@ def clean_env(monkeypatch):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(ts, "_ready_client", None)
     monkeypatch.setattr(ts, "_ready_client_url", "")
-    # The probe must never go through the app's client (no socket timeouts).
+
+
+def _forbid_app_client(monkeypatch):
+    """The probe must never go through the app's client (no socket timeouts).
+
+    Patched only around redis_ready() calls, never while apps are built:
+    a module first imported during the patch would keep the stand-in for the
+    rest of the run (`from storage.tenant_store import _get_redis`)."""
     def _no(*a, **k):
         raise AssertionError("redis_ready must not call _get_redis()")
     monkeypatch.setattr(ts, "_get_redis", _no)
+
+
+@pytest.mark.parametrize("env", [
+    {},
+    {"REDIS_URL": "redis://127.0.0.1:1/0"},
+])
+def test_probe_never_uses_the_app_client(monkeypatch, env):
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    _forbid_app_client(monkeypatch)
+    ts.redis_ready()        # would raise if it went through _get_redis()
+
+
+def test_probe_never_uses_the_app_client_on_upstash(monkeypatch):
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: httpx.Response(200, json={"result": "PONG"}))
+    monkeypatch.setenv("UPSTASH_REDIS_REST_URL", "https://example.upstash.io")
+    monkeypatch.setenv("UPSTASH_REDIS_REST_TOKEN", "tok")
+    _forbid_app_client(monkeypatch)
+    assert ts.redis_ready() is True
 
 
 def _data_plane():

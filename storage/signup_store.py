@@ -93,7 +93,7 @@ def _take(key: str) -> Optional[dict]:
             pipe = r.pipeline()
             pipe.get(key)
             pipe.delete(key)
-            raw = pipe.execute()[0]
+            raw = _ts.run_pipeline(pipe)[0]
     raw = _decode(raw)
     if not raw:
         return None

@@ -1779,7 +1779,9 @@ repl-backlog-ttl 3600
 
 # Memory Management
 maxmemory 16gb
-maxmemory-policy allkeys-lru
+# noeviction: Redis is the store of record for tenants, API keys and policies.
+# An LRU policy can silently delete them (or token revocations) when memory fills.
+maxmemory-policy noeviction
 lazyfree-lazy-eviction no
 lazyfree-lazy-expire no
 lazyfree-lazy-server-del no

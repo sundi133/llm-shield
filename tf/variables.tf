@@ -237,6 +237,17 @@ variable "redis_max_memory" {
   default     = "8gb"
 }
 
+variable "redis_maxmemory_policy" {
+  description = "Redis maxmemory-policy. noeviction keeps tenants, API keys, policies and token revocations from being silently evicted; writes fail instead when maxmemory is reached."
+  type        = string
+  default     = "noeviction"
+
+  validation {
+    condition     = contains(["noeviction", "volatile-lru", "volatile-lfu", "volatile-ttl", "volatile-random", "allkeys-lru", "allkeys-lfu", "allkeys-random"], var.redis_maxmemory_policy)
+    error_message = "redis_maxmemory_policy must be a valid Redis maxmemory-policy."
+  }
+}
+
 variable "redis_password" {
   description = "Redis AUTH password (required — no unauthenticated access)"
   type        = string

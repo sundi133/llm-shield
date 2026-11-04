@@ -169,10 +169,11 @@ def _getdel(r, key: str):
     try:
         return r.getdel(key)
     except Exception:
+        from storage.tenant_store import run_pipeline
         pipe = r.pipeline()
         pipe.get(key)
         pipe.delete(key)
-        return pipe.execute()[0]
+        return run_pipeline(pipe)[0]
 
 
 async def save_auth_code(auth_code: AuthorizationCode, ttl: int = 600) -> None:
