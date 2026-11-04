@@ -1,6 +1,6 @@
-# Spec: on-prem release bundle (Helm + oc-only)
+# Spec: on-prem release bundle (plain oc, Kustomize)
 
-Status: DRAFT, awaiting approval.
+Status: APPROVED 2026-11-04 (revised the same day: Kustomize only, no Helm).
 
 ## 1. Problem and outcome
 
@@ -33,57 +33,63 @@ The manifests have known problems, each of which breaks or degrades an install:
 | `:latest` images, unpinned `vllm/vllm-openai:latest` base | | Two installs of "the same" release differ |
 | No vault env (`SECRET_VAULT_ENABLED`, `SECRET_VAULT_KEK`) | | The Shield LLM gateway's vault mode is unavailable on-prem |
 
-**Outcome.** Each release `vX.Y.Z` produces one bundle a customer can install
-with **only `oc`**, or with Helm, on a connected or disconnected cluster:
+**Revision 2026-11-04: plain `oc` only.** The first draft made a Helm chart the
+source and generated `oc apply -k` files from it. Customers never needed Helm
+under that design either, so the chart only added a tool, a render step and a
+drift check. This revision drops Helm: the install files are Kustomize, which
+is built into `oc`, and the files we test are the files customers apply.
+
+**Outcome.** Each release `vX.Y.Z` produces one bundle a customer installs
+with **only `oc`**, on a connected or disconnected cluster:
 
 ```
 shield-onprem-vX.Y.Z/
   README.md                 install, test and upgrade runbook
-  chart/shield-X.Y.Z.tgz    Helm chart (also pushed as an OCI artifact)
-  values/                   example values: gpu.yaml, remote-model.yaml
-  rendered/gpu/             plain YAML + kustomization.yaml   (oc apply -k)
-  rendered/remote-model/    plain YAML + kustomization.yaml   (oc apply -k)
+  openshift/                the Kustomize tree below, image refs pinned by digest
   images.txt                every image, by digest
   mirror.sh                 oc image mirror to dir / from dir, skopeo fallback
   cosign.pub                verifies every image signature offline
   SHA256SUMS
 ```
 
-Success: on a real OpenShift cluster, `oc apply -k rendered/remote-model/`
-(after creating one Secret) brings up Redis, the admin portal and the
+Install is: create the Secrets, then `oc apply -k openshift/overlays/<topology>`.
+
+Success: on a real OpenShift cluster, `oc apply -k openshift/overlays/external`
+(after creating the Secrets) brings up Redis, the admin portal and the
 guardrail service, and the end-to-end check passes: a tenant created on the
-admin plane is enforced by the data plane. The same with `helm install`. The
-GPU profile does the same on a GPU node, with `start_vllm.sh` pulling the
-model from Hugging Face once into the cache PVC (a restart does not
-re-download); and, for an air-gapped cluster, from the mirrored model image
-with no Hugging Face access.
+admin plane is enforced by the data plane. `overlays/split` does the same on a
+GPU node, with the model pod pulling the model from Hugging Face once into the
+cache PVC (a restart does not re-download); and, for an air-gapped cluster,
+from the mirrored model image with no Hugging Face access.
 
 **Non-goals.**
 
+- Helm. Revisit only if a customer requires it; a thin chart could then wrap
+  the same YAML.
 - An Operator or OperatorHub listing (later, if customers ask).
-- Red Hat certification of images or chart (later; this spec makes it possible).
+- Red Hat certification of images (later; this spec makes it possible).
 - Multi-arch images (OpenShift customers in scope are amd64).
 - Redis Cluster or Sentinel support (section 3 explains why Cluster cannot work).
-- HA Redis inside the chart (customers who need it bring their own, as `externalRedis`).
+- HA Redis in the bundle (customers who need it bring their own, via the
+  `external-redis` component).
 - Changing any guardrail behavior.
 
 ## 2. Plane and latency contract
 
-- **Both planes**, packaging only: the chart deploys the data plane
-  (`core/app.py` via `handler.py`, GPU or remote-model) and the admin plane
-  (`admin_app.py`), plus Redis.
+- **Both planes**, packaging only: the manifests deploy the data plane
+  (`core/app.py` via `handler.py`), the model server, the admin plane
+  (`admin_app.py`) and Redis.
 - **Off the hot path.** No change to `/guardrails/*`, `cap/mint` or
-  `tools/call` handling. Two small code changes ship with this spec, and both
-  are inert unless configured:
-  - `vllm` backend mode gains an **optional** bearer token and model name
-    (task 2). Unset, the model request is byte-identical to today's.
-  - A new readiness endpoint (task 1b) that probes call; it is not on any
-    request path.
+  `tools/call` handling. The two small code changes (tasks 1b and 2, merged in
+  PR #541) are inert unless configured:
+  - `vllm` backend mode sends a bearer token and model name **only when set**;
+    unset, the model request is byte-identical to before.
+  - `GET /health/ready` runs only when the kubelet probes it.
 
 ## 3. Data model
 
 No new Redis keys. The bundle documents what Shield requires of Redis, which
-the chart's bundled Redis satisfies and an external one must:
+the bundled Redis satisfies and an external one must:
 
 | Requirement | Why |
 |---|---|
@@ -91,7 +97,7 @@ the chart's bundled Redis satisfies and an external one must:
 | Lua `EVAL` enabled | audit chain CAS (`storage/audit_chain.py`, two keys), MCP lock release |
 | Standalone or primary/replica, **not Cluster** | multi-key `EVAL` and multi-key pipelines get `CROSSSLOT` in Cluster mode |
 | One endpoint in `REDIS_URL` (`redis://`, `rediss://`, password in URL) | `redis.Redis.from_url`; Sentinel URLs are not supported |
-| `maxmemory-policy noeviction` | Redis is the store of record for tenants, keys, policies, revocations and nonces (merged with PR #539) |
+| `maxmemory-policy noeviction` | Redis is the store of record for tenants, keys, policies, revocations and nonces (PR #539) |
 | Persistence on (AOF) | same |
 | `UPSTASH_*` unset on-prem | `_get_redis()` tries Upstash first if both vars are set |
 
@@ -100,139 +106,104 @@ existing key layout.
 
 ## 4. API / interface
 
-### 4.1 Chart: `deploy/helm/shield/`
+### 4.1 Install files: `openshift/` (Kustomize, applied with `oc apply -k`)
+
+```
+openshift/
+  base/                     redis, admin, guardrail service; Services, Routes, NetworkPolicies
+    kustomization.yaml      images: (registry + tag/digest), commonLabels
+  components/               optional add-ons, each a Kustomize Component
+    model-split/            the GPU model Deployment + Service + PVC; points the guardrail at it
+    model-combined/         replaces the guardrail with one GPU pod running start_vllm.sh (RunPod style)
+    model-external/         points the guardrail at LLM_BACKEND_URL from a ConfigMap
+    model-offline/          init container copies weights from the model image into the PVC (task 6)
+    vault/                  SECRET_VAULT_ENABLED + KEK file from a customer Secret
+    redis-auth/             requirepass from a customer Secret
+    external-redis/         removes the bundled Redis; REDIS_URL from the Secrets
+    fp16/                   drops the fp8 flags for GPUs without fp8 (A100, V100, T4)
+  overlays/
+    split/                  base + model-split          (default for OpenShift)
+    combined/               base + model-combined
+    external/               base + model-external       (model served elsewhere, e.g. OpenShift AI)
+  README.md                 the runbook: Secrets, install, test, upgrade, migration
+```
+
+A customer copies an overlay, then in its `kustomization.yaml` sets their
+`namespace`, rewrites `images` to their mirror, adds components (`vault`,
+`redis-auth`, ...) and patches resources or storage class. No YAML templating,
+no extra tool: `oc` 4.x ships Kustomize, and Components are supported.
 
 **Topologies.** RunPod runs the model and the guard API in one pod
 (`start_vllm.sh` starts vLLM, then `exec python3 handler.py`). On OpenShift the
 default splits them:
 
-| `dataPlane.topology` | Pods | Use |
+| Overlay | Pods | Use |
 |---|---|---|
-| `split` (default) | `shield-model` (GPU, vLLM only, internal Service :8000) + `shield-guardrail` (CPU, `llm-shield-cloud` image, `SKIP_VLLM=true`, `LLM_BACKEND_TYPE=vllm`, `LLM_BACKEND_URL=http://shield-model:8000`) | Guardrail replicas scale on CPU and share one GPU; NetworkPolicy lets only guardrail pods reach the model |
+| `split` (default) | `shield-model` (GPU, `llm-shield` image, `VLLM_ONLY=true`, internal Service :8000) + `shield-guardrail` (CPU, `llm-shield-cloud` image, `SKIP_VLLM=true`, `LLM_BACKEND_TYPE=vllm`, `LLM_BACKEND_URL=http://shield-model:8000`) | Guardrail replicas scale on CPU and share one GPU; NetworkPolicy lets only guardrail pods reach the model |
 | `combined` | one GPU pod running `start_vllm.sh` as on RunPod | Smallest footprint, one GPU per replica |
-| `external` | `shield-guardrail` only, `LLM_BACKEND_URL` to a model served elsewhere (OpenShift AI, another cluster) | Customer already serves the model |
+| `external` | `shield-guardrail` only, `LLM_BACKEND_URL` (and optional `LLM_BACKEND_API_KEY`, `LLM_MODEL_NAME`) to a model served elsewhere | Customer already serves the model (OpenShift AI, another cluster) |
 
 The model pod uses the same `llm-shield` image as RunPod (the vLLM version
-proven with this model) with the command overridden to run only vLLM, and every
-cache variable plus `HOME` on the cache PVC. Task 2b replaces the duplicated
-vLLM flags with a `VLLM_ONLY=true` mode in `start_vllm.sh`.
+proven with this model) with `VLLM_ONLY=true` (task 2b), so vLLM runs with the
+script's own flags and `handler.py` never starts; every cache variable plus
+`HOME` points at the cache PVC.
 
-Guardrail replicas must share `SHIELD_AGENT_TOKEN_PRIVATE_KEY` and
+Guardrail replicas share `SHIELD_AGENT_TOKEN_PRIVATE_KEY` and
 `SHIELD_CAP_TOKEN_PRIVATE_KEY` from one Secret: without them each process
 generates an ephemeral key (`core/signers.py`), so a token minted by one
 replica fails on another. `CONFIG_PATH` is not set: `handler.py` overwrites
 that file with the image default on every boot, so it holds no state.
 
-A working hand-written version of `split` (used to validate this design on a
-real cluster before the chart exists) is attached to PR #540's discussion.
-
-Values (abridged; defaults shown):
-
-```yaml
-global:
-  imageRegistry: docker.io/sundi133      # customer sets their mirror
-  imagePullSecrets: []
-  exposure: route                        # route | ingress | none
-
-secrets:                                 # customer-created; the chart never creates secret values
-  admin:     { existingSecret: shield-admin-secrets }   # SHIELD_ADMIN_KEY, REDIS_URL
-  dataPlane: { existingSecret: shield-guardrail }       # SHIELD_ADMIN_KEY, REDIS_URL [, LLM_BACKEND_API_KEY]
-  vault:     { existingSecret: "" }                     # key: kek  -> SECRET_VAULT_KEK (file)
-
-redis:
-  enabled: true                          # false -> externalRedis via REDIS_URL in the secrets above
-  image: redis@sha256:...                # pinned by digest at release
-  auth: { enabled: true, existingSecret: shield-redis, key: password }
-  maxmemory: 2gb
-  maxmemoryPolicy: noeviction
-  persistence: { size: 10Gi, storageClass: "" }
-
-admin:
-  replicas: 1
-  resources: { requests: { cpu: 250m, memory: 256Mi }, limits: { cpu: "1", memory: 512Mi } }
-
-dataPlane:
-  topology: split                        # split | combined | external
-  profile: gpu                           # gpu | remote-model (model placement for combined/external)
-  replicas: 1
-  workers: 4                             # WORKERS; 32 is the handler default
-  requireKey: enforce                    # SHIELD_GUARD_REQUIRE_KEY
-  gpu:
-    model:
-      source: huggingface                # huggingface (start_vllm.sh pulls it, as today) | modelImage (air-gapped)
-      name: votal-ai/vai35-4B-v2         # MODEL_NAME; with modelImage also SERVED_MODEL_NAME, so callers see the same name
-      revision: ""                       # optional pinned HF commit for repeatable installs
-      image: ""                          # modelImage only: vai35-4b-modelcar@sha256:...
-    quantization: fp8                    # none on A100/V100/T4
-    maxModelLen: 8196
-    gpuMemoryUtilization: 0.85
-    cache: { size: 50Gi, storageClass: "" }
-    tolerations: [{ key: nvidia.com/gpu, operator: Exists, effect: NoSchedule }]
-    nodeSelector: {}
-  remoteModel:
-    url: ""                              # LLM_BACKEND_URL, OpenAI-compatible
-    modelName: ""                        # LLM_MODEL_NAME, sent only when set
-    # bearer token, if any, is LLM_BACKEND_API_KEY in secrets.dataPlane
-  vault: { enabled: false }
-
-modelServing:                            # optional, needs OpenShift AI / KServe CRDs
-  inferenceService: { enabled: false }   # serves the model image; remoteModel.url points at it
-```
-
-Templates (namespace-scoped only, so a project admin can install into an
+**Objects** (namespace-scoped only, so a project admin can install into an
 existing namespace; no `Namespace`, `ClusterRole`, CRD or SCC objects):
-Deployments (redis, admin, data plane), Services, Routes or Ingresses,
-NetworkPolicies (Redis accepts only Shield pods; admin and data plane accept
-the router and same-namespace pods), PVCs (redis data, model cache), an
-optional KServe `InferenceService`, `NOTES.txt` with the post-install check.
+Deployments, Services, Routes, NetworkPolicies (Redis and the model accept only
+Shield pods), PVCs (Redis data, model cache). No Secret objects: the customer
+creates `shield-guardrail`, `shield-admin-secrets` and the optional ones, with
+commands in the README.
 
-Probes: liveness `GET /health` (unchanged); readiness `GET /health/ready`
-(task 1b); data-plane **startup** probe with a long budget (model load).
+**Probes:** liveness `GET /health`; readiness `GET /health/ready` (task 1b,
+503 when Redis is unreachable); the model pod gets a startup probe with a
+30-minute budget for a cold 9.3 GB download.
 
-Environment the chart sets, per plane (secrets by reference only):
+**Environment set by the manifests** (secrets by reference only):
 
-| Var | Admin | Data plane | Value |
-|---|---|---|---|
-| `PORT` | 8080 | 8080 | restricted-v2 cannot bind :80 |
-| `WORKERS` | | `dataPlane.workers` | |
-| `SHIELD_GUARD_REQUIRE_KEY` | | `enforce` | tenant isolation |
-| `REDIS_URL`, `SHIELD_ADMIN_KEY` | secret | secret | must match across planes |
-| `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `VLLM_CACHE_ROOT`, `TRITON_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR`, `FLASHINFER_CACHE_DIR` | | all under the cache PVC | fixes the re-download |
-| `MODEL_NAME=votal-ai/vai35-4B-v2` | | `source: huggingface` (default) | `start_vllm.sh` unchanged; vLLM downloads into the PVC cache once |
-| `HUGGING_FACE_HUB_TOKEN` | | optional, from `secrets.dataPlane` | only for a private or gated model |
-| `HF_HUB_OFFLINE=1`, `MODEL_NAME=/model-cache/models/<name>`, `SERVED_MODEL_NAME=<name>` | | `source: modelImage` | air-gapped; `start_vllm.sh` passes the local path to `--model` unchanged |
-| `SKIP_VLLM=true`, `LLM_BACKEND_TYPE=vllm`, `LLM_BACKEND_URL` | | remote-model profile | |
-| `SECRET_VAULT_ENABLED`, `SECRET_VAULT_KEK` (path) | | when `vault.enabled` | |
+| Var | Admin | Guardrail | Model pod | Value |
+|---|---|---|---|---|
+| `PORT` | 8080 | 8080 | | restricted-v2 cannot bind :80 |
+| `WORKERS` | | 4 | | `handler.py` defaults to 32 |
+| `SHIELD_GUARD_REQUIRE_KEY` | | `enforce` | | tenant isolation |
+| `REDIS_URL`, `SHIELD_ADMIN_KEY` | Secret | Secret | | must match across planes |
+| `SHIELD_AGENT_TOKEN_PRIVATE_KEY`, `SHIELD_CAP_TOKEN_PRIVATE_KEY` | | Secret | | shared by every replica |
+| `SKIP_VLLM=true`, `LLM_BACKEND_TYPE=vllm`, `LLM_BACKEND_URL` | | split, external | | |
+| `VLLM_ONLY=true`, `MODEL_NAME`, `SERVED_MODEL_NAME` | | | split | task 2b |
+| `HOME`, `HF_HOME`, `HUGGINGFACE_HUB_CACHE`, `VLLM_CACHE_ROOT`, `TRITON_CACHE_DIR`, `TORCHINDUCTOR_CACHE_DIR`, `FLASHINFER_CACHE_DIR` | | | under the cache PVC | fixes the re-download |
+| `HUGGING_FACE_HUB_TOKEN` | | | optional Secret | private or gated model only |
+| `HF_HUB_OFFLINE=1`, local `MODEL_NAME` | | | `model-offline` | air-gapped |
+| `SECRET_VAULT_ENABLED`, `SECRET_VAULT_KEK` (file) | | `vault` | | |
 
-### 4.2 oc-only install: `rendered/<profile>/`
+### 4.2 The old hand-written files
 
-CI renders the chart with `helm template` once per profile into plain YAML,
-plus a `kustomization.yaml` that exposes what customers change without
-editing YAML: `namespace`, `images` (registry rewrite), and patches for
-storage class and resources. Install is `oc apply -k rendered/<profile>/`.
-
-The hand-maintained files keep their paths, so no link breaks:
 `openshift/redis.yaml`, `openshift/shield-admin.yaml`,
 `openshift/shield-guardrail-vllm.yaml` and their `docs/assets/openshift/`
-copies become **generated** from the chart (header: "generated by
-scripts/render_manifests.sh, do not edit"), rendered with values that keep
-today's secret names.
+copies are **removed** in task 4, replaced by the tree above; the docs page
+that links them (`docs/partners/rafay/integration.md`) points at
+`openshift/overlays/` instead. **Migration note** in the README: the new
+manifests keep the Secret names `shield-guardrail` and `shield-admin-secrets`
+and the Service names, so an existing install moves over with
+`oc apply -k openshift/overlays/combined` (same one-pod shape) after creating
+the Secrets; the inline `REPLACE_ME` Secret is gone.
 
-### 4.3 Data plane: two small additions
+### 4.3 Code changes (done, PR #541)
 
-- **1b. `GET /health/ready`** on both planes: 200 when the process is up and,
-  if `REDIS_URL` or `UPSTASH_*` is configured, Redis answers; otherwise 503
-  `{"status":"not_ready","reason":"redis_unreachable"}`. Unauthenticated like
-  `/health`: the auth skip list is exact-match (`_SKIP_PATHS` in
-  `core/middleware.py`), so the path is added there explicitly. Already exempt
-  from the HTTPS redirect, which matches by `/health` prefix
-  (`core/security_headers.py`). Returns no Redis address or error text.
-- **2. `vllm` backend mode** (`core/llm_backend.py`): when
-  `LLM_BACKEND_API_KEY` is set, send `Authorization: Bearer <key>`; when
-  `LLM_MODEL_NAME` is set, send `model`. Only `LLM_BACKEND_API_KEY` counts in
-  this mode, not `OPENROUTER_API_KEY` / `OLLAMA_API_KEY`, so a key meant for
-  another service is never sent to the model endpoint. This lets the
-  remote-model profile reach an OpenShift AI model served with token auth.
+- **1b. `GET /health/ready`** on both planes: 503
+  `{"status":"not_ready","reason":"redis_unreachable"}` when Redis is configured
+  but does not answer; its own connection with 2 s timeouts, never the app's
+  client; unauthenticated (exact-match skip lists).
+- **2. `vllm` backend mode**: `Authorization: Bearer` when
+  `LLM_BACKEND_API_KEY` is set, `model` when `LLM_MODEL_NAME` is set; unset is
+  byte-identical to before.
+- **2b. `start_vllm.sh` `VLLM_ONLY=true`**: exec vLLM with the script's flags,
+  no `handler.py`.
 
 ### 4.4 Release pipeline: `.github/workflows/release.yml` (new)
 
@@ -244,8 +215,9 @@ On a `v*` tag:
 2. Sign each image digest with cosign (key-based, `COSIGN_PRIVATE_KEY` secret)
    so customers verify offline with `cosign.pub`, with no Sigstore/Rekor access.
 3. Build and sign the model image (task 6) for the pinned Hugging Face revision.
-4. Package the chart (`version` = `appVersion` = `X.Y.Z`, image refs by
-   digest), push it as an OCI artifact, render `rendered/*`.
+4. Copy `openshift/` into the bundle with `images:` in `base/kustomization.yaml`
+   rewritten to the release digests (`kustomize edit set image`, run by `oc`'s
+   embedded Kustomize or the standalone binary).
 5. Write `images.txt`, `SHA256SUMS`, assemble the bundle, attach it to the
    GitHub Release.
 
@@ -254,139 +226,121 @@ for RunPod and Railway).
 
 ## 5. Security and backward compatibility
 
-- **Images under restricted-v2 without `anyuid` (task 1a).** App dirs and
-  caches become `chgrp -R 0 && chmod -R g=u`, the OpenShift arbitrary-UID
-  pattern. **No `USER` line is added**: the data plane defaults to port 80,
-  and RunPod and Railway run these images as root; a non-root `USER` would
-  break them. Root still works; the random UID now works too.
-- **No secret values in the bundle or chart.** The chart only references
-  existing Secrets; `secrets.*.existingSecret` defaults match today's names
-  (`shield-admin-secrets`, `shield-guardrail`), so a customer re-applying the
-  generated `openshift/*.yaml` keeps their Secrets. The inline `REPLACE_ME`
-  Secret is removed. **Migration note:** create `shield-guardrail` before
-  applying; without it the pod stops at `CreateContainerConfigError` (loud).
-- **Redis auth on by default for new chart installs.** A customer coming from
-  the old `openshift/redis.yaml` (no password) sets `redis.auth.enabled=false`,
-  or adds the password to `REDIS_URL`. **Migration note** in the runbook.
-- **Remote-model bearer (task 2)** is opt-in by setting the variable; unset
-  is unchanged behavior.
+- **Images under restricted-v2 without `anyuid` (task 1a, done).** Group-0
+  permissions on app and cache dirs. **No `USER` line**: RunPod and Railway run
+  these images as root on port 80, and a non-root `USER` would break them.
+  Pepper flags `DOCKERFILE-NO-USER` on `Dockerfile` for this reason; it is a
+  deliberate decision, dismissed in Pepper.
+- **No secret values in the bundle.** The manifests only reference Secrets the
+  customer creates. Missing Secret means `CreateContainerConfigError` (loud).
+- **Redis auth is a component** (`redis-auth`), on in the `split` and
+  `external` overlays for new installs. A customer moving from the old
+  `openshift/redis.yaml` (no password) uses an overlay without it, or adds the
+  password to `REDIS_URL`. Migration note in the README.
+- **Remote-model bearer (task 2)** is opt-in; unset is unchanged behavior.
 - **No egress by default.** Telemetry export to Votal Elasticsearch needs
-  `VOTAL_ES_URL` and `VOTAL_ES_API_KEY` (`core/telemetry.py`); the chart sets
-  neither. The runbook states that nothing leaves the cluster unless the
-  customer configures an exporter.
+  `VOTAL_ES_URL` and `VOTAL_ES_API_KEY` (`core/telemetry.py`); the manifests set
+  neither. The README states that nothing leaves the cluster unless the
+  customer configures an exporter. The default `split` overlay downloads the
+  model from Hugging Face once; `model-offline` removes that too.
 - **Supply chain.** Images by digest, cosign-signed, SBOM attached; the model
   image is pinned to a Hugging Face commit, not a branch.
 
 ## 6. Packaging and deploy
 
-- **Dockerfiles:** `Dockerfile`, `Dockerfile.cloud`, `Dockerfile.admin` gain
-  the group-permission lines (task 1a). No new COPY entries: task 1b's
-  endpoint lives in modules both images already ship (`api/routes_health.py`
-  on the data plane; the admin route in `admin_app.py`).
-- **Python deps:** none new.
-- **CI tools (not pip):** `helm` and `kubeconform` at pinned versions with
-  checksum verification; `cosign` in the release workflow only.
-- **New files:** `deploy/helm/shield/**`, `scripts/render_manifests.sh`,
-  `deploy/release/{versions.env,mirror.sh,README.md.tmpl}`,
-  `.github/workflows/release.yml`, model image `deploy/modelcar/Containerfile`.
+- **Dockerfiles:** done in task 1a. No Python deps added; no
+  `Dockerfile.admin` COPY change.
+- **CI tools (not pip):** `kubectl kustomize` (preinstalled on GitHub runners)
+  and `kubeconform` at a pinned version with checksum verification; `cosign`
+  in the release workflow only. No Helm.
+- **New files:** `openshift/**` (tree above), `deploy/release/{versions.env,
+  mirror.sh}`, `.github/workflows/release.yml`, model image
+  `deploy/modelcar/Containerfile`.
 - **Rebuild:** all images on the first release tag.
 
 ## 7. Failure modes and edge cases
 
 | Case | Behavior |
 |---|---|
-| Secret missing | Pod `CreateContainerConfigError`; `NOTES.txt` and the runbook name the secret. Fail closed. |
-| Redis unreachable at start or later | Today the stores silently fall back to memory. `/health/ready` returns 503, so the pod leaves the Service and traffic stops reaching a pod with a split store. Fail closed for routing; liveness stays green so it is not restart-looped. |
-| Redis full | `noeviction` refuses writes; nonce store fails closed; runbook says alert on `used_memory`. |
-| GPU without fp8 (A100, V100, T4) | `quantization: none`; values comment and runbook table. |
+| Secret missing | Pod `CreateContainerConfigError`; the README names each Secret. Fail closed. |
+| Redis unreachable at start or later | `/health/ready` returns 503, so the pod leaves the Service instead of serving from a per-process memory store. Liveness stays green, so it is not restart-looped. |
+| Redis full | `noeviction` refuses writes; nonce store fails closed; README says alert on `used_memory`. |
+| GPU without fp8 (A100, V100, T4) | add the `fp16` component. |
+| Model not reachable from guardrail pods (`split`) | Guardrail init container waits on `shield-model:8000/health`; pods stay `Init` with a clear log line. |
+| No egress to huggingface.co (`split`, `combined`) | vLLM download fails, startup probe fails; README says allow huggingface.co or add `model-offline`. |
+| Hugging Face outage on first start | Retried by the pod restart; once cached on the PVC, later starts need no Hugging Face access. |
 | Model image not mirrored (air-gapped) | init container `ImagePullBackOff`; `mirror.sh` covers it via `images.txt`. |
-| `source: huggingface` (default) on a cluster without egress to huggingface.co | vLLM download fails, `start_vllm.sh` exits ("vLLM process died"), startup probe fails; runbook says allow huggingface.co or switch to `modelImage`. |
-| Hugging Face rate limit or outage on first start | Same as above, retried by the pod restart; once cached on the PVC, later starts need no Hugging Face access. |
-| Model load slower than probes | startup probe budget sized for a cold 9.3 GB load; values allow raising it. |
-| Customer cannot create namespaces (Developer Sandbox) | chart installs into the current namespace; no Namespace object. |
-| No KServe CRDs | `modelServing.inferenceService.enabled=false` by default; enabling it without the CRD fails `oc apply` with a clear error. |
-| Rendered YAML edited by hand in the repo | CI drift check fails (section 8). |
-| `WORKERS` too high for limits | default 4; values comment ties workers to memory. |
-| Two Redis clients (cloud) | unaffected: chart is on-prem only, and `UPSTASH_*` is never set by it. |
+| Customer cannot create namespaces (Developer Sandbox) | everything is namespace-scoped; set `namespace:` or apply in the current project. |
+| No GPU at all | `external` overlay. |
+| Customer edits base files | Their own fork; the README says to change only overlay `kustomization.yaml` so upgrades stay a copy-over. |
+| `WORKERS` too high for limits | default 4, documented next to the memory limit. |
+| Two Redis clients (cloud) | unaffected: the manifests are on-prem only and never set `UPSTASH_*`. |
 
 ## 8. Test plan (Definition of Done)
 
-Per task, in CI unless stated:
+Done (PR #541): 1a, 1b, 2, 2b, each with tests that fail on the old code.
 
-- **1a images:** a test reads each Dockerfile and asserts the `chgrp -R 0` /
-  `chmod -R g=u` lines cover the app dir and every cache dir set by `ENV`, and
-  that there is no `USER` line. Manual: run the admin image with
-  `docker run --user 1000770000:0` and hit `/health`.
-- **1b readiness:** unit tests: no Redis configured gives 200; configured and
-  reachable gives 200; configured and unreachable gives 503; unauthenticated
-  with `SHIELD_GUARD_REQUIRE_KEY=enforce`; not redirected to HTTPS.
-- **2 bearer:** unset vars give a byte-identical payload and no
-  `Authorization` header (regression guard); set vars add exactly the header
-  and `model`; `OPENROUTER_API_KEY` alone is never sent in `vllm` mode.
-- **3 chart:** `helm lint`; `helm template` for both profiles with
-  `kubeconform -strict` (OpenShift `Route` validated against a vendored
-  schema); assertions: no Secret with data, no Namespace/cluster-scoped kinds,
-  every container has `PORT=8080`, data plane has `WORKERS`, all HF/vLLM cache
-  vars point at the PVC, Redis has `noeviction`.
-- **4 rendered output:** CI re-renders and fails on any diff in `rendered/`,
-  `openshift/*.yaml` or `docs/assets/openshift/*.yaml` (the drift guard).
-  `kustomize build rendered/<profile>` succeeds.
-- **5 release:** a dry-run job on PRs that builds the bundle without pushing
-  or signing; asserts `images.txt` lists every image referenced by the
-  rendered YAML, by digest.
-- **6 model image:** a CI job builds the model image and checks the weights'
-  checksums against the pinned Hugging Face revision.
+- **3 install files (CI job `openshift manifests`):** `kubectl kustomize` builds
+  every overlay, and every overlay plus each optional component; `kubeconform
+  -strict` validates the output (OpenShift `Route` against a vendored schema).
+  A pytest suite over the built YAML asserts: no `Secret` objects; no
+  `Namespace` or cluster-scoped kinds; no `namespace:` hardcoded in base;
+  admin and guardrail have `PORT=8080`; guardrail has `WORKERS=4`,
+  `SHIELD_GUARD_REQUIRE_KEY=enforce`, readiness on `/health/ready`, and the
+  token keys from the Secret; the model pod has `VLLM_ONLY=true` and every
+  cache variable under the PVC mount; Redis has `noeviction`; the model's
+  NetworkPolicy admits only guardrail pods; no image uses `:latest`.
+- **4 docs:** the README runbook; old files removed; the Rafay doc link updated;
+  a docs test that every `oc apply -k` path in the README exists.
+- **5 release:** a dry-run job on PRs builds the bundle without pushing or
+  signing and asserts `images.txt` lists every image the built YAML references,
+  by digest.
+- **6 model image:** a CI job builds it and checks the weights' checksums
+  against the pinned Hugging Face revision.
 - **7 acceptance (manual, documented in the PR):**
-  - OpenShift Developer Sandbox, `remote-model` profile pointed at an
-    OpenAI-compatible endpoint: install once with `oc apply -k` and once with
-    `helm install`; run the runbook's end-to-end check (tenant on admin,
-    blocked prompt on data plane, `401` without a key, restart survives).
-  - A GPU OpenShift cluster, `gpu` profile, default `source: huggingface`:
-    same check; then delete the pod and confirm the restart loads from the PVC
-    with no download (pod logs, and start time well under the first one).
-  - If task 6 is built: the same with `source: modelImage` and
-    `HF_HUB_OFFLINE=1`, plus no Hugging Face request in pod logs.
+  - OpenShift Developer Sandbox, `external` overlay pointed at an
+    OpenAI-compatible endpoint: `oc apply -k`, then the README's end-to-end
+    check (tenant on admin, blocked prompt on data plane, `401` without a key,
+    restart survives, `/health/ready` goes 503 when Redis is scaled to 0).
+  - A GPU OpenShift cluster, `split` overlay: same check; then delete the model
+    pod and confirm the restart loads from the PVC with no download.
+  - If task 6 is built: the same with `model-offline`, plus no Hugging Face
+    request in pod logs.
 - Full suite green in a clean venv (`requirements-test.txt` only); CI
   `pytest` gate passes.
 
 ## 9. Tasks (one PR each, in order)
 
-| # | Task | Plane | Depends on |
-|---|---|---|---|
-| 0 | PR #539 merged (`noeviction`, both Redis clients) | storage | none |
-| 1a | Images run under restricted-v2: group-writable app and cache dirs, no `USER` change | both images | none |
-| 1b | `GET /health/ready` on both planes | both | none |
-| 2 | `vllm` mode: optional `LLM_BACKEND_API_KEY` bearer and `LLM_MODEL_NAME` | data | none |
-| 2b | `start_vllm.sh` `VLLM_ONLY=true`: run vLLM with the same flags and wait on it, without starting `handler.py` (the `split` model pod) | model | none |
-| 3 | Helm chart `deploy/helm/shield` (gpu + remote-model), CI lint/template/kubeconform | deploy | 1a, 1b |
-| 4 | `scripts/render_manifests.sh`, `rendered/<profile>` with kustomization, regenerate `openshift/*.yaml` and docs copies, drift guard, runbook | deploy, docs | 3 |
-| 5 | Release workflow: semver tags, pinned vLLM base, cosign, SBOM, chart OCI, bundle on GitHub Release, PR dry run | CI | 3, 4 |
-| 6 | **Optional, air-gapped only:** model image (modelcar) + chart wiring (init-container copy into the cache PVC for gpu, optional `InferenceService`). Connected clusters keep `start_vllm.sh` pulling from Hugging Face | deploy | 3 |
-| 7 | Acceptance on real OpenShift (Sandbox and a GPU cluster); fixes found there | all | 4, 5, 6 |
+| # | Task | Status |
+|---|---|---|
+| 0 | Redis client compat + `noeviction` | PR #539 |
+| 1a | Images run under restricted-v2 without `anyuid` | PR #541 |
+| 1b | `GET /health/ready` on both planes | PR #541 |
+| 2 | `vllm` mode: optional bearer and model name | PR #541 |
+| 2b | `start_vllm.sh` `VLLM_ONLY=true` | PR #541 |
+| 3 | `openshift/` Kustomize tree (base, components, overlays) + CI job | next |
+| 4 | README runbook, remove the old files, update links | after 3 |
+| 5 | Release workflow: semver tags, pinned vLLM base, cosign, SBOM, bundle | after 3 |
+| 6 | **Optional, air-gapped only:** model image + `model-offline` component | after 3 |
+| 7 | Acceptance on real OpenShift (Sandbox and a GPU cluster) | after 4, 5 |
 
-Tasks 1a, 1b, 2 and 2b are independent and can run in parallel.
+## 10. Decisions taken
 
-## 10. Decisions taken (change any before approval)
-
-1. **Chart is the source; rendered YAML and `openshift/*.yaml` are generated.**
-   Paths stay, so docs links keep working.
+1. **Kustomize only, no Helm** (2026-11-04). Customers and CI use plain `oc`.
 2. **Images stay on public Docker Hub** for now; customers mirror them.
-   A private registry is a value change later, not a design change.
 3. **cosign with a key pair**, not keyless, so disconnected customers can
    verify. The public key ships in every bundle.
 4. **No `USER` in Dockerfiles**; group permissions only, to keep RunPod and
    Railway (root, port 80) working.
-5. **Redis auth on by default** for new chart installs, with the escape hatch
-   and migration note in section 5.
-6. **`WORKERS=4`** chart default for the data plane.
+5. **Redis auth on** in the `split` and `external` overlays for new installs.
+6. **`WORKERS=4`** for the guardrail service.
 
 ## 11. Open questions (need an answer, not a design choice)
 
-1. **Model redistribution (task 6 only):** Hugging Face lists `votal-ai/vai35-4B-v2` as
-   `license: other`, based on `Qwen/Qwen3.5-4B`. Confirm Votal may ship the
-   weights inside a customer-mirrored image.
+1. **Model redistribution (task 6 only):** Hugging Face lists
+   `votal-ai/vai35-4B-v2` as `license: other`, based on `Qwen/Qwen3.5-4B`.
+   Confirm Votal may ship the weights inside a customer-mirrored image.
 2. **Does RTA's GPU cluster reach huggingface.co?** If yes, the default
-   path (`start_vllm.sh` download) is all they need and task 6 can wait.
-3. **RTA's OpenShift AI version:** OCI model images in KServe
-   (`storageUri: oci://...`) need a recent OpenShift AI release; task 6's
-   `InferenceService` path depends on it. The init-container path does not.
+   download path is all they need and task 6 can wait.
+3. **RTA's OpenShift AI version:** matters only if they want OpenShift AI to
+   serve the model (the `external` overlay pointed at an `InferenceService`).
