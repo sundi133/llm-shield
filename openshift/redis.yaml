@@ -56,7 +56,13 @@ spec:
             - --maxmemory
             - "8gb"
             - --maxmemory-policy
-            - allkeys-lru
+            # noeviction: Redis is the store of record for tenants, API keys and
+            # policies, and holds token revocations and replay nonces. Any LRU
+            # policy can silently delete those under memory pressure (allkeys-lru
+            # deletes tenants; volatile-lru deletes revocations, re-enabling a
+            # revoked token). noeviction refuses writes instead, which is loud.
+            # Alert on used_memory approaching --maxmemory.
+            - noeviction
             - --save
             - "900 1"
             - --save

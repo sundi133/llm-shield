@@ -21,7 +21,7 @@ import time
 from typing import Callable, Optional
 
 from core.policy_scopes import validate_scopes
-from storage.tenant_store import get_tenant, list_tenant_api_keys, update_tenant
+from storage.tenant_store import get_tenant, list_tenant_api_keys, run_pipeline, update_tenant
 
 logger = logging.getLogger("votal.policy_scopes")
 
@@ -265,7 +265,7 @@ def _flush_tenant_redis(r, tenant_id: str, values: dict[str, list]) -> None:
     pipe.hlen(counts)
     for v in names:
         pipe.hexists(counts, v)
-    res = pipe.execute()
+    res = run_pipeline(pipe)
     known = {v for v, hit in zip(names, res[1:]) if hit}
     values = _fold_overflow(values, known, SEEN_CAP - int(res[0] or 0))
     pipe = r.pipeline()
@@ -275,7 +275,7 @@ def _flush_tenant_redis(r, tenant_id: str, values: dict[str, list]) -> None:
         pipe.hset(last, value, f"{l}|{header}")
     for key in (counts, first, last):
         pipe.expire(key, SEEN_TTL_S)
-    pipe.execute()
+    run_pipeline(pipe)
 
 
 def _flush_tenant_memory(store: dict, tenant_id: str, values: dict[str, list]) -> None:

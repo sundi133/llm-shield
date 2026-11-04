@@ -98,7 +98,7 @@ REDIS_HOST=redis-stack
 REDIS_PORT=6379
 REDIS_PASSWORD=your-secure-redis-password-32chars
 REDIS_DB=0
-REDIS_MEMORY_POLICY=allkeys-lru
+REDIS_MEMORY_POLICY=noeviction   # never evict tenants, keys, policies or revocations
 REDIS_MAX_MEMORY=24gb
 REDIS_PERSISTENCE=yes
 
@@ -464,7 +464,9 @@ requirepass your-secure-redis-password-32chars
 
 # Memory management for high-performance policy lookups
 maxmemory 24gb
-maxmemory-policy allkeys-lru
+# noeviction: Redis is the store of record for tenants, API keys and policies.
+# An LRU policy can silently delete them (or token revocations) when memory fills.
+maxmemory-policy noeviction
 maxmemory-samples 10
 
 # Fast tenant policy mapping optimizations
