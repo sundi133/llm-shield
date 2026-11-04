@@ -50,6 +50,9 @@ kind: Route
 metadata:
   name: shield-admin
   labels: { app: shield-admin }
+  annotations:
+    # Tier-2 and agentic checks can run past the router's 30 s default.
+    haproxy.router.openshift.io/timeout: 120s
 spec:
   to: { kind: Service, name: shield-admin }
   port: { targetPort: http }

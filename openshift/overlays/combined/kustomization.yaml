@@ -25,13 +25,13 @@ components:
 images:
   - name: shield-admin
     newName: docker.io/sundi133/llm-shield-admin
-    newTag: SET-AFTER-PR-541-MERGES
+    newTag: a62db23a38dc4edd3958cadbd9aea675d8c55fd4
   - name: shield-cloud
     newName: docker.io/sundi133/llm-shield-cloud
-    newTag: SET-AFTER-PR-541-MERGES
+    newTag: a62db23a38dc4edd3958cadbd9aea675d8c55fd4
   - name: shield-vllm
     newName: docker.io/sundi133/llm-shield
-    newTag: SET-AFTER-PR-541-MERGES
+    newTag: a62db23a38dc4edd3958cadbd9aea675d8c55fd4
   - name: redis
     newName: docker.io/library/redis
     newTag: 7.4-alpine

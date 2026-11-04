@@ -63,6 +63,9 @@ kind: Route
 metadata:
   name: shield-guardrail
   labels: { app: shield-guardrail }
+  annotations:
+    # Tier-2 and agentic checks can run past the router's 30 s default.
+    haproxy.router.openshift.io/timeout: 120s
 spec:
   to: { kind: Service, name: shield-guardrail }
   port: { targetPort: http }

@@ -271,3 +271,62 @@ def test_ci_validates_every_overlay():
     wf = (ROOT / ".github" / "workflows" / "test.yml").read_text()
     for o in OVERLAYS:
         assert f"openshift/overlays/{o}" in wf or "openshift/overlays/*" in wf, o
+
+
+# ── routes and the runbook (openshift/README.md) ─────────────────────────────
+
+@pytest.mark.parametrize("overlay", OVERLAYS)
+def test_routes_allow_long_checks_and_terminate_tls(overlay):
+    routes = [d for d in built(overlay) if d["kind"] == "Route"]
+    assert sorted(r["metadata"]["name"] for r in routes) == ["shield-admin", "shield-guardrail"]
+    for r in routes:
+        assert r["metadata"]["annotations"]["haproxy.router.openshift.io/timeout"] == "120s"
+        assert r["spec"]["tls"]["termination"] == "edge"
+
+
+README = (TREE / "README.md").read_text() if (TREE / "README.md").exists() else ""
+
+
+def test_every_path_the_runbook_applies_exists():
+    paths = set(re.findall(r"oc (?:apply|delete) -k (\S+)", README))
+    assert paths, "runbook has no oc apply -k step"
+    for p in paths:
+        assert (ROOT / p / "kustomization.yaml").exists(), p
+    for c in re.findall(r"`components/([\w-]+)`", README):
+        assert (TREE / "components" / c / "kustomization.yaml").exists(), c
+
+
+def _referenced_secrets(docs) -> set[str]:
+    names = set()
+    for d in _deployments(docs).values():
+        spec = d["spec"]["template"]["spec"]
+        for c in spec["containers"] + spec.get("initContainers", []):
+            names |= {r["secretRef"]["name"] for r in c.get("envFrom", []) if "secretRef" in r}
+            names |= {e["valueFrom"]["secretKeyRef"]["name"] for e in c.get("env", [])
+                      if "secretKeyRef" in e.get("valueFrom", {})
+                      and not e["valueFrom"]["secretKeyRef"].get("optional")}
+        names |= {v["secret"]["secretName"] for v in spec.get("volumes", []) if "secret" in v}
+    return names
+
+
+@pytest.mark.parametrize("overlay", OVERLAYS)
+def test_runbook_creates_every_required_secret(overlay):
+    created = set(re.findall(r"oc create secret generic ([\w-]+)", README))
+    missing = _referenced_secrets(built(overlay)) - created
+    assert not missing, f"{overlay}: the runbook never creates {missing}"
+
+
+def test_runbook_secrets_carry_the_keys_the_pods_need():
+    gr = next(l for l in README.splitlines() if "create secret generic shield-guardrail" in l)
+    for k in ("REDIS_URL", "SHIELD_ADMIN_KEY", "SHIELD_AGENT_TOKEN_PRIVATE_KEY",
+              "SHIELD_CAP_TOKEN_PRIVATE_KEY"):
+        assert f"--from-literal={k}=" in gr, k
+    adm = next(l for l in README.splitlines() if "create secret generic shield-admin-secrets" in l)
+    for k in ("REDIS_URL", "SHIELD_ADMIN_KEY"):
+        assert f"--from-literal={k}=" in adm, k
+    assert "UPSTASH" not in README, "on-prem uses REDIS_URL only"
+
+
+def test_old_single_file_manifests_are_gone():
+    for f in ("redis.yaml", "shield-admin.yaml", "shield-guardrail-vllm.yaml"):
+        assert not (TREE / f).exists() and not (ROOT / "docs" / "assets" / "openshift" / f).exists(), f
