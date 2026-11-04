@@ -6,6 +6,16 @@ echo "LLM_BACKEND_URL=${LLM_BACKEND_URL:-<unset>}"
 echo "LLM_BACKEND_TYPE=${LLM_BACKEND_TYPE:-vllm}"
 
 SKIP_VLLM="${SKIP_VLLM:-false}"
+# VLLM_ONLY=true: run only the model server, with the same flags as below, and
+# never start the guard API (handler.py). Used by the model pod of the split
+# OpenShift topology, where the guard API runs in its own CPU pods
+# (docs/specs/onprem-release-bundle.md, task 2b).
+VLLM_ONLY="${VLLM_ONLY:-false}"
+
+if [ "$SKIP_VLLM" = "true" ] && [ "$VLLM_ONLY" = "true" ]; then
+  echo "ERROR: SKIP_VLLM=true and VLLM_ONLY=true together would run nothing. Set one."
+  exit 1
+fi
 
 if [ "$SKIP_VLLM" = "true" ]; then
   echo "SKIP_VLLM=true — skipping local vLLM server, using external LLM backend."
@@ -85,6 +95,14 @@ else
   if [ "$VLLM_DRY_RUN" = "true" ]; then
     echo "DRY_RUN_ARGS: ${VLLM_ARGS[*]}"
     exit 0
+  fi
+
+  if [ "$VLLM_ONLY" = "true" ]; then
+    # exec, not background-and-wait: vLLM becomes the container's main process,
+    # so it gets the pod's SIGTERM directly and its exit code is the pod's.
+    echo "VLLM_ONLY=true: serving the model only; the guard API runs elsewhere."
+    ulimit -n 65536 2>/dev/null || true
+    exec python3 -m vllm.entrypoints.openai.api_server "${VLLM_ARGS[@]}"
   fi
 
   python3 -m vllm.entrypoints.openai.api_server "${VLLM_ARGS[@]}" &
