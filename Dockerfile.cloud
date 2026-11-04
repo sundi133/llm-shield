@@ -66,5 +66,12 @@ EXPOSE 80
 RUN cp /runpod/scripts/start_vllm.sh /start-services.sh \
     && chmod +x /start-services.sh
 
+# OpenShift runs containers as a random UID in group 0 (restricted-v2 SCC).
+# Give group 0 the owner's permissions on the app dir (logs/ is written at
+# runtime), so the image runs there without `anyuid`. No USER line on purpose:
+# other hosts run this image as root on port 80, and root is unaffected.
+RUN chgrp -R 0 /runpod \
+    && chmod -R g=u /runpod
+
 ENTRYPOINT []
 CMD ["/start-services.sh"]
