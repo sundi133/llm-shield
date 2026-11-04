@@ -266,5 +266,12 @@ COPY guardrails/agentic/taint/ guardrails/agentic/taint/
 COPY guardrails/agentic/tool/ guardrails/agentic/tool/
 COPY static/ static/
 
+# OpenShift runs containers as a random UID in group 0 (restricted-v2 SCC).
+# Give group 0 the owner's permissions on /app, where the portal writes its
+# relative paths (logs/, reports/), so the image runs there without `anyuid`.
+# No USER line on purpose: other hosts run this image as root.
+RUN chgrp -R 0 /app \
+    && chmod -R g=u /app
+
 EXPOSE 8080
 CMD ["python3", "admin_app.py"]

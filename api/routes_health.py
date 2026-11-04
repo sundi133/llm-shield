@@ -1,6 +1,8 @@
+import asyncio
 import os
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 router = APIRouter()
 
@@ -25,3 +27,13 @@ async def health_check():
 @router.get("/health")
 async def health():
     return {"status": "healthy", "build": BUILD_SHA}
+
+
+@router.get("/health/ready")
+async def ready():
+    """Readiness: 503 when Redis is configured but does not answer, so the pod
+    leaves the Service instead of serving from a per-process memory store.
+    /health stays the liveness check and never touches Redis."""
+    from storage.tenant_store import readiness_body, redis_ready
+    code, body = readiness_body(await asyncio.to_thread(redis_ready))
+    return JSONResponse(status_code=code, content={**body, "build": BUILD_SHA})
