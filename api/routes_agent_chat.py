@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 import config.schema as _config_module
 from core.llm_backend import get_server_url, _get_shared_client, _ensure_no_think
 from core.policy_mode import resolve_mode
+from core.policy_scopes import scope_audit_fields
 from core.text_utils import modified_text
 from core.tenant_pipeline import (
     apply_mode_to_pipeline_result,
@@ -315,6 +316,9 @@ async def _log_agent_chat_telemetry(
         "input_guardrails": _summarize_guardrail_results(input_guardrails),
         "output_guardrails": _summarize_guardrail_results(output_guardrails),
         "usage": usage or {},
+        # Which team policy ran, for the Telemetry Team filter
+        # (docs/specs/telemetry-team-filter.md); absent for tenants without teams.
+        **scope_audit_fields(request),
     }
 
     guardrails_triggered = []

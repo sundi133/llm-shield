@@ -17,6 +17,7 @@ from core.llm_gateway.select import Refusal as RoutingRefusal
 from core.models import ChatRequest, ShieldResponse
 from core.pipeline import run_pipeline
 from core.policy_mode import MONITOR, resolve_mode
+from core.policy_scopes import scope_audit_fields
 from core.run_context import resolve_run_id
 from core.text_utils import modified_text
 from core.tenant_pipeline import (
@@ -251,13 +252,17 @@ async def _stream_chat_completion(
     opened: tuple | None = None,
     routing: dict | None = None,
     on_done=None,
+    scope_fields: dict | None = None,
 ):
     """Proxy a chat completion stream while preserving OpenAI-style SSE.
 
     `opened` is (client, stream context, response) for a stream a model route
     already opened (core.llm_gateway.dispatch.open_stream); then `routing` adds
     its headers and `on_done(usage)` runs when the stream ends.
+    `scope_fields` is ``scope_audit_fields(request)`` from the handler: the
+    generator runs after it returns, so it can't read the request itself.
     """
+    _scope_fields = scope_fields or {}
     if opened is not None:
         client, stream_ctx, upstream_resp = opened
     else:
@@ -360,6 +365,7 @@ async def _stream_chat_completion(
                                         "latency_ms": round((datetime.now() - start_time).total_seconds() * 1000, 2),
                                         "metadata": {
                                             "kind": "agent_chat_telemetry", "run_id": run_id,
+                                            **_scope_fields,
                                             "tenant_id": tenant_id,
                                             "stage": "stream_partial_output",
                                             "user_role": role_name,
@@ -392,6 +398,7 @@ async def _stream_chat_completion(
                                         "latency_ms": round(latency_ms, 2),
                                         "metadata": {
                                             "kind": "agent_chat_telemetry", "run_id": run_id,
+                                            **_scope_fields,
                                             "tenant_id": tenant_id,
                                             "stage": "stream_partial_output",
                                             "user_role": role_name,
@@ -458,6 +465,7 @@ async def _stream_chat_completion(
                     "latency_ms": round(latency_ms, 2),
                     "metadata": {
                         "kind": "agent_chat_telemetry", "run_id": run_id,
+                        **_scope_fields,
                         "tenant_id": tenant_id,
                         "stage": "stream_complete",
                         "user_role": role_name,
@@ -517,6 +525,9 @@ async def shield_chat_completions(request: Request):
     body = await request.json()
     run_id = resolve_run_id(request, body)
     messages = body.get("messages", [])
+    # Which team policy ran, for the Telemetry Team filter
+    # (docs/specs/telemetry-team-filter.md); {} for tenants without teams.
+    _scope_fields = scope_audit_fields(request)
 
     # Support prompt-style requests (e.g., from playground)
     if not messages and body.get("prompt"):
@@ -589,6 +600,7 @@ async def shield_chat_completions(request: Request):
                 "latency_ms": round(latency_ms, 2),
                 "metadata": {
                     "kind": "agent_chat_telemetry", "run_id": run_id,
+                    **_scope_fields,
                     "tenant_id": tenant_id,
                     "stage": "input",
                     "user_role": role_name,
@@ -640,6 +652,7 @@ async def shield_chat_completions(request: Request):
                 "latency_ms": round((datetime.now() - start_time).total_seconds() * 1000, 2),
                 "metadata": {
                     "kind": "agent_chat_telemetry", "run_id": run_id,
+                    **_scope_fields,
                     "tenant_id": tenant_id,
                     "stage": "routing",
                     "user_role": role_name,
@@ -676,6 +689,7 @@ async def shield_chat_completions(request: Request):
             tenant_id=tenant_id, run_id=run_id, tenant_config=tenant_config,
             opened=(client, ctx, resp), routing=routing,
             on_done=gw_dispatch.stream_done(tenant_id, routing_plan, routing),
+            scope_fields=_scope_fields,
         )
     if body.get("stream") is True:
         stream_url, payload = _build_stream_payload(body, messages)
@@ -691,6 +705,7 @@ async def shield_chat_completions(request: Request):
             tenant_id=tenant_id,
             run_id=run_id,
             tenant_config=tenant_config,
+            scope_fields=_scope_fields,
         )
 
     # Proxy to LLM
@@ -781,6 +796,7 @@ async def shield_chat_completions(request: Request):
                 "latency_ms": round(latency_ms, 2),
                 "metadata": {
                     "kind": "agent_chat_telemetry", "run_id": run_id,
+                    **_scope_fields,
                     "tenant_id": tenant_id,
                     "stage": "output",
                     "user_role": role_name,
@@ -843,6 +859,7 @@ async def shield_chat_completions(request: Request):
             "latency_ms": round(latency_ms, 2),
             "metadata": {
                 "kind": "agent_chat_telemetry", "run_id": run_id,
+                **_scope_fields,
                 "tenant_id": tenant_id,
                 "stage": "complete",
                 "user_role": role_name,

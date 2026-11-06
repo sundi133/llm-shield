@@ -606,6 +606,14 @@ def request_scope(request) -> Optional[dict]:
     return decision.as_dict() if isinstance(decision, Decision) else None
 
 
+def scope_audit_fields(request) -> dict:
+    """``{"policy_scope": {...}}`` to spread into a telemetry record's metadata,
+    or ``{}`` when no team policy ran, so records for tenants without policy
+    scopes stay byte-identical (docs/specs/telemetry-team-filter.md). No I/O."""
+    scope = request_scope(request)
+    return {"policy_scope": scope} if scope is not None else {}
+
+
 # ---------------------------------------------------------------------------
 # Validation (write routes)
 # ---------------------------------------------------------------------------

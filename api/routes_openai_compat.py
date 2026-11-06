@@ -34,6 +34,7 @@ from core.llm_gateway import dispatch as gw_dispatch
 from core.llm_gateway import proxy as gw_proxy
 from core.llm_gateway.select import Refusal as RoutingRefusal
 from core.policy_mode import resolve_mode
+from core.policy_scopes import scope_audit_fields
 from core.text_utils import modified_text
 from core.tenant_pipeline import (
     apply_mode_to_pipeline_result,
@@ -182,6 +183,9 @@ async def openai_chat_completions(request: Request):
     role = getattr(request.state, "role", None)
     role_name = getattr(request.state, "role_name", None)
     tenant_id = getattr(request.state, "tenant_id", None) or ""
+    # Which team policy ran, for the Telemetry Team filter
+    # (docs/specs/telemetry-team-filter.md); {} for tenants without teams.
+    _scope_fields = scope_audit_fields(request)
 
     conversation_history = [
         m for m in messages if m.get("role") in ("user", "assistant")
@@ -251,6 +255,7 @@ async def openai_chat_completions(request: Request):
                 ),
                 "metadata": {
                     "kind": "agent_chat_telemetry",
+                    **_scope_fields,
                     "tenant_id": tenant_id,
                     "stage": "input",
                     "user_role": role_name,
@@ -289,6 +294,7 @@ async def openai_chat_completions(request: Request):
                 ),
                 "metadata": {
                     "kind": "agent_chat_telemetry",
+                    **_scope_fields,
                     "tenant_id": tenant_id,
                     "stage": "routing",
                     "user_role": role_name,
@@ -442,6 +448,7 @@ async def openai_chat_completions(request: Request):
                 ),
                 "metadata": {
                     "kind": "agent_chat_telemetry",
+                    **_scope_fields,
                     "tenant_id": tenant_id,
                     "stage": "output",
                     "user_role": role_name,
@@ -498,6 +505,7 @@ async def openai_chat_completions(request: Request):
             ),
             "metadata": {
                 "kind": "agent_chat_telemetry",
+                **_scope_fields,
                 "tenant_id": tenant_id,
                 "stage": "complete",
                 "user_role": role_name,
