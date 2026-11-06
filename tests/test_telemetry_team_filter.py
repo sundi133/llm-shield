@@ -446,3 +446,140 @@ def test_end_to_end_tenant1_shows_only_its_requests(client, audit_store, no_codi
     assert _messages(r.json()) == ["hello from tenant1"]
     assert r.json()["entries"][0]["policy_scope"] == TENANT1_SCOPE
     assert _messages(_telemetry(client, team="rafay-ops").json()) == ["hello from rafay"]
+
+
+# ── Task 3: the portal's Team dropdown and row tag ───────────────────────────
+
+import json as _json
+import re
+import shutil
+import subprocess
+
+HTML = open(os.path.join(ROOT_DIR, "static", "tenant.html")).read()
+TELEMETRY_PANE = HTML[HTML.index('id="tab-telemetry"'):HTML.index("<!-- APIs & SDKs -->")]
+
+
+def _fn(name: str, source: str = HTML) -> str:
+    m = re.search(rf"^(?:async )?function {name}\(", source, re.M)
+    assert m, name
+    nxt = re.search(r"^(?:async )?function \w+\(|^// ──", source[m.end():], re.M)
+    return source[m.start():m.end() + (nxt.start() if nxt else len(source))]
+
+
+def test_team_select_sits_in_the_telemetry_filters():
+    assert 'id="telemetry-team-field"' in TELEMETRY_PANE
+    assert 'id="telemetry-team-filter"' in TELEMETRY_PANE
+    # Hidden until the tenant's team rules are known.
+    field = re.search(r'<div[^>]*id="telemetry-team-field"[^>]*>', TELEMETRY_PANE).group(0)
+    assert "hidden" in field
+
+
+def test_load_telemetry_sends_the_team():
+    body = _fn("loadTelemetry")
+    assert "telemetry-team-filter" in body
+    assert "params.set('team', team)" in body
+    assert "loadTelemetryTeams()" in body
+    # The old-server guard keys off the echo.
+    assert "data.team !== team" in body
+
+
+def test_dropdown_is_filled_from_the_tenants_own_rules():
+    body = _fn("loadTelemetryTeams")
+    assert "apiCall(PS_BASE)" in body
+    assert "const PS_BASE = '/v1/tenant/me/policy-scopes';" in HTML
+    assert "psEsc(value)" in body and "psEsc(label)" in body
+
+
+def test_tag_is_escaped_and_rendered_in_the_source_cell():
+    tag = _fn("telemetryTeamTag")
+    assert "psEsc(where)" in tag and "psEsc(telemetryTeamLabel(scope.rule))" in tag
+    assert "telemetryTeamTag(entry)" in _fn("telemetrySourceBadge")
+
+
+def test_option_values_are_what_the_api_accepts():
+    import api.routes_tenant_self as rts
+    assert f"const TELEMETRY_TEAM_NONE = '{rts.TEAM_NONE}';" in HTML
+    assert "['global', 'Global']" in _fn("loadTelemetryTeams")
+    assert "['unmatched', 'Other values']" in _fn("loadTelemetryTeams")
+
+
+def _node():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    return node
+
+
+def _run_js(script: str) -> dict:
+    r = subprocess.run([_node(), "-e", script], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, r.stderr[:800]
+    return _json.loads(r.stdout.strip().splitlines()[-1])
+
+
+def _harness(scopes_response) -> str:
+    """The real dropdown and tag functions, run in node against a fake DOM."""
+    fns = "\n".join(_fn(n) for n in ("psEsc", "telemetryTeamLabel", "telemetryTeamTag",
+                                     "loadTelemetryTeams"))
+    return f"""
+const PS_BASE = '/v1/tenant/me/policy-scopes';
+const TELEMETRY_TEAM_NONE = '(none)';
+let TELEMETRY_TEAMS_LOADED = false;
+function el() {{
+  const cls = new Set(['hidden']);
+  return {{ value: '', innerHTML: '', classList: {{
+    add: c => cls.add(c), remove: c => cls.delete(c), contains: c => cls.has(c) }} }};
+}}
+const els = {{ 'telemetry-team-field': el(), 'telemetry-team-filter': el() }};
+const document = {{ getElementById: id => els[id] }};
+const RESPONSE = {_json.dumps(scopes_response)};
+async function apiCall(path) {{
+  if (path !== PS_BASE) throw new Error('wrong path ' + path);
+  if (RESPONSE === 'error') throw new Error('HTTP 500');
+  return RESPONSE;
+}}
+{fns}
+(async () => {{
+  els['telemetry-team-filter'].value = 'tenant1';
+  await loadTelemetryTeams();
+  const opts = [...els['telemetry-team-filter'].innerHTML.matchAll(/<option value="([^"]*)">([^<]*)<\\/option>/g)]
+    .map(m => [m[1], m[2]]);
+  console.log(JSON.stringify({{
+    hidden: els['telemetry-team-field'].classList.contains('hidden'),
+    options: opts, selected: els['telemetry-team-filter'].value,
+    tag: telemetryTeamTag({{ policy_scope: {{ rule: 'x"><img src=x onerror=1>', value: '<b>', header: 'h' }} }}),
+    tag_global: telemetryTeamTag({{ policy_scope: {{ rule: 'global', value: '(missing)', header: null }} }}),
+    no_tag: telemetryTeamTag({{ policy_scope: null }}) + telemetryTeamTag({{}}),
+  }}));
+}})();
+"""
+
+
+def test_dropdown_lists_each_team_and_keeps_the_choice():
+    out = _run_js(_harness({"policy_scopes": {
+        "rules": [{"id": "tenant1", "match": {"exact": ["x3mxvkr"]}},
+                  {"id": "rafay-ops", "match": {"exact": ["7dkgjkx", "other"]}},
+                  {"id": "eng", "match": {"glob": ["eng-*"]}}],
+        "unmatched": {"input_guardrails": {}}}}))
+    assert out["hidden"] is False
+    assert out["options"] == [["", "All teams"], ["global", "Global"],
+                              ["tenant1", "tenant1 (x3mxvkr)"], ["rafay-ops", "rafay-ops (7dkgjkx)"],
+                              ["eng", "eng (eng-*)"], ["unmatched", "Other values"],
+                              ["(none)", "No team recorded"]]
+    assert out["selected"] == "tenant1"
+    assert "<img" not in out["tag"] and "<b>" not in out["tag"]
+    assert "&lt;img" in out["tag"] and "&quot;" in out["tag"]
+    assert "team: Global" in out["tag_global"] and "no team header" in out["tag_global"]
+    assert out["no_tag"] == ""
+
+
+def test_no_other_values_option_without_that_policy():
+    out = _run_js(_harness({"policy_scopes": {"rules": [{"id": "tenant1", "match": {"exact": ["a"]}}]}}))
+    assert ["unmatched", "Other values"] not in out["options"]
+
+
+@pytest.mark.parametrize("response", [{"policy_scopes": None}, {"policy_scopes": {"rules": []}},
+                                      "error"])
+def test_dropdown_hidden_without_teams_or_on_error(response):
+    out = _run_js(_harness(response))
+    assert out["hidden"] is True
+    assert out["selected"] == ""

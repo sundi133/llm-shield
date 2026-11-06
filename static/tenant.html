@@ -946,6 +946,28 @@
     color: #065f46;
     background: #d1fae5;
   }
+  /* docs/specs/telemetry-team-filter.md: which team policy a row ran under. */
+  .telemetry-team {
+    display: inline-flex;
+    margin-top: 0.3rem;
+    padding: 0.1rem 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 600;
+    color: var(--text-dim);
+    white-space: nowrap;
+    max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .telemetry-filter-grid {
+    display: grid;
+    /* Last column is Team: its labels carry the header value, so give it room. */
+    grid-template-columns: minmax(0,1.3fr) repeat(5, minmax(110px,0.7fr)) minmax(150px,1fr);
+    gap: 0.75rem;
+    align-items: end;
+  }
   .telemetry-empty {
     padding: 1rem;
     text-align: center;
@@ -1005,6 +1027,9 @@
     .telemetry-row-message {
       max-width: none;
       white-space: normal;
+    }
+    .telemetry-filter-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
   @media (max-width: 640px) {
@@ -3627,12 +3652,12 @@
           <div class="page-desc">Inspect agent messages, tool calls, RBAC outcomes, and guardrail stages.</div>
         </div>
         <div style="display:flex;gap:0.5rem;">
-          <button class="small" onclick="loadTelemetry()">Refresh</button>
+          <button class="small" onclick="loadTelemetry(true)">Refresh</button>
         </div>
       </div>
 
       <div class="card" style="margin-bottom:1rem;">
-        <div style="display:grid;grid-template-columns:minmax(0,1.3fr) repeat(4, minmax(120px,0.7fr)) auto;gap:0.75rem;align-items:end;">
+        <div class="telemetry-filter-grid">
           <div class="field" style="margin-bottom:0;">
             <label for="telemetry-search">Search</label>
             <input id="telemetry-search" type="text" placeholder="message, tool, block reason, agent">
@@ -3669,6 +3694,14 @@
               <option value="">All</option>
               <option value="chat">Chat</option>
               <option value="coding-agent">Coding agent</option>
+            </select>
+          </div>
+          <!-- Team filter (docs/specs/telemetry-team-filter.md). Filled from the
+               tenant's own team rules; hidden for tenants without any. -->
+          <div class="field hidden" id="telemetry-team-field" style="margin-bottom:0;">
+            <label for="telemetry-team-filter">Team</label>
+            <select id="telemetry-team-filter">
+              <option value="">All teams</option>
             </select>
           </div>
           <div>
@@ -9825,7 +9858,65 @@ function telemetryDisplayStatus(entry) {
 function telemetrySourceBadge(entry) {
   const src = entry.source === 'coding-agent' ? 'coding-agent' : 'chat';
   const label = src === 'coding-agent' ? 'coding agent' : 'chat';
-  return `<span class="telemetry-source ${src}">${label}</span>`;
+  return `<span class="telemetry-source ${src}">${label}</span>${telemetryTeamTag(entry)}`;
+}
+
+// ── Team filter (docs/specs/telemetry-team-filter.md) ──
+// Option values are what GET /v1/tenant/me/telemetry?team= accepts: a rule
+// id, 'global', 'unmatched' (shown as Other values) or '(none)'.
+const TELEMETRY_TEAM_NONE = '(none)';
+let TELEMETRY_TEAMS_LOADED = false;
+
+function telemetryTeamLabel(rule) {
+  if (rule === 'global') return 'Global';
+  if (rule === 'unmatched') return 'Other values';
+  return rule;
+}
+
+// The team a row ran under, as a small tag; nothing when none was recorded.
+// Rule ids, header names and values come from requests, so all are escaped.
+function telemetryTeamTag(entry) {
+  const scope = entry && entry.policy_scope;
+  if (!scope || typeof scope !== 'object' || !scope.rule) return '';
+  const where = scope.header ? `${scope.header}: ${scope.value ?? ''}` : 'no team header';
+  return `<div><span class="telemetry-team" title="Team: ${psEsc(where)}">team: ${psEsc(telemetryTeamLabel(scope.rule))}</span></div>`;
+}
+
+async function loadTelemetryTeams() {
+  const field = document.getElementById('telemetry-team-field');
+  const select = document.getElementById('telemetry-team-filter');
+  if (!field || !select) return;
+  const previous = select.value;
+  let scopes = null;
+  try {
+    const data = await apiCall(PS_BASE);
+    scopes = data && data.policy_scopes;
+  } catch (e) {
+    scopes = null;   // no teams view; the rest of the page still loads
+  }
+  const rules = (scopes && Array.isArray(scopes.rules)) ? scopes.rules : [];
+  const hasOther = !!(scopes && scopes.unmatched && typeof scopes.unmatched === 'object');
+  TELEMETRY_TEAMS_LOADED = true;
+  if (!rules.length && !hasOther) {
+    select.innerHTML = '<option value="">All teams</option>';
+    select.value = '';
+    field.classList.add('hidden');
+    return;
+  }
+  const options = [['', 'All teams'], ['global', 'Global']];
+  for (const rule of rules) {
+    if (!rule || !rule.id) continue;
+    const match = rule.match || {};
+    const sample = (match.exact || [])[0] || (match.glob || [])[0];
+    options.push([rule.id, sample ? `${rule.id} (${sample})` : rule.id]);
+  }
+  if (hasOther) options.push(['unmatched', 'Other values']);
+  options.push([TELEMETRY_TEAM_NONE, 'No team recorded']);
+  select.innerHTML = options
+    .map(([value, label]) => `<option value="${psEsc(value)}">${psEsc(label)}</option>`).join('');
+  // Keep the admin's choice across a refresh while that team still exists.
+  select.value = options.some(([value]) => value === previous) ? previous : '';
+  field.classList.remove('hidden');
 }
 
 function renderTelemetryToolRows(toolCalls) {
@@ -9995,12 +10086,13 @@ function _sinceDate(days) {
   return d.toISOString();
 }
 
-async function loadTelemetry() {
+async function loadTelemetry(reloadTeams = false) {
   const errorEl = document.getElementById('telemetry-error');
   errorEl.classList.add('hidden');
   errorEl.textContent = '';
 
   try {
+    if (reloadTeams || !TELEMETRY_TEAMS_LOADED) await loadTelemetryTeams();
     const params = new URLSearchParams({ limit: '200' });
     const q = (document.getElementById('telemetry-search').value || '').trim();
     const status = document.getElementById('telemetry-status-filter').value;
@@ -10014,6 +10106,10 @@ async function loadTelemetry() {
     if (agent) params.set('agent_key', agent);
     if (tool) params.set('tool_name', tool);
     if (source) params.set('source', source);
+    const teamEl = document.getElementById('telemetry-team-filter');
+    const teamField = document.getElementById('telemetry-team-field');
+    const team = (teamEl && teamField && !teamField.classList.contains('hidden')) ? teamEl.value : '';
+    if (team) params.set('team', team);
     params.set('since', _sinceDate(days));
 
     let data = await apiCall(`/v1/tenant/me/telemetry?${params.toString()}`).catch(() => null);
@@ -10021,6 +10117,12 @@ async function loadTelemetry() {
       // Fall back without since param if backend doesn't support it yet
       params.delete('since');
       data = await apiCall(`/v1/tenant/me/telemetry?${params.toString()}`);
+    }
+    if (team && data.team !== team) {
+      // An older server ignores the param and returns every team's rows;
+      // showing those under a team's name would be wrong. Clear the tiles too.
+      updateTelemetrySummary({});
+      throw new Error('This server does not support the Team filter yet. Choose "All teams" or update Shield.');
     }
     updateTelemetrySummary(data.summary || {});
     renderTelemetryEntries(data.entries || []);
@@ -17920,7 +18022,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'tool-policies') switchTPSubtab('data-policies');
     if (tab === 'usage') loadUsage();
     if (tab === 'activity') loadActivity();
-    if (tab === 'telemetry') loadTelemetry();
+    if (tab === 'telemetry') loadTelemetry(true);
     if (tab === 'policies') loadPolicies();
     if (tab === 'apis') { renderAllApiTabs(); loadApiKeys(); }
     if (tab === 'playground') initPlayground();
