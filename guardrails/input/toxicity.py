@@ -6,7 +6,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import as_float, async_llm_call, parse_csv_response
+from core.llm_backend import PARSE_ERROR_KEY, as_float, async_llm_call, parse_csv_response
 from core.text_utils import estimate_tokens, chunk_text, adaptive_chunk_budget, build_history_messages, trim_history_to_budget
 
 _SYSTEM_PROMPT = (
@@ -135,6 +135,8 @@ class ToxicityGuardrail(BaseGuardrail):
                 f"Toxic content [{category}] ({severity}, score {score:.2f}) "
                 f"detected but below the {threshold:.2f} threshold, not blocked"
             )
+        elif isinstance(result, dict) and result.get(PARSE_ERROR_KEY):
+            message = "Model verdict could not be read, allowing by default"
         else:
             message = "No toxic content detected"
 

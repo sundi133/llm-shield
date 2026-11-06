@@ -25,7 +25,7 @@ from typing import Optional
 
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
-from core.llm_backend import as_float, async_llm_call, parse_csv_response
+from core.llm_backend import PARSE_ERROR_KEY, as_float, async_llm_call, parse_csv_response
 from core.text_utils import estimate_tokens, chunk_text, adaptive_chunk_budget, build_history_messages, trim_history_to_budget
 
 # ---------------------------------------------------------------------------
@@ -644,11 +644,16 @@ class AdversarialGuardrail(BaseGuardrail):
                 latency_ms=elapsed,
             )
 
+        # An answer whose verdict could not be read is not a "no" from the
+        # model: say so rather than "No adversarial or unsafe content detected".
+        message = ("Model verdict could not be read, allowing by default"
+                   if result.get(PARSE_ERROR_KEY) else
+                   "No adversarial or unsafe content detected")
         return GuardrailResult(
             passed=True,
             action="pass",
             guardrail_name=self.name,
-            message="No adversarial or unsafe content detected",
+            message=message,
             details=result,
             latency_ms=elapsed,
         )

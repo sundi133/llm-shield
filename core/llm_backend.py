@@ -82,12 +82,95 @@ def parse_llm_json(raw: str) -> dict:
         raise
 
 
+PARSE_ERROR_KEY = "parse_error"
+_LABEL_TRIM = " \t\"'`{}[]"
+
+
+def _labeled_verdicts_enabled() -> bool:
+    """Escape hatch: SHIELD_VERDICT_LABELS=0 restores the positional-only parser.
+
+    Spec: docs/specs/llm-verdict-parsing.md."""
+    return os.environ.get("SHIELD_VERDICT_LABELS", "1").strip().lower() not in (
+        "0", "false", "no", "off")
+
+
+def _cast(val: str):
+    """bool for true/yes/false/no, float when numeric, else the string."""
+    low = val.lower()
+    if low in ("true", "yes"):
+        return True
+    if low in ("false", "no"):
+        return False
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return val
+
+
+def _labeled_pairs(raw: str, fields: list[str]) -> dict:
+    """{field: value} for the fields the model NAMED in its answer.
+
+    Models asked for a bare CSV line sometimes label the values instead, and
+    the positional reader then shifts every value one slot. Observed on
+    qwen/qwen3.5-9b via OpenRouter, deterministically at temperature 0:
+
+        is_adversarial,true\\nattack_type,harmful_content\\nconfidence,0.99
+        is_adversarial,true,attack_type:harmful_content,...
+
+    Accepted per comma-separated part: ``field:value`` / ``field=value``, or a
+    bare ``field`` followed by its value in the next part. A part counts as a
+    label only when it names one of ``fields`` exactly (case-insensitive), so
+    prose that happens to contain a colon is not a label.
+    """
+    names = {f.lower(): f for f in fields}
+    pairs: dict = {}
+    for line in raw.splitlines():
+        parts = [p.strip() for p in line.strip().strip(_LABEL_TRIM).split(",")]
+        i = 0
+        while i < len(parts):
+            part = parts[i]
+            key, sep, val = part, "", ""
+            for s in (":", "="):
+                if s in part:
+                    k, _, v = part.partition(s)
+                    if k.strip(_LABEL_TRIM).lower() in names:
+                        key, sep, val = k, s, v
+                        break
+            field = names.get(key.strip(_LABEL_TRIM).lower())
+            if field is not None and sep:
+                pairs.setdefault(field, val.strip(_LABEL_TRIM))
+            elif (field is not None and i + 1 < len(parts)
+                  and parts[i + 1].strip(_LABEL_TRIM).lower() not in names):
+                pairs.setdefault(field, parts[i + 1].strip(_LABEL_TRIM))
+                i += 1
+            i += 1
+    return pairs
+
+
 def parse_csv_response(raw: str, fields: list[str]) -> dict:
     """Parse a CSV line from LLM into a dict keyed by field names.
 
-    Handles common quirks: extra whitespace, quoted values, header echo.
-    Fields are cast to bool/float where possible.
+    Handles common quirks: extra whitespace, quoted values, header echo, and
+    labeled answers (``field,value`` / ``field: value``, on one line or one per
+    line), which are read by name rather than position. Fields are cast to
+    bool/float where possible.
+
+    ``fields[0]`` is every caller's true/false verdict. When it does not come
+    out as a bool, the result carries ``parse_error`` describing what the model
+    sent, so an unreadable answer is visible in the guardrail's details instead
+    of reading as a clean pass. The verdict value itself is left as before.
+    Spec: docs/specs/llm-verdict-parsing.md.
     """
+    raw = raw or ""
+    if _labeled_verdicts_enabled() and fields:
+        pairs = _labeled_pairs(raw, fields)
+        # Read by name only when the VERDICT is labeled: a positional answer
+        # whose free-text last field happens to start "reasoning: ..." must
+        # stay positional.
+        if fields[0] in pairs:
+            result = {name: _cast(pairs.get(name, "")) for name in fields}
+            return _mark_unreadable(result, raw, fields)
+
     line = raw.strip()
     # If the model echoed the header, take the second line
     if "\n" in line:
@@ -101,17 +184,16 @@ def parse_csv_response(raw: str, fields: list[str]) -> dict:
     result: dict = {}
     for i, name in enumerate(fields):
         val = parts[i].strip() if i < len(parts) else ""
-        # Cast booleans
-        if val.lower() in ("true", "yes"):
-            result[name] = True
-        elif val.lower() in ("false", "no"):
-            result[name] = False
-        else:
-            # Try float
-            try:
-                result[name] = float(val)
-            except (ValueError, TypeError):
-                result[name] = val
+        result[name] = _cast(val)
+    if _labeled_verdicts_enabled():
+        return _mark_unreadable(result, raw, fields)
+    return result
+
+
+def _mark_unreadable(result: dict, raw: str, fields: list[str]) -> dict:
+    if fields and not isinstance(result.get(fields[0]), bool):
+        snippet = " ".join(raw.split())[:120]
+        result[PARSE_ERROR_KEY] = f"verdict '{fields[0]}' not true/false in model answer: {snippet!r}"
     return result
 
 
