@@ -1,6 +1,6 @@
 # Spec: filter Telemetry by team
 
-Status: **draft 2026-11-05, awaiting approval.** Branch
+Status: **approved 2026-11-05.** Branch
 `claude/telemetry-team-filter-d47eb0`.
 
 Builds on `docs/specs/policy-scopes.md` (team rules, PRs #530 to #535) and
