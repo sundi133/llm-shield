@@ -7,6 +7,7 @@ from typing import Optional
 from guardrails.base import BaseGuardrail
 from core.models import GuardrailResult
 from core.llm_backend import as_float, async_llm_call, parse_csv_response
+from guardrails.nemo import adapter_for
 from core.text_utils import estimate_tokens, chunk_text, adaptive_chunk_budget, build_history_messages, trim_history_to_budget
 
 _SYSTEM_PROMPT = (
@@ -58,14 +59,28 @@ class ToxicityGuardrail(BaseGuardrail):
         """Check a single chunk of content for toxicity."""
         start = time.perf_counter()
 
-        messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
-        messages.extend(history_messages)
-        messages.append({"role": "user", "content": f"{_USER_PREFIX}{content}"})
+        # Family seam. Under the default `vai` family adapter_for() returns
+        # None after one env read, and everything below is the original path
+        # byte for byte. A `nemo` adapter swaps the prompt and the parse, and
+        # returns the same verdict dict this guardrail already reads, so
+        # nothing after the parse knows which model answered.
+        adapter = adapter_for(self.name)
+
+        if adapter is not None:
+            messages = adapter.build_messages(
+                content, {"history_messages": history_messages}, self.settings
+            )
+            max_tokens = adapter.max_tokens
+        else:
+            messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
+            messages.extend(history_messages)
+            messages.append({"role": "user", "content": f"{_USER_PREFIX}{content}"})
+            max_tokens = 20
 
         try:
             response = await async_llm_call(
                 messages=messages,
-                max_tokens=20,
+                max_tokens=max_tokens,
                 temperature=0,
                 guardrail_name=self.name,
             )
@@ -73,7 +88,8 @@ class ToxicityGuardrail(BaseGuardrail):
                 error = response.get("error", {}).get("message", str(response))
                 raise ValueError(f"LLM error: {error}")
             raw = response["choices"][0]["message"]["content"]
-            result = parse_csv_response(raw, _CSV_FIELDS)
+            result = (adapter.parse(raw) if adapter is not None
+                      else parse_csv_response(raw, _CSV_FIELDS))
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             return GuardrailResult(
