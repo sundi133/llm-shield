@@ -7,7 +7,9 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from guardrails.base import BaseGuardrail, safe_float
-from core.llm_backend import async_llm_call, parse_csv_response
+from core.llm_backend import (
+    _labeled_pairs, _labeled_verdicts_enabled, async_llm_call, parse_csv_response,
+)
 from core.text_utils import (
     REDACTED_TEXT_KEY, SANITIZED_MARKER, build_policy_messages,
     custom_policy_history_turns, estimate_tokens, split_marker, usable_redaction,
@@ -90,6 +92,12 @@ def _parse_policy_csv(raw: str) -> dict:
     actually yields a boolean verdict, and only fall back to last-line
     behaviour when none does.
     """
+    # A labeled answer ("violates_policy,true\nconfidence,0.9\n...") is read
+    # by name across all its lines; the per-line search below would see only
+    # the verdict line and lose the confidence. Spec: docs/specs/llm-verdict-parsing.md.
+    if _labeled_verdicts_enabled() and _CSV_FIELDS[0] in _labeled_pairs(raw, _CSV_FIELDS):
+        return parse_csv_response(raw, _CSV_FIELDS)
+
     lines = [ln.strip() for ln in raw.strip().splitlines() if ln.strip()]
     for line in reversed(lines or [""]):
         result = parse_csv_response(line, _CSV_FIELDS)
