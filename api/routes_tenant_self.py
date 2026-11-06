@@ -6,6 +6,7 @@ RBAC, quota, plan, or API keys — those are admin-only.
 """
 
 from typing import Optional, Union
+import re
 import uuid
 from datetime import datetime
 
@@ -650,6 +651,7 @@ def _coding_agent_row(entry: dict) -> dict:
         "input_guardrails": [],
         "output_guardrails": [],
         "usage": {},
+        "policy_scope": None,
     }
 
 
@@ -686,6 +688,30 @@ def _coding_agent_rows(tenant_id: str, *, agent_key, status, tool_name, q,
     return out
 
 
+# docs/specs/telemetry-team-filter.md: filter by the team (policy scope rule)
+# each chat row recorded. Reserved words are "global" and "unmatched" (the
+# policy-scopes validator refuses them as rule ids) and "(none)", which can't
+# be a rule id, for rows with no team recorded.
+TEAM_NONE = "(none)"
+_TEAM_RULE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def _row_scope(metadata: dict) -> Optional[dict]:
+    """The row's recorded team decision, or None when there is none usable
+    (absent, null, not an object, or no string rule)."""
+    scope = metadata.get("policy_scope")
+    if isinstance(scope, dict) and isinstance(scope.get("rule"), str) and scope["rule"]:
+        return {"rule": scope["rule"], "value": scope.get("value"),
+                "header": scope.get("header")}
+    return None
+
+
+def _team_matches(scope: Optional[dict], team: str) -> bool:
+    if team == TEAM_NONE:
+        return scope is None
+    return scope is not None and scope["rule"] == team
+
+
 @router.get("/me/telemetry")
 async def get_my_telemetry(
     request: Request,
@@ -698,10 +724,19 @@ async def get_my_telemetry(
     q: Optional[str] = Query(None, description="Free-text search across message, tool, and reason"),
     since: Optional[str] = Query(None, description="ISO timestamp — only return entries after this time (e.g. 2026-05-25T00:00:00Z)"),
     until: Optional[str] = Query(None, description="ISO timestamp — only return entries before this time"),
+    team: Optional[str] = Query(None, description="A team rule id, 'global', 'unmatched', "
+                                                  "or '(none)' for rows with no team recorded"),
 ):
     """Return tenant-scoped agent activity: chat telemetry and, merged in,
-    coding-agent hook decisions. docs/specs/unified-agent-telemetry.md."""
+    coding-agent hook decisions. docs/specs/unified-agent-telemetry.md;
+    the team filter is docs/specs/telemetry-team-filter.md."""
     tenant_id = _require_tenant(request)
+    team = (team or "").strip() or None
+    if team is not None and team != TEAM_NONE and not _TEAM_RULE_RE.match(team):
+        # A typo must not look like "this team had no traffic".
+        raise HTTPException(status_code=422, detail=(
+            "team must be a team rule id (lowercase letters, digits, '-' or '_', "
+            "at most 64 characters), 'global', 'unmatched', or '(none)'"))
 
     filters = {}
     if since:
@@ -720,6 +755,9 @@ async def get_my_telemetry(
         if agent_key and entry.get("agent_key") != agent_key:
             continue
         if status and entry.get("action_taken") != status:
+            continue
+        scope = _row_scope(metadata)
+        if team is not None and not _team_matches(scope, team):
             continue
 
         tool_calls = metadata.get("tool_calls") or []
@@ -763,6 +801,7 @@ async def get_my_telemetry(
             "input_guardrails": metadata.get("input_guardrails") or [],
             "output_guardrails": metadata.get("output_guardrails") or [],
             "usage": metadata.get("usage") or {},
+            "policy_scope": scope,
         })
 
     for entry in telemetry_entries:
@@ -771,7 +810,10 @@ async def get_my_telemetry(
     rows = []
     if source != "coding-agent":
         rows.extend(telemetry_entries)
-    if source != "chat" and _coding_agent_telemetry_enabled():
+    # Coding-agent rows never carry a team, so any team filter but "(none)"
+    # leaves them out.
+    if source != "chat" and _coding_agent_telemetry_enabled() \
+            and team in (None, TEAM_NONE):
         rows.extend(_coding_agent_rows(tenant_id, agent_key=agent_key, status=status,
                                        tool_name=tool_name, q=q, since=since, until=until))
     # Newest first across both sources, then page the merged list.
@@ -804,6 +846,9 @@ async def get_my_telemetry(
         "total": total,
         "limit": limit,
         "offset": offset,
+        # Echoed so the portal can tell a server that ignores the param
+        # (and returned every row) from a filtered result.
+        "team": team,
         "summary": {
             "messages": total,
             "by_status": by_status,

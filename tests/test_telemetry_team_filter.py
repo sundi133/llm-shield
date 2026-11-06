@@ -225,3 +225,224 @@ def test_scope_audit_fields_is_empty_without_a_decision():
     assert scope_audit_fields(SimpleNamespace()) == {}
     req = SimpleNamespace(state=SimpleNamespace(policy_scope=Decision("tenant1", "x3mxvkr", TEAM_HEADER)))
     assert scope_audit_fields(req) == {"policy_scope": TENANT1_SCOPE}
+
+
+# ── Task 2: the team filter on GET /v1/tenant/me/telemetry ───────────────────
+
+class FakeAuditRedis:
+    """Just the ZSET calls storage.audit_log makes."""
+
+    def __init__(self):
+        self.z = {}
+
+    def zadd(self, key, mapping):
+        self.z.setdefault(key, {}).update(mapping)
+
+    def zremrangebyscore(self, key, lo, hi):
+        z = self.z.get(key, {})
+        for m in [m for m, s in z.items() if lo <= s <= hi]:
+            del z[m]
+
+    def zcard(self, key):
+        return len(self.z.get(key, {}))
+
+    def zremrangebyrank(self, key, start, stop):
+        pass
+
+    def expire(self, key, ttl):
+        pass
+
+    def _desc(self, key):
+        return [m for m, _ in sorted(self.z.get(key, {}).items(), key=lambda kv: -kv[1])]
+
+    def zrevrange(self, key, start, stop):
+        return self._desc(key)[start:stop + 1]
+
+    def zrevrangebyscore(self, key, hi, lo, offset=0, count=None, start=None, num=None):
+        hi = float("inf") if hi == "+inf" else float(hi)
+        lo = float("-inf") if lo == "-inf" else float(lo)
+        z = self.z.get(key, {})
+        return [m for m in self._desc(key) if lo <= z[m] <= hi]
+
+
+@pytest.fixture
+def audit_store(monkeypatch):
+    """A real audit log over a fake Redis, written synchronously so a request's
+    row is readable as soon as the request returns."""
+    import storage.audit_log as al
+    fake = FakeAuditRedis()
+    monkeypatch.setattr(al, "_get_redis", lambda: fake)
+
+    async def log_now(entry):
+        al.audit_logger._write_sync(entry)
+    monkeypatch.setattr(al.audit_logger, "log", log_now)
+    return fake
+
+
+def _seed(store, tenant_id, rows):
+    """rows: (seconds ago, action, policy_scope or the string 'absent')."""
+    import json
+    import time
+    from datetime import datetime, timedelta, timezone
+    now = time.time()
+    for i, (ago, action, scope) in enumerate(rows):
+        meta = {"kind": "agent_chat_telemetry", "tenant_id": tenant_id, "stage": "input",
+                "blocked": action == "block", "tool_calls": []}
+        if scope != "absent":
+            meta["policy_scope"] = scope
+        ts = now - ago
+        rec = {"id": f"r{i}", "timestamp": datetime.fromtimestamp(ts, timezone.utc)
+               .replace(tzinfo=None).isoformat(), "ts": ts, "agent_key": "", "endpoint":
+               "/guardrails/input", "input_text": f"msg {i}", "action_taken": action,
+               "guardrails_triggered": [], "latency_ms": 1.0, "metadata": meta}
+        store.zadd(f"audit:{tenant_id}", {json.dumps(rec): ts})
+
+
+def _scope(rule, value="v", header=TEAM_HEADER):
+    return {"rule": rule, "value": value, "header": header}
+
+
+SEEDED = [
+    (10, "pass", _scope("tenant1", "x3mxvkr")),
+    (20, "block", _scope("tenant1", "x3mxvkr")),
+    (30, "pass", _scope("rafay-ops", "7dkgjkx")),
+    (40, "pass", _scope("global", "(missing)", None)),
+    (50, "block", _scope("unmatched", "someone-else")),
+    (60, "pass", None),
+    (70, "pass", "absent"),
+    (80, "pass", "not-an-object"),
+    (90, "pass", {"value": "no-rule"}),
+]
+
+
+def _telemetry(client, key=A, **params):
+    return client.get("/v1/tenant/me/telemetry", headers=key, params=params)
+
+
+def _messages(body):
+    return [e["message"] for e in body["entries"]]
+
+
+@pytest.fixture
+def no_coding_agent(monkeypatch):
+    monkeypatch.setenv("SHIELD_TELEMETRY_INCLUDE_CODING_AGENT", "off")
+
+
+def test_filter_by_team(client, audit_store, no_coding_agent):
+    _seed(audit_store, "acme", SEEDED)
+    expect = {
+        "tenant1": ["msg 0", "msg 1"],
+        "rafay-ops": ["msg 2"],
+        "global": ["msg 3"],
+        "unmatched": ["msg 4"],
+        "(none)": ["msg 5", "msg 6", "msg 7", "msg 8"],
+    }
+    for team, messages in expect.items():
+        r = _telemetry(client, team=team)
+        assert r.status_code == 200, r.text
+        assert _messages(r.json()) == messages, team
+        assert r.json()["team"] == team
+    everything = _telemetry(client).json()
+    assert len(everything["entries"]) == len(SEEDED) and everything["team"] is None
+    assert _telemetry(client, team="").json()["team"] is None
+
+
+def test_rows_carry_policy_scope(client, audit_store, no_coding_agent):
+    _seed(audit_store, "acme", SEEDED)
+    rows = {e["message"]: e["policy_scope"] for e in _telemetry(client).json()["entries"]}
+    assert rows["msg 0"] == {"rule": "tenant1", "value": "x3mxvkr", "header": TEAM_HEADER}
+    assert rows["msg 3"] == {"rule": "global", "value": "(missing)", "header": None}
+    for m in ("msg 5", "msg 6", "msg 7", "msg 8"):
+        assert rows[m] is None, m
+
+
+def test_summary_and_paging_follow_the_filter(client, audit_store, no_coding_agent):
+    _seed(audit_store, "acme", SEEDED)
+    body = _telemetry(client, team="tenant1").json()
+    assert body["total"] == 2 and body["summary"]["messages"] == 2
+    assert body["summary"]["by_status"]["block"] == 1
+    assert body["summary"]["by_status"]["pass"] == 1
+    page = _telemetry(client, team="tenant1", limit=1, offset=1).json()
+    assert _messages(page) == ["msg 1"] and page["total"] == 2
+
+
+@pytest.mark.parametrize("bad", ["Bad Value!", "x" * 65, "Tenant1", "-lead", "a b", "(missing)"])
+def test_malformed_team_is_422(client, audit_store, bad):
+    assert _telemetry(client, team=bad).status_code == 422
+
+
+def test_unknown_well_formed_team_is_empty_not_an_error(client, audit_store, no_coding_agent):
+    _seed(audit_store, "acme", SEEDED)
+    r = _telemetry(client, team="deleted-team")
+    assert r.status_code == 200 and r.json()["entries"] == [] and r.json()["total"] == 0
+
+
+def test_coding_agent_rows_only_under_none(client, audit_store, monkeypatch):
+    import api.routes_tenant_self as rts
+    _seed(audit_store, "acme", SEEDED[:1])
+    hook_row = {"id": "hook", "timestamp": "2026-11-05T00:00:00", "message": "coding-agent prompt block",
+                "status": "block", "source": "coding-agent", "stage": "input", "tool_calls": [],
+                "policy_scope": None}
+    monkeypatch.setattr(rts, "_coding_agent_rows", lambda *a, **k: [dict(hook_row)])
+    monkeypatch.setenv("SHIELD_TELEMETRY_INCLUDE_CODING_AGENT", "on")
+    assert "coding-agent prompt block" in _messages(_telemetry(client).json())
+    assert "coding-agent prompt block" in _messages(_telemetry(client, team="(none)").json())
+    for team in ("tenant1", "global", "unmatched"):
+        assert "coding-agent prompt block" not in _messages(_telemetry(client, team=team).json())
+
+
+def test_coding_agent_row_shape_has_no_team():
+    import api.routes_tenant_self as rts
+    assert rts._coding_agent_row({"metadata": {"detail": {}}})["policy_scope"] is None
+
+
+def test_another_tenants_rows_never_show(client, env, audit_store, no_coding_agent):
+    """Both tenants have a team called tenant1; each sees only its own."""
+    other_key = "sk-ttf-other-0001"
+    env.create_tenant("other", {"name": "Other", "input_guardrails": copy.deepcopy(GLOBAL_IN),
+                                "policy_scopes": copy.deepcopy(SCOPES)}, api_keys=[other_key])
+    _seed(audit_store, "acme", [(10, "pass", _scope("tenant1", "x3mxvkr"))])
+    _seed(audit_store, "other", [(10, "block", _scope("tenant1", "x3mxvkr"))] * 3)
+    mine = _telemetry(client, team="tenant1").json()
+    theirs = _telemetry(client, key={"X-API-Key": other_key}, team="tenant1").json()
+    assert mine["tenant_id"] == "acme" and mine["total"] == 1
+    assert theirs["tenant_id"] == "other" and theirs["total"] == 3
+    # A record mis-filed under acme's key but stamped for another tenant is dropped.
+    _seed(audit_store, "acme", [])
+    import json
+    import time
+    stray = {"id": "stray", "timestamp": "2026-11-05T00:00:00", "ts": time.time(),
+             "agent_key": "", "input_text": "stray", "action_taken": "pass",
+             "metadata": {"kind": "agent_chat_telemetry", "tenant_id": "other",
+                          "policy_scope": _scope("tenant1")}}
+    audit_store.zadd("audit:acme", {json.dumps(stray): time.time()})
+    assert "stray" not in _messages(_telemetry(client, team="tenant1").json())
+
+
+def test_dropdown_source_is_tenant_scoped(client, env):
+    """The portal fills the Team dropdown from the caller's own policy scopes."""
+    env.create_tenant("other2", {"name": "Other", "input_guardrails": copy.deepcopy(GLOBAL_IN),
+                                 "policy_scopes": {**copy.deepcopy(SCOPES), "rules": [
+                                     {"id": "secret-team", "match": {"exact": ["zzz"]},
+                                      "input_guardrails": {}}]}},
+                      api_keys=["sk-ttf-other2-0001"])
+    r = client.get("/v1/tenant/me/policy-scopes", headers=A)
+    assert r.status_code == 200, r.text
+    ids = [rule["id"] for rule in r.json()["policy_scopes"]["rules"]]
+    assert ids == ["tenant1", "rafay-ops"]
+
+
+def test_end_to_end_tenant1_shows_only_its_requests(client, audit_store, no_coding_agent):
+    """The done condition: two requests, one per team value; team=tenant1
+    returns only the one that carried x-tf-organization-id: x3mxvkr."""
+    def guard(message, value):
+        r = client.post("/guardrails/input", headers={**A, TEAM_HEADER: value},
+                        json={"message": message})
+        assert r.status_code == 200, r.text
+    guard("hello from tenant1", "x3mxvkr")
+    guard("hello from rafay", "7dkgjkx")
+    r = _telemetry(client, team="tenant1")
+    assert r.status_code == 200, r.text
+    assert _messages(r.json()) == ["hello from tenant1"]
+    assert r.json()["entries"][0]["policy_scope"] == TENANT1_SCOPE
+    assert _messages(_telemetry(client, team="rafay-ops").json()) == ["hello from rafay"]
