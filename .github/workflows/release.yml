@@ -178,8 +178,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           files="dist/shield-openshift-${VERSION}.tar.gz dist/shield-openshift-${VERSION}.tar.gz.sha256 cosign.pub"
+          # A version with a suffix (v1.2.3-rc.1) is a pre-release: it must never
+          # become the repo's "Latest" release that customers download.
+          prerelease=""
+          case "${VERSION}" in *-*) prerelease="--prerelease" ;; esac
           if gh release view "${VERSION}" > /dev/null 2>&1; then
             gh release upload "${VERSION}" $files --clobber
           else
-            gh release create "${VERSION}" $files --title "Shield ${VERSION}" --notes "OpenShift install bundle. Download shield-openshift-${VERSION}.tar.gz, then follow its README.md. Images are pinned by digest and signed (cosign.pub)."
+            gh release create "${VERSION}" $files ${prerelease} --title "Shield ${VERSION}" --notes "OpenShift install bundle. Download shield-openshift-${VERSION}.tar.gz, then follow its README.md. Images are pinned by digest and signed (cosign.pub)."
           fi

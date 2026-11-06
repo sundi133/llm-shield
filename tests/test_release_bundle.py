@@ -224,6 +224,30 @@ def test_signing_is_required_offline_verifiable_and_checked():
     assert WF["jobs"]["bundle"]["needs"] == "images"
 
 
+def _publish_script() -> str:
+    step = next(s for s in WF["jobs"]["bundle"]["steps"] if s.get("name") == "Publish the GitHub Release")
+    return step["run"]
+
+
+@pytest.mark.parametrize("version, prerelease", [
+    ("v1.1.0-rc.1", True), ("v2.0.0-beta.3", True), ("v1.1.0", False), ("v10.20.30", False),
+])
+def test_suffixed_versions_publish_as_prerelease(tmp_path, version, prerelease):
+    """v1.1.0-rc.1 was published as a full release and became "Latest"."""
+    if shutil.which("bash") is None:
+        pytest.skip("needs bash")
+    log = tmp_path / "gh.log"
+    fake = tmp_path / "gh"
+    fake.write_text('#!/bin/sh\n[ "$2" = view ] && exit 1\necho "$@" >> "$GH_LOG"\n')
+    fake.chmod(0o755)
+    env = {"PATH": f"{tmp_path}:/usr/bin:/bin", "VERSION": version, "GH_LOG": str(log)}
+    res = subprocess.run(["bash", "-ec", _publish_script()], env=env, capture_output=True, text=True)
+    assert res.returncode == 0, res.stderr
+    args = log.read_text().split()
+    assert args[:3] == ["release", "create", version]
+    assert ("--prerelease" in args) is prerelease
+
+
 def test_publishes_the_bundle_its_checksum_and_the_key():
     assert "shield-openshift-${VERSION}.tar.gz.sha256" in WF_TEXT
     assert re.search(r"files=.*\.tar\.gz .*\.tar\.gz\.sha256 cosign\.pub", WF_TEXT)
