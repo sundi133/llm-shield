@@ -240,9 +240,10 @@ _CALL_SITE_LABELS = {
 }
 # define / display only. routes_data_policies.py reports the mode on GET
 # /v1/data-policies/status (docs/specs/tool-policy-fail-safe.md) and applies it
-# nowhere: its dry run (/try) deliberately ignores mode.
+# nowhere: its dry run (/try) deliberately ignores mode. routes_shadow_report.py
+# reports the mode on the shadow report (docs/specs/shadow-mode-report.md).
 _NOT_GUARD_PATHS = {"core/policy_mode.py", "api/routes_tenant_self.py",
-                    "api/routes_data_policies.py"}
+                    "api/routes_data_policies.py", "api/routes_shadow_report.py"}
 _CALL = re.compile(r"\b(?:resolve_mode|apply_policy_mode|policy_mode\.apply|apply_to_response)\(")
 
 
