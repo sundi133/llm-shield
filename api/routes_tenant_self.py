@@ -822,7 +822,9 @@ async def get_my_telemetry(
     total = len(rows)
     page = rows[offset:offset + limit]
 
-    by_status = {"pass": 0, "warn": 0, "block": 0}
+    # "monitor" is always present so the portal's Would block tile never has to
+    # guess (docs/specs/shadow-mode-report.md).
+    by_status = {"pass": 0, "warn": 0, "block": 0, "monitor": 0}
     total_tool_calls = 0
     blocked_tool_calls = 0
     for entry in rows:

@@ -499,8 +499,11 @@ def test_tag_is_escaped_and_rendered_in_the_source_cell():
 def test_option_values_are_what_the_api_accepts():
     import api.routes_tenant_self as rts
     assert f"const TELEMETRY_TEAM_NONE = '{rts.TEAM_NONE}';" in HTML
-    assert "['global', 'Global']" in _fn("loadTelemetryTeams")
-    assert "['unmatched', 'Other values']" in _fn("loadTelemetryTeams")
+    # The options are built by telemetryTeamOptions, shared with the shadow
+    # report's team picker (docs/specs/shadow-mode-report.md, task 3).
+    assert "telemetryTeamOptions(scopes)" in _fn("loadTelemetryTeams")
+    assert "['global', 'Global']" in _fn("telemetryTeamOptions")
+    assert "['unmatched', 'Other values']" in _fn("telemetryTeamOptions")
 
 
 def _node():
@@ -519,7 +522,7 @@ def _run_js(script: str) -> dict:
 def _harness(scopes_response) -> str:
     """The real dropdown and tag functions, run in node against a fake DOM."""
     fns = "\n".join(_fn(n) for n in ("psEsc", "telemetryTeamLabel", "telemetryTeamTag",
-                                     "loadTelemetryTeams"))
+                                     "telemetryTeamOptions", "loadTelemetryTeams"))
     return f"""
 const PS_BASE = '/v1/tenant/me/policy-scopes';
 const TELEMETRY_TEAM_NONE = '(none)';
