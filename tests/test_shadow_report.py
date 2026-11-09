@@ -352,3 +352,26 @@ def test_mounted_on_the_admin_plane_and_in_the_admin_image():
     assert paths, "no routes found; the check is vacuous"
     assert REPORT in paths
     assert "COPY api/routes_shadow_report.py api/" in open("Dockerfile.admin").read()
+
+
+# ── the customer docs page (task 4) ─────────────────────────────────────────
+
+def test_the_docs_page_matches_the_response_and_the_code(redis, tenants, report_client):
+    """docs/shadow-mode.md lists response fields and env flags; each must be
+    real, so the page cannot drift from what ships."""
+    import re
+    page = open("docs/shadow-mode.md").read()
+    body = report_client().json()
+    table = page[page.index("| Field | Meaning |"):page.index("A key for one workspace")]
+    fields = {f for row in re.findall(r"^\| (.+?) \|", table, re.M) for f in re.findall(r"`(\w+)`", row)}
+    assert len(fields) >= 12, fields
+    assert fields <= set(body), sorted(fields - set(body))
+
+    flags = set(re.findall(r"`(SHIELD_[A-Z_]+)", page))
+    assert "SHIELD_METRICS_SPLIT_WOULD_BLOCK" in flags
+    code = "".join(open(p).read() for p in (
+        "storage/guardrail_metrics.py", "api/routes_tenant_self.py",
+        "api/routes_signup.py", "core/auth.py"))
+    for flag in flags:
+        assert flag in code, flag
+    assert "—" not in page and "–" not in page   # no em or en dashes in customer docs
