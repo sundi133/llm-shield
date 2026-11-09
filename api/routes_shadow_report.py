@@ -12,7 +12,8 @@ Where each number comes from:
   ``would_blocked`` / ``blocked``: the guardrail metrics hashes (exact, one
   read per guardrail per day). They count guardrail CHECKS, so a request that
   tripped two guardrails counts twice.
-- ``checked_total``, the daily ``checked``, ``would_block_rate_pct``,
+- ``checked_total``, ``would_block_requests``, the daily ``checked``,
+  ``would_block_rate_pct``,
   ``by_team`` and ``examples``: the tenant's audit rows in the range. These
   count REQUESTS, so the rate is would-blocked requests over checked requests
   (one unit, never above 100%).
@@ -154,6 +155,7 @@ async def shadow_report(
         "exact_since": None,
         "counts_from": "audit" if team else "metrics",
         "checked_total": None,
+        "would_block_requests": None,
         "would_block_total": 0,
         "would_block_rate_pct": None,
         "blocked_total": 0,
@@ -187,6 +189,7 @@ async def shadow_report(
         if e.get("action_taken") == "monitor":
             monitor_rows.append(e)
     out["checked_total"] = len(rows)
+    out["would_block_requests"] = len(monitor_rows)
     if rows:
         out["would_block_rate_pct"] = round(len(monitor_rows) / len(rows) * 100, 1)
 

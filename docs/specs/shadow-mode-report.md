@@ -140,6 +140,7 @@ Read-only, so the config write-scope gate does not apply.
   "since": "2026-10-09T00:00:00Z",
   "exact_since": "2026-11-12",
   "checked_total": 18234,
+  "would_block_requests": 401,
   "would_block_total": 412,
   "would_block_rate_pct": 2.3,
   "blocked_total": 0,
@@ -156,6 +157,9 @@ Read-only, so the config write-scope gate does not apply.
 - Counts (`checked_total`, `would_block_total`, `blocked_total`, `by_guardrail`,
   `daily`) come from the metrics hashes: exact and cheap (one `HGETALL` per
   guardrail per day, as `get_all_guardrails_summary` already does).
+- `would_block_requests` is requests with at least one would-block (audit
+  rows with `action_taken == "monitor"`), the headline number; added in task 3
+  because `would_block_total` counts checks.
 - `checked_total` is requests checked, taken from the audit rows in range, not the
   sum of per-guardrail `total` (that is checks, which overcounts by the number of
   guardrails per request). If audit is unavailable, it is `null` and the rate is
@@ -196,8 +200,10 @@ tile without guessing. No other change: `status=monitor` already works.
   top guardrails, daily bars, by team, examples table, the `not_covered` notes,
   a range picker (7 / 30 days), a team picker (reuses the Telemetry dropdown
   source), **Print / Save as PDF** (`window.print()` with a print stylesheet
-  that shows only this section), and a **Switch to enforce** link to the existing
-  Policies mode switch.
+  that shows only this section), and a **Switch to enforce** button. The portal
+  had no mode switch (only the API from `docs/specs/tenant-enforce-mode.md`), so
+  the button calls `PUT /v1/tenant/me/policy-mode` `{"mode": "enforce"}` after a
+  confirm; the server checks write scope and audits the change.
 - **Telemetry:** Status filter gains **Would block (monitor)** (`value="monitor"`);
   a **Would block** tile next to Block; the existing `telemetry-pill.monitor`
   style is used on rows.

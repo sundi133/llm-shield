@@ -207,7 +207,7 @@ def test_end_to_end_monitor_then_enforce(guard, report_client):
     body = report_client(days=7).json()
     assert body["policy_mode"] == "monitor" and body["counts_from"] == "metrics"
     assert (body["checked_total"], body["would_block_total"], body["blocked_total"]) == (5, 3, 0)
-    assert body["would_block_rate_pct"] == 60.0
+    assert body["would_block_rate_pct"] == 60.0 and body["would_block_requests"] == 3
     assert body["by_guardrail"] == [{"guardrail": "keyword_blocklist", "would_blocked": 3}]
     today = body["daily"][-1]
     assert (today["checked"], today["would_blocked"], today["blocked"]) == (5, 3, 0)
@@ -264,6 +264,8 @@ def test_team_filter_counts_from_audit(redis, tenants, report_client):
     body = report_client(team="sales").json()
     assert body["counts_from"] == "audit" and body["team"] == "sales"
     assert (body["checked_total"], body["would_block_total"], body["blocked_total"]) == (4, 3, 1)
+    # Requests, not checks: the first row tripped two guardrails but is one request.
+    assert body["would_block_requests"] == 2
     assert body["by_guardrail"] == [{"guardrail": "pii", "would_blocked": 2},
                                     {"guardrail": "keyword_blocklist", "would_blocked": 1}]
     assert body["by_team"] == [{"team": "sales", "would_blocked": 2}]
@@ -312,6 +314,7 @@ def test_redis_down_is_degraded_not_500(monkeypatch, tenants, report_client):
     body = r.json()
     assert body["degraded"] is True and body["would_block_total"] == 0
     assert body["checked_total"] is None and body["would_block_rate_pct"] is None
+    assert body["would_block_requests"] is None
 
 
 def test_scan_cap_says_sampled(redis, tenants, report_client, monkeypatch):
