@@ -43,6 +43,8 @@
     --type-title: 15px;
     --tracking-label: 0.14em;
     --shadow-lg: 0 4px 12px rgba(16, 24, 40, 0.08), 0 1px 3px rgba(16, 24, 40, 0.06);
+    --warn-bg: #fef3c7;
+    --font-mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
   }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
@@ -2671,7 +2673,7 @@
       <button class="primary" style="width:100%;" id="pw-button" onclick="passwordSignIn()">Sign in</button>
       <div style="text-align:right;margin-top:0.4rem;">
         <a href="#" id="forgot-toggle" class="hidden" onclick="revealForgot(event)"
-           style="font-size:12px;color:var(--primary,#4f46e5);text-decoration:none;">Forgot password?</a>
+           style="font-size:12px;color:var(--accent,#4f46e5);text-decoration:none;">Forgot password?</a>
       </div>
       <div style="display:flex;align-items:center;gap:0.6rem;margin:0.9rem 0;">
         <div style="flex:1;height:1px;background:var(--border);"></div>
@@ -2691,7 +2693,7 @@
         Also sets a first password, if you have never had one. The link works once, for 30 minutes.
       </div>
       <div style="text-align:center;margin-top:0.6rem;">
-        <a href="#" onclick="hideForgot(event)" style="font-size:12px;color:var(--primary,#4f46e5);text-decoration:none;">Back to sign in</a>
+        <a href="#" onclick="hideForgot(event)" style="font-size:12px;color:var(--accent,#4f46e5);text-decoration:none;">Back to sign in</a>
       </div>
     </div>
 
@@ -2719,11 +2721,11 @@
          credential, or tenants without SSO). Each shows only where it works. -->
     <div style="text-align:center;margin-top:1rem;display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;">
       <a href="#" id="link-toggle" class="hidden" onclick="revealLink(event)"
-         style="font-size:12px;color:var(--primary,#4f46e5);text-decoration:none;">
+         style="font-size:12px;color:var(--accent,#4f46e5);text-decoration:none;">
         Email me a sign-in link
       </a>
       <a href="#" id="key-toggle" onclick="revealKey(event)"
-         style="font-size:12px;color:var(--primary,#4f46e5);text-decoration:none;">
+         style="font-size:12px;color:var(--accent,#4f46e5);text-decoration:none;">
         Use an API key instead
       </a>
     </div>
@@ -3108,7 +3110,7 @@
              (docs/specs/tool-registry-scale.md §4). The list is paged on the
              server: GET /v1/tenant/me/tool-catalog. -->
         <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:0.9rem;">
-          <button class="dpl-subtab active" data-subtab="tools" onclick="switchDPLSubtab('tools')" style="padding:0.4rem 1rem;border:none;background:none;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid var(--primary);margin-bottom:-1px;">Tools</button>
+          <button class="dpl-subtab active" data-subtab="tools" onclick="switchDPLSubtab('tools')" style="padding:0.4rem 1rem;border:none;background:none;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid var(--accent);margin-bottom:-1px;">Tools</button>
           <button class="dpl-subtab" data-subtab="default" onclick="switchDPLSubtab('default')" style="padding:0.4rem 1rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;">Default policy</button>
           <div style="margin-left:auto;display:flex;gap:0.5rem;padding-bottom:0.4rem;">
             <button class="small" onclick="downloadTenantBundle()">Download Config</button>
@@ -3289,7 +3291,7 @@
             <button data-config-write class="primary small" id="ps-new-create" onclick="psNewCreate()" disabled>Create team rule</button>
           </div>
         </div>
-        <div id="ps-warnings" class="hidden" style="margin-top:0.75rem;font-size:12px;color:var(--warning, #f59e0b);"></div>
+        <div id="ps-warnings" class="hidden" style="margin-top:0.75rem;font-size:12px;color:var(--warn, #f59e0b);"></div>
         <div id="ps-settings" class="hidden ps-panel">
           <div class="ps-grid">
             <div>
@@ -5455,7 +5457,7 @@ if __name__ == "__main__":
 
       <!-- Sub-tabs: each loads its data when first opened (docs/specs/device-fleet-scale.md §4) -->
       <div style="display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:1rem;">
-        <button class="dd-subtab active" data-subtab="devices" onclick="switchDDSubtab('devices')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid var(--primary);margin-bottom:-2px;transition:all 0.15s;">Devices</button>
+        <button class="dd-subtab active" data-subtab="devices" onclick="switchDDSubtab('devices')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid var(--accent);margin-bottom:-2px;transition:all 0.15s;">Devices</button>
         <button class="dd-subtab" data-subtab="enrollment" onclick="switchDDSubtab('enrollment')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Enrollment</button>
         <button class="dd-subtab" data-subtab="policy" onclick="switchDDSubtab('policy')" style="padding:0.5rem 1.25rem;border:none;background:none;color:var(--text-muted);font-size:12px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;transition:all 0.15s;">Policy</button>
       </div>
@@ -6389,7 +6391,7 @@ if __name__ == "__main__":
           <input id="mcp-tool-name" placeholder="tool name (e.g. transfer_funds)" />
           <input id="mcp-tool-route" placeholder="server / route (blank = all servers)" />
           <input id="mcp-tool-reason" placeholder="reason (audited)" />
-          <button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpDisableTool()">Disable Tool</button>
+          <button class="small" style="color:var(--danger);border-color:var(--danger);" onclick="mcpDisableTool()">Disable Tool</button>
           </div>
         </div>
         <div id="mcp-disabled" class="section-panel-body inventory-scroll" style="max-height:280px;border-top:1px solid var(--border);"></div>
@@ -6439,7 +6441,7 @@ X-API-Key: $KEY
 X-Agent-Key: my-agent
 X-User-Role: reader</pre></div>
 
-          <div style="margin-top:0.9rem;padding:0.6rem 0.75rem;background:var(--bg-subtle,rgba(127,127,127,0.08));border-radius:6px;font-size:12px;color:var(--text-dim);">
+          <div style="margin-top:0.9rem;padding:0.6rem 0.75rem;background:var(--bg,rgba(127,127,127,0.08));border-radius:6px;font-size:12px;color:var(--text-dim);">
             <b style="color:var(--text);">Verify it enforces, not just responds.</b> Call a tool the role is <i>not</i> granted (e.g. <code>delete_record</code>). A correctly-wired gateway returns <code>isError:true</code> with a "Blocked by Shield" message. If it succeeds, enforcement is not engaging — check <code>isolation_ack</code> and that the agent is registered.
           </div>
           <div style="margin-top:0.75rem;font-size:12px;color:var(--text-dim);">
@@ -7776,7 +7778,7 @@ function renderSessionBadge() {
     <span title="${escapeHtml(SESSION.email || '')} · ${escapeHtml(SESSION.issuer || '')}"
           style="font-size:11px;color:var(--text-dim);display:inline-flex;
                  align-items:center;gap:0.4rem;">
-      <span style="width:6px;height:6px;border-radius:50%;background:var(--ok,#10b981);"></span>
+      <span style="width:6px;height:6px;border-radius:50%;background:var(--success,#10b981);"></span>
       ${escapeHtml(who)}${SESSION.is_admin ? '' : ' &middot; read only'}
     </span>`;
 }
@@ -8316,7 +8318,7 @@ function renderOverview() {
 function _findingRow(f) {
   if (f.error) {
     return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0;border-bottom:1px solid var(--border);">
-      <span style="color:var(--warning);font-weight:600;min-width:2.5rem;">--</span>
+      <span style="color:var(--warn);font-weight:600;min-width:2.5rem;">--</span>
       <span style="flex:1;">${_esc(f.label)}</span>
       <span class="muted" style="font-size:12px;">could not be checked: ${_esc(f.error)}</span>
     </div>`;
@@ -8335,7 +8337,7 @@ function _findingRow(f) {
   // but it lands inside an onclick attribute, and the day someone makes it
   // dynamic that becomes injection rather than a bug.
   return `<div style="display:flex;align-items:center;gap:0.6rem;padding:0.5rem 0;border-bottom:1px solid var(--border);">
-    <span style="font-weight:600;min-width:2.5rem;color:${clean ? 'var(--muted)' : '#f85149'};">${n}</span>
+    <span style="font-weight:600;min-width:2.5rem;color:${clean ? 'var(--text-muted)' : '#f85149'};">${n}</span>
     <span style="flex:1;">${_esc(f.label)}</span>
     ${showCta ? `<button class="small" onclick="_gotoTab('${_esc(f.tab)}')">${_esc(f.cta || 'Review')}</button>` : ''}
   </div>`;
@@ -8430,7 +8432,7 @@ async function loadOverviewFindings() {
 
   let header = '';
   if (failed === rows.length) {
-    header = `<div style="color:var(--warning);font-size:13px;margin-bottom:0.5rem;">
+    header = `<div style="color:var(--warn);font-size:13px;margin-bottom:0.5rem;">
       No findings could be checked. This is a connectivity problem, not a clean tenant.</div>`;
   } else if (found === 0 && failed === 0) {
     header = `<div style="color:#10b981;font-size:13px;margin-bottom:0.5rem;">
@@ -9191,7 +9193,7 @@ function psNewCheck() {
   const check = (header || values.length) ? psCheckMatch(header, values, []) : {};
   if (!msg && check.error) msg = check.error;
   err.textContent = msg || check.warning || '';
-  err.style.color = msg ? 'var(--danger)' : 'var(--warning, #f59e0b)';
+  err.style.color = msg ? 'var(--danger)' : 'var(--warn, #f59e0b)';
   err.classList.toggle('hidden', !(msg || check.warning));
   const idHint = document.getElementById('ps-new-id');
   idHint.textContent = id && id !== raw ? `Saved as "${id}".` : '';
@@ -9247,7 +9249,7 @@ function psShowMatchCheck() {
   const check = psCheckMatch(m.header, m.exact || [], m.glob || []);
   PS_MATCH_ERROR = check.error || '';
   el.textContent = check.error || check.warning || '';
-  el.style.color = check.error ? 'var(--danger)' : 'var(--warning, #f59e0b)';
+  el.style.color = check.error ? 'var(--danger)' : 'var(--warn, #f59e0b)';
   el.classList.toggle('hidden', !(check.error || check.warning));
 }
 
@@ -10437,10 +10439,10 @@ async function loadAgentData() {
   } catch (error) {
     console.log('API unavailable:', error.message);
     document.getElementById('agents-content').innerHTML = `
-      <div style="background: var(--warning); color: var(--bg); padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; font-size: 13px;">
+      <div style="background: var(--warn); color: var(--bg); padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; font-size: 13px;">
         ⚠️ <strong>Could not load agents:</strong> ${error.message}. Use the Agent Registry API or Seed Test Data to create agents.
       </div>
-      <div style="text-align:center; padding:2rem; color:var(--muted);">
+      <div style="text-align:center; padding:2rem; color:var(--text-muted);">
         No agents found. Register agents via <code>POST /v1/agents/registry</code> or use the Seed Test Data endpoint.
       </div>`;
   }
@@ -11327,7 +11329,7 @@ function mrRenderRoutes() {
     let budget = '<span class="muted">none</span>';
     if (b && b.monthly) {
       const pct = Math.min(100, Math.round((b.spend / b.monthly) * 100));
-      const cls = pct >= 100 ? 'var(--danger)' : pct >= 80 ? 'var(--warning, #d97706)' : 'var(--success, #16a34a)';
+      const cls = pct >= 100 ? 'var(--danger)' : pct >= 80 ? 'var(--warn, #d97706)' : 'var(--success, #16a34a)';
       budget = `<div style="min-width:140px;"><div style="height:6px;background:var(--bg-3);border-radius:3px;overflow:hidden;"><div style="width:${pct}%;height:100%;background:${cls};"></div></div>
         <div style="font-size:11px;">${pfpEsc(b.spend.toFixed(2))} of ${pfpEsc(b.monthly)} ${pfpEsc(b.currency)} · at limit: ${pfpEsc(b.at_limit)}${b.spend_incomplete ? ' · <span class="muted">no price on ' + pfpEsc(b.targets_without_price.join(', ')) + '</span>' : ''}</div></div>`;
     }
@@ -11660,7 +11662,7 @@ async function pfpBuild(useModel) {
     body.insertAdjacentHTML('afterbegin', `<div class="toast error" style="position:static;">${pfpEsc(e.message)}</div>`);
   }
 }
-const PFP_RISK = { low: 'var(--success, #10b981)', medium: 'var(--warning, #f59e0b)', high: 'var(--danger, #ef4444)' };
+const PFP_RISK = { low: 'var(--success, #10b981)', medium: 'var(--warn, #f59e0b)', high: 'var(--danger, #ef4444)' };
 function pfpLine(i) {
   const ev = i.evidence || {};
   const value = typeof i.value === 'object' ? `${i.value.tool}: ${i.value.min_approvals} approver${i.value.min_approvals === 1 ? '' : 's'}` : i.value;
@@ -11693,7 +11695,7 @@ function pfpRender(d) {
   if (qs.length) {
     html += '<div><div style="font-weight:600;margin-bottom:0.4rem;">Questions</div>';
     qs.forEach(q => {
-      html += `<div style="padding:0.5rem 0.75rem;border-left:3px solid var(--warning, #f59e0b);background:var(--bg-3);border-radius:0 6px 6px 0;margin-bottom:0.4rem;">
+      html += `<div style="padding:0.5rem 0.75rem;border-left:3px solid var(--warn, #f59e0b);background:var(--bg-3);border-radius:0 6px 6px 0;margin-bottom:0.4rem;">
         <div>${pfpEsc(q.text)}</div>
         <div style="display:flex;gap:0.3rem;flex-wrap:wrap;margin-top:0.4rem;">${(q.options || []).map(o =>
           `<button class="small secondary" data-q="${pfpEsc(q.id)}" data-o="${pfpEsc(o)}" onclick="pfpAnswer(this.dataset.q,this.dataset.o)">${pfpEsc(o)}</button>`).join('')}</div>
@@ -11761,7 +11763,7 @@ function showToast(message, type = 'info') {
   const toastColors = {
     info: 'background: var(--accent); color: white;',
     success: 'background: var(--success); color: white;',
-    warning: 'background: var(--warning); color: var(--bg);',
+    warning: 'background: var(--warn); color: var(--bg);',
     error: 'background: var(--danger); color: white;'
   };
 
@@ -12093,7 +12095,7 @@ function switchTPSubtab(name) {
   const btn = document.querySelector(`.tp-subtab[data-subtab="${name}"]`);
   if (btn) {
     btn.classList.add('active');
-    btn.style.borderBottomColor = 'var(--primary)';
+    btn.style.borderBottomColor = 'var(--accent)';
     btn.style.color = 'var(--text)';
   }
   const pane = document.getElementById(`tp-sub-${name}`);
@@ -12835,7 +12837,7 @@ function peRoleChoices(policy, registered) {
 
 function peRenderHtml(id, st, library) {
   const box = 'background:var(--bg-3);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:12px;padding:0.3rem 0.45rem;';
-  const head = t => `<div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-2,#888);margin:0.9rem 0 0.35rem;">${t}</div>`;
+  const head = t => `<div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted,#888);margin:0.9rem 0 0.35rem;">${t}</div>`;
   const group = (side, label) => {
     const items = library.filter(e => e.side === side).map(e => {
       const on = st.ticked.includes(e.id);
@@ -12853,7 +12855,7 @@ function peRenderHtml(id, st, library) {
           <label for="${_esc(id)}-pe-${_esc(e.id)}" style="cursor:pointer;flex:0 1 auto;min-width:0;">${_esc(e.name)}
             <span class="muted" style="font-size:10.5px;">${_esc(threats)}</span>${e.recommended ? '' : '<span class="muted" style="font-size:10.5px;"> · needs your input</span>'}</label>
           <button type="button" class="muted" aria-expanded="false" onclick="peRuleToggle(this)"
-            style="flex:none;background:none;border:0;padding:0 0.1rem;font-size:10.5px;cursor:pointer;color:var(--text-2,#888);text-decoration:underline dotted;">rule</button>
+            style="flex:none;background:none;border:0;padding:0 0.1rem;font-size:10.5px;cursor:pointer;color:var(--text-muted,#888);text-decoration:underline dotted;">rule</button>
         </div>
         <div class="muted pe-rule" hidden style="font-size:11px;white-space:pre-wrap;margin:0.2rem 0 0 1.45rem;">${_esc(detail)}</div>
         ${needs}
@@ -12937,7 +12939,7 @@ function peRenderHtml(id, st, library) {
     </div>` : '';
   return `${switcher}${roleBar}
     <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;margin:0.9rem 0 0.45rem;">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-2,#888);">Ready-made protections</div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted,#888);">Ready-made protections</div>
       <span style="margin-left:auto;display:flex;gap:0.35rem;">
         <button class="small" data-pe="${_esc(id)}" onclick="peRecommended(this)">Tick recommended</button>
         <button class="small" data-pe="${_esc(id)}" onclick="peClear(this)">Clear</button></span></div>
@@ -13108,8 +13110,8 @@ async function peTry(el) {
     const raw = await res.text();
     if (!res.ok) throw new Error(peErrorText(raw));
     const d = JSON.parse(raw);
-    const colour = { blocked: 'var(--danger,#e5484d)', redacted: 'var(--warning,#d4a017)',
-                     allowed: 'var(--success,#30a46c)', not_checked: 'var(--text-2,#888)' }[d.decision] || 'inherit';
+    const colour = { blocked: 'var(--danger,#e5484d)', redacted: 'var(--warn,#d4a017)',
+                     allowed: 'var(--success,#30a46c)', not_checked: 'var(--text-muted,#888)' }[d.decision] || 'inherit';
     const label = { blocked: 'Blocked', redacted: 'Redacted', allowed: 'Allowed', not_checked: 'Not checked' }[d.decision] || d.decision;
     out.innerHTML = `<strong style="color:${colour};">${_esc(label)}</strong> <span class="muted">${_esc(d.reason || '')}</span>
       ${d.sanitized != null && d.decision !== 'allowed' ? `<pre style="white-space:pre-wrap;font-size:11px;margin:0.3rem 0 0;">${_esc(d.sanitized)}</pre>` : ''}`;
@@ -13177,7 +13179,7 @@ async function loadToolPolicyStatus() {
   const line = peStatusLine(await peFetchStatus());
   const el = document.getElementById('gdp-status');
   if (!el || !line) return;
-  el.innerHTML = `<span style="color:${line.warn ? 'var(--warning,#d4a017)' : 'var(--text-2,#888)'};">${_esc(line.text)}</span>`;
+  el.innerHTML = `<span style="color:${line.warn ? 'var(--warn,#d4a017)' : 'var(--text-muted,#888)'};">${_esc(line.text)}</span>`;
 }
 
 async function saveGlobalDataPolicy(body) {
@@ -13249,7 +13251,7 @@ function switchDPLSubtab(name) {
   document.querySelectorAll('.dpl-subtab').forEach(b => {
     const on = b.dataset.subtab === name;
     b.classList.toggle('active', on);
-    b.style.borderBottomColor = on ? 'var(--primary)' : 'transparent';
+    b.style.borderBottomColor = on ? 'var(--accent)' : 'transparent';
     b.style.color = on ? 'var(--text)' : 'var(--text-muted)';
   });
   document.querySelectorAll('.dpl-subtab-pane').forEach(p => { p.style.display = p.id === `dpl-pane-${name}` ? '' : 'none'; });
@@ -13325,9 +13327,9 @@ async function dplLoad(fresh) {
   dplRenderBulk();
 }
 function dplCard(label, value, active, onclick, tone) {
-  const color = tone === 'warn' && value ? 'var(--warning)' : 'inherit';
+  const color = tone === 'warn' && value ? 'var(--warn)' : 'inherit';
   return `<div class="stat" role="button" tabindex="0" onclick="${onclick}" onkeydown="if(event.key==='Enter')${onclick}"
-    style="cursor:pointer;padding:0.6rem 0.8rem;${active ? 'outline:2px solid var(--primary);' : ''}">
+    style="cursor:pointer;padding:0.6rem 0.8rem;${active ? 'outline:2px solid var(--accent);' : ''}">
     <div class="stat-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(label)}</div>
     <div class="stat-value" style="color:${color};">${value}</div></div>`;
 }
@@ -13348,7 +13350,7 @@ function dplRenderControls(s) {
   document.getElementById('dpl-default').innerHTML = `Default policy (applies to every tool): <b>${!dp.exists ? 'not set' : dp.enabled ? 'on' : 'off'}</b>`
     + (dp.exists ? `, ${dp.role_rules} role rule(s), ${dp.sanitization_rules} sanitization rule(s)` : '')
     + ` · <a href="#" onclick="switchDPLSubtab('default');return false;">Edit</a>`
-    + ((s.warnings || []).length ? ` · <span style="color:var(--warning);">${_esc(s.warnings.join('; '))}</span>` : '');
+    + ((s.warnings || []).length ? ` · <span style="color:var(--warn);">${_esc(s.warnings.join('; '))}</span>` : '');
   document.getElementById('dpl-agents').innerHTML = (s.top_agents || [])
     .map(a => `<option value="${_esc(a.agent)}">${_esc(a.agent)} (${a.tools})</option>`).join('');
   const roleSel = document.getElementById('dpl-role');
@@ -16362,12 +16364,12 @@ async function loadSIEMData() {
         <span class="siem-badge siem-badge-type">${s.type}</span>
         <span class="siem-url" title="${s.url || s.workspace_id || ''}">${s.url || s.workspace_id || '—'}</span>
         <span class="siem-badge siem-badge-filter" title="Events forwarded to this endpoint">${_siemStatusLabel(s.statuses)}</span>
-        <span class="siem-state" style="color:${s.enabled ? 'var(--green)' : 'var(--text-muted)'};">${s.enabled ? 'Active' : 'Disabled'}</span>
+        <span class="siem-state" style="color:${s.enabled ? 'var(--success)' : 'var(--text-muted)'};">${s.enabled ? 'Active' : 'Disabled'}</span>
         <button class="small danger" onclick="deleteSIEM('${s.siem_id}')">Remove</button>
       </div>
     `).join('');
   } catch (e) {
-    document.getElementById('siem-list').innerHTML = `<div style="color:var(--red);font-size:12px;">Failed: ${e.message}</div>`;
+    document.getElementById('siem-list').innerHTML = `<div style="color:var(--danger);font-size:12px;">Failed: ${e.message}</div>`;
   }
 }
 
@@ -16403,10 +16405,10 @@ async function testSIEM() {
   try {
     await apiCall('/v1/tenant/me/siem/test', { method: 'POST' });
     el.textContent = 'Test event sent!';
-    el.style.color = 'var(--green)';
+    el.style.color = 'var(--success)';
   } catch (e) {
     el.textContent = 'Failed: ' + e.message;
-    el.style.color = 'var(--red)';
+    el.style.color = 'var(--danger)';
   }
 }
 
@@ -16505,7 +16507,7 @@ async function loadGovReviews() {
       <td style="padding:0.4rem 0.75rem;"><button class="small" onclick="govOpenReview('${_govEsc(c.campaign_id)}')">Open</button></td>
     </tr>`).join('');
     el.innerHTML = rows
-      ? `<table style="width:100%;border-collapse:collapse;font-size:12px;border:1px solid var(--border);border-radius:8px;"><thead><tr style="text-align:left;background:var(--bg-subtle,#f6f8fb);"><th style="padding:0.4rem 0.75rem;">Campaign</th><th style="padding:0.4rem 0.75rem;">Status</th><th style="padding:0.4rem 0.75rem;">Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      ? `<table style="width:100%;border-collapse:collapse;font-size:12px;border:1px solid var(--border);border-radius:8px;"><thead><tr style="text-align:left;background:var(--bg,#f6f8fb);"><th style="padding:0.4rem 0.75rem;">Campaign</th><th style="padding:0.4rem 0.75rem;">Status</th><th style="padding:0.4rem 0.75rem;">Created</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
       : '<div style="color:var(--text-muted);font-size:12px;">No campaigns yet — start one above.</div>';
   } catch (e) { el.innerHTML = `<div style="color:#b91c1c;font-size:12px;">${_govEsc(e.message)}</div>`; }
 }
@@ -16644,7 +16646,7 @@ function _gdTopTable(title, rows, keyField, keyHeader, extra) {
       <td style="padding:0.35rem 0.6rem;text-align:right;color:#d97706;">${r.warned}</td>
     </tr>`).join('');
   return `<div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
-    <div style="padding:0.5rem 0.6rem;font-weight:600;font-size:12px;background:var(--bg-subtle,#f6f8fb);">${title}</div>
+    <div style="padding:0.5rem 0.6rem;font-weight:600;font-size:12px;background:var(--bg,#f6f8fb);">${title}</div>
     <table style="width:100%;border-collapse:collapse;font-size:12px;">
       <thead><tr style="text-align:left;color:var(--text-muted);">
         <th style="padding:0.35rem 0.6rem;">${keyHeader}</th>
@@ -16702,7 +16704,7 @@ async function loadGuardrailDashboard() {
         ${_gdTopTable('Top devices', d.top_devices, 'device_id', 'Device')}
       </div>
       <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
-        <div style="padding:0.5rem 0.6rem;font-weight:600;font-size:12px;background:var(--bg-subtle,#f6f8fb);">Recent blocked events</div>
+        <div style="padding:0.5rem 0.6rem;font-weight:600;font-size:12px;background:var(--bg,#f6f8fb);">Recent blocked events</div>
         <table style="width:100%;border-collapse:collapse;font-size:12px;">
           <thead><tr style="text-align:left;color:var(--text-muted);">
             <th style="padding:0.35rem 0.6rem;">When</th><th style="padding:0.35rem 0.6rem;">Destination</th>
@@ -16742,16 +16744,16 @@ async function loadGuardrailMetrics() {
           <tr style="border-bottom:1px solid var(--border);">
             <td style="padding:0.5rem;font-weight:600;color:var(--text);">${g.guardrail}</td>
             <td style="padding:0.5rem;text-align:right;color:var(--text-dim);">${g.total.toLocaleString()}</td>
-            <td style="padding:0.5rem;text-align:right;color:var(--green);">${g.passed.toLocaleString()}</td>
-            <td style="padding:0.5rem;text-align:right;color:var(--red);">${g.blocked.toLocaleString()}</td>
-            <td style="padding:0.5rem;text-align:right;font-weight:600;color:${g.block_rate > 0.3 ? 'var(--red)' : g.block_rate > 0.1 ? 'var(--warn)' : 'var(--green)'};">${(g.block_rate * 100).toFixed(1)}%</td>
+            <td style="padding:0.5rem;text-align:right;color:var(--success);">${g.passed.toLocaleString()}</td>
+            <td style="padding:0.5rem;text-align:right;color:var(--danger);">${g.blocked.toLocaleString()}</td>
+            <td style="padding:0.5rem;text-align:right;font-weight:600;color:${g.block_rate > 0.3 ? 'var(--danger)' : g.block_rate > 0.1 ? 'var(--warn)' : 'var(--success)'};">${(g.block_rate * 100).toFixed(1)}%</td>
             <td style="padding:0.5rem;text-align:right;color:var(--text-dim);">${g.avg_latency_ms.toFixed(0)}ms</td>
-            <td style="padding:0.5rem;text-align:center;">${g.trend === 'up' ? '<span style="color:var(--red);">&#9650;</span>' : g.trend === 'down' ? '<span style="color:var(--green);">&#9660;</span>' : '<span style="color:var(--text-muted);">&#8722;</span>'}</td>
+            <td style="padding:0.5rem;text-align:center;">${g.trend === 'up' ? '<span style="color:var(--danger);">&#9650;</span>' : g.trend === 'down' ? '<span style="color:var(--success);">&#9660;</span>' : '<span style="color:var(--text-muted);">&#8722;</span>'}</td>
           </tr>
         `).join('')}
       </table>`;
   } catch (e) {
-    el.innerHTML = `<div style="color:var(--red);padding:1rem;">Failed to load metrics: ${e.message}</div>`;
+    el.innerHTML = `<div style="color:var(--danger);padding:1rem;">Failed to load metrics: ${e.message}</div>`;
   }
 }
 
@@ -16759,8 +16761,8 @@ async function loadGuardrailMetrics() {
 // ── AI Bill of Materials ────────────────────────────────────────────────
 
 const _AIBOM_RISK_COLOR = {
-  critical: 'var(--red)', high: 'var(--red)', medium: 'var(--warn)',
-  low: 'var(--green)', informational: 'var(--text-dim)',
+  critical: 'var(--danger)', high: 'var(--danger)', medium: 'var(--warn)',
+  low: 'var(--success)', informational: 'var(--text-dim)',
 };
 
 async function loadAibom() {
@@ -16774,7 +16776,7 @@ async function loadAibom() {
     renderAibom(bom);
   } catch (e) {
     document.getElementById('aibom-cards').innerHTML =
-      `<div style="grid-column:1/-1;color:var(--red);font-size:13px;">Failed to generate AIBOM: ${escapeHtml(e.message)}</div>`;
+      `<div style="grid-column:1/-1;color:var(--danger);font-size:13px;">Failed to generate AIBOM: ${escapeHtml(e.message)}</div>`;
   }
   loadAibomSnapshots();
   loadAibomDrift();
@@ -16796,7 +16798,7 @@ async function loadMcpGateway() {
     inv = await apiCall('/v1/tenant/me/mcp/inventory');
   } catch (e) {
     document.getElementById('mcp-cards').innerHTML =
-      `<div style="grid-column:1/-1;color:var(--red);font-size:13px;">Failed to load MCP inventory: ${escapeHtml(e.message)}</div>`;
+      `<div style="grid-column:1/-1;color:var(--danger);font-size:13px;">Failed to load MCP inventory: ${escapeHtml(e.message)}</div>`;
     return;
   }
   renderMcpGateway(inv);
@@ -16816,10 +16818,10 @@ function renderMcpGateway(inv) {
     s => (s.scan || {}).verdict === 'fail').length;
   document.getElementById('mcp-cards').innerHTML = `
     <div class="stat-card"><div class="stat-value">${inv.server_count || 0}</div><div class="stat-label">Registered Servers</div></div>
-    <div class="stat-card"><div class="stat-value" style="color:${inactiveCount ? 'var(--red)' : 'var(--text)'};">${inactiveCount}</div><div class="stat-label">Disabled Servers</div></div>
-    <div class="stat-card"><div class="stat-value" style="color:${disabledCount ? 'var(--red)' : 'var(--text)'};">${disabledCount}</div><div class="stat-label">Disabled Tools</div></div>
-    <div class="stat-card"><div class="stat-value" style="color:${driftCount ? 'var(--red)' : 'var(--text)'};">${driftCount}</div><div class="stat-label">Policy Drift</div></div>
-    <div class="stat-card" title="Servers with critical findings in their advertised tool metadata."><div class="stat-value" style="color:${failing ? 'var(--red)' : 'var(--text)'};">${failing}</div><div class="stat-label">Failing Scan</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:${inactiveCount ? 'var(--danger)' : 'var(--text)'};">${inactiveCount}</div><div class="stat-label">Disabled Servers</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:${disabledCount ? 'var(--danger)' : 'var(--text)'};">${disabledCount}</div><div class="stat-label">Disabled Tools</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:${driftCount ? 'var(--danger)' : 'var(--text)'};">${driftCount}</div><div class="stat-label">Policy Drift</div></div>
+    <div class="stat-card" title="Servers with critical findings in their advertised tool metadata."><div class="stat-value" style="color:${failing ? 'var(--danger)' : 'var(--text)'};">${failing}</div><div class="stat-label">Failing Scan</div></div>
     <div class="stat-card" title="Servers never audited, or whose scan could not run. Not the same as clean."><div class="stat-value" style="color:${unscanned ? 'var(--warn, #fbbf24)' : 'var(--text)'};">${unscanned}</div><div class="stat-label">Unscanned</div></div>
   `;
 
@@ -16886,7 +16888,7 @@ function renderMcpGateway(inv) {
               ${(s.transport || '') !== 'stdio'
                 ? `<button class="small" title="Sign this server in once; Shield keeps the credential" onclick="mcpShowOAuth('${enc}')">OAuth</button>`
                 : ''}
-              <button class="small" style="color:var(--red);border-color:var(--red);margin-left:auto;" onclick="mcpDeleteServer('${enc}')">Remove</button>
+              <button class="small" style="color:var(--danger);border-color:var(--danger);margin-left:auto;" onclick="mcpDeleteServer('${enc}')">Remove</button>
             </div>
           </div>`;
       }).join('')
@@ -16908,7 +16910,7 @@ function renderMcpGateway(inv) {
           : `<span class="badge" title="Disabled on every MCP server">fleet-wide</span>`;
         const encRoute = d.route ? encodeURIComponent(d.route) : '';
         return _aibomRow(
-          `<span style="font-weight:600;min-width:160px;color:var(--red);">${name}</span>` +
+          `<span style="font-weight:600;min-width:160px;color:var(--danger);">${name}</span>` +
           scope +
           `<span style="flex:1;color:var(--text-dim);">${reason}${actor ? ' · ' + actor : ''}</span>` +
           `<button class="small" onclick="mcpEnableTool('${encodeURIComponent(d.tool_name || '')}', '${encRoute}')">Enable</button>`);
@@ -17133,7 +17135,7 @@ async function loadMcpPeople() {
     document.getElementById('mcp-people-policy').innerHTML = mcpPolicyFormHtml(policy);
     list.innerHTML = mcpPeopleHtml(people.principals);
   } catch (e) {
-    list.innerHTML = `<div style="font-size:12px;color:var(--red);">${_esc(e.message)}</div>`;
+    list.innerHTML = `<div style="font-size:12px;color:var(--danger);">${_esc(e.message)}</div>`;
   }
 }
 
@@ -17290,7 +17292,7 @@ async function mcpShowGrants(encRoute) {
     const data = await apiCall(`/v1/tenant/me/mcp/servers/${encodeURIComponent(route)}/grants`);
     body.innerHTML = mcpGrantsHtml(route, data);
   } catch (e) {
-    body.innerHTML = `<div style="font-size:12px;color:var(--red);">${_esc(e.message)}</div>`;
+    body.innerHTML = `<div style="font-size:12px;color:var(--danger);">${_esc(e.message)}</div>`;
   }
   panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -17515,13 +17517,13 @@ function mcpGrantsHtml(route, data) {
       '<td>' + _esc(status[g.status] || g.status || '') + '</td>' +
       '<td>' + _esc(mcpGrantsWhen(g.connected_at)) + '</td>' +
       '<td style="white-space:nowrap;"><button class="small" onclick="mcpRevokeGrant(\'' + enc + '\', \'' + pid + '\')">Revoke</button> ' +
-      (suspended ? '' : '<button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpSuspendPerson(\'' + pid + '\', \'' + enc + '\')">Suspend person</button>') +
+      (suspended ? '' : '<button class="small" style="color:var(--danger);border-color:var(--danger);" onclick="mcpSuspendPerson(\'' + pid + '\', \'' + enc + '\')">Suspend person</button>') +
       '</td></tr>';
   }).join('');
   return '<table class="gov-table"><thead><tr>' +
     '<th>Person</th><th>Upstream account</th><th>Status</th><th>Connected</th><th></th></tr></thead>' +
     '<tbody>' + body + '</tbody></table>' +
-    '<div style="margin-top:0.6rem;"><button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpRevokeAllGrants(\'' + enc + '\')">Revoke all</button></div>';
+    '<div style="margin-top:0.6rem;"><button class="small" style="color:var(--danger);border-color:var(--danger);" onclick="mcpRevokeAllGrants(\'' + enc + '\')">Revoke all</button></div>';
 }
 
 function mcpScopeButton(server, enc) {
@@ -17563,7 +17565,7 @@ function mcpPeopleHtml(list) {
       (sa ? '<button class="small" onclick="mcpShowPerson(\'' + pid + '\')">Keys &amp; clients</button> ' : '') +
       (active ? '<button class="small" onclick="mcpSetPersonStatus(\'' + pid + '\', \'suspend\')">Suspend</button> '
               : '<button class="small" onclick="mcpSetPersonStatus(\'' + pid + '\', \'reactivate\')">Reactivate</button> ') +
-      (sa ? '<button class="small" style="color:var(--red);border-color:var(--red);" onclick="mcpRemoveServiceAccount(\'' + pid + '\')">Remove</button>' : '');
+      (sa ? '<button class="small" style="color:var(--danger);border-color:var(--danger);" onclick="mcpRemoveServiceAccount(\'' + pid + '\')">Remove</button>' : '');
     return '<tr><td>' + _esc(p.email || p.name || p.id) + '</td>' +
       '<td>' + (sa ? 'service account' : 'person') + '</td>' +
       '<td>' + status + '</td>' +
@@ -17644,8 +17646,8 @@ function mcpOAuthStatus(st) {
 function mcpOAuthFormHtml(encRoute, disc, status) {
   const d = disc || {};
   const st = mcpOAuthStatus(status);
-  const colour = { good: 'var(--green,#16a34a)', warn: 'var(--warn,#d4a017)',
-                   bad: 'var(--red,#dc2626)', dim: 'var(--text-dim,#888)' }[st.tone];
+  const colour = { good: 'var(--success,#16a34a)', warn: 'var(--warn,#d4a017)',
+                   bad: 'var(--danger,#dc2626)', dim: 'var(--text-dim,#888)' }[st.tone];
   const box = 'font-size:12px;padding:0.35rem 0.5rem;';
   const scopes = (d.access_scopes || []).map((sc, i) => `
       <label style="display:flex;gap:0.45rem;align-items:flex-start;font-size:12.5px;padding:0.15rem 0;cursor:pointer;" title="${_esc(sc)}">
@@ -17696,7 +17698,7 @@ function mcpOAuthResultHtml(resp) {
   const link = /^https:\/\//i.test(url)
     ? `<a class="primary small" style="display:inline-block;padding:0.35rem 0.7rem;border-radius:6px;text-decoration:none;"
           href="${_esc(url)}" target="_blank" rel="noopener noreferrer">Open sign-in page</a>`
-    : '<span style="color:var(--red,#dc2626);font-size:12px;">The provider returned no usable sign-in address.</span>';
+    : '<span style="color:var(--danger,#dc2626);font-size:12px;">The provider returned no usable sign-in address.</span>';
   return `<div style="font-size:12px;color:var(--text-dim);margin-bottom:0.5rem;">${_esc(r.consent_note || '')}</div>
     ${link}
     <div style="font-size:11px;color:var(--text-dim);margin-top:0.4rem;">After signing in, come back and check the status.</div>`;
@@ -17718,8 +17720,8 @@ async function mcpShowOAuth(encRoute) {
     apiCall(base).then(r => r.oauth).catch(() => ({})),
   ]);
   if (disc.error) {
-    body.innerHTML = `<div style="font-size:12.5px;color:${mcpOAuthStatus(status).tone === 'good' ? 'var(--green,#16a34a)' : 'var(--text-dim)'};margin-bottom:0.5rem;">${_esc(mcpOAuthStatus(status).text)}</div>
-      <div style="font-size:12px;color:var(--red,#dc2626);">This server cannot be connected with OAuth: ${_esc(disc.error)}</div>`;
+    body.innerHTML = `<div style="font-size:12.5px;color:${mcpOAuthStatus(status).tone === 'good' ? 'var(--success,#16a34a)' : 'var(--text-dim)'};margin-bottom:0.5rem;">${_esc(mcpOAuthStatus(status).text)}</div>
+      <div style="font-size:12px;color:var(--danger,#dc2626);">This server cannot be connected with OAuth: ${_esc(disc.error)}</div>`;
     return;
   }
   body.innerHTML = mcpOAuthFormHtml(encRoute, disc, status);
@@ -17738,7 +17740,7 @@ async function mcpOAuthConnect(encRoute) {
     out.innerHTML = mcpOAuthResultHtml(r);
     document.getElementById('mcp-oauth-client-secret').value = '';   // never kept in the page
   } catch (e) {
-    out.innerHTML = `<span style="font-size:12px;color:var(--red,#dc2626);">${_esc(e.message)}</span>`;
+    out.innerHTML = `<span style="font-size:12px;color:var(--danger,#dc2626);">${_esc(e.message)}</span>`;
   }
 }
 
@@ -17789,7 +17791,7 @@ function renderAibom(bom) {
 
   document.getElementById('aibom-cards').innerHTML = `
     <div class="stat-card"><div class="stat-value">${agents.length}</div><div class="stat-label">Agents</div></div>
-    <div class="stat-card"><div class="stat-value" style="color:${shadow ? 'var(--warn)' : 'var(--green)'};">${shadow}</div><div class="stat-label">Shadow Agents</div></div>
+    <div class="stat-card"><div class="stat-value" style="color:${shadow ? 'var(--warn)' : 'var(--success)'};">${shadow}</div><div class="stat-label">Shadow Agents</div></div>
     <div class="stat-card"><div class="stat-value">${tools.length}</div><div class="stat-label">Tools</div></div>
     <div class="stat-card"><div class="stat-value">${mcp.length}</div><div class="stat-label">MCP Servers</div></div>
     <div class="stat-card"><div class="stat-value">${guardrails.filter(g => g.enabled).length}</div><div class="stat-label">Guardrails On</div></div>
@@ -17801,15 +17803,15 @@ function renderAibom(bom) {
         <span style="font-weight:600;flex:1;">${escapeHtml(a.name || a.agent_id || '')}</span>
         ${a.source === 'shadow'
           ? '<span style="color:var(--warn);font-weight:600;">shadow</span>'
-          : '<span style="color:var(--green);">registered</span>'}
+          : '<span style="color:var(--success);">registered</span>'}
         <span style="color:var(--text-dim);">${(a.allowed_tools || []).length} tools</span>`)).join('')
     : _aibomEmpty('No agents observed yet');
 
   document.getElementById('aibom-tools').innerHTML = tools.length
     ? tools.map(t => _aibomRow(`
         <span style="font-weight:600;flex:1;">${escapeHtml(t.name || '')}</span>
-        ${t.disabled ? '<span style="color:var(--red);">killswitched</span>' : ''}
-        <span style="color:${t.has_policy ? 'var(--green)' : 'var(--warn)'};">${t.has_policy ? 'policy' : 'no policy'}</span>`)).join('')
+        ${t.disabled ? '<span style="color:var(--danger);">killswitched</span>' : ''}
+        <span style="color:${t.has_policy ? 'var(--success)' : 'var(--warn)'};">${t.has_policy ? 'policy' : 'no policy'}</span>`)).join('')
     : _aibomEmpty('No tools registered yet');
 
   document.getElementById('aibom-mcp').innerHTML = mcp.length
@@ -17823,7 +17825,7 @@ function renderAibom(bom) {
     ? guardrails.map(g => _aibomRow(`
         <span style="font-weight:600;flex:1;">${escapeHtml(g.name || '')}</span>
         <span style="color:var(--text-dim);">${escapeHtml(g.stage || '')}</span>
-        <span style="color:${g.enabled ? 'var(--green)' : 'var(--text-dim)'};">${g.enabled ? 'on' : 'off'}</span>`)).join('')
+        <span style="color:${g.enabled ? 'var(--success)' : 'var(--text-dim)'};">${g.enabled ? 'on' : 'off'}</span>`)).join('')
     : _aibomEmpty('No guardrails configured');
 
   // Declared sections: show what IS declared, and spell out what is MISSING
@@ -17837,7 +17839,7 @@ function renderAibom(bom) {
   const missing = declaredSections.filter(([key]) => !(bom[key] || []).length);
   const envMissing = !(bom.metadata || {}).environment;
   document.getElementById('aibom-declared').innerHTML =
-    `<div style="font-size:12px;margin:0.25rem 0 0.5rem;color:${missing.length ? 'var(--warn)' : 'var(--green)'};font-weight:600;">
+    `<div style="font-size:12px;margin:0.25rem 0 0.5rem;color:${missing.length ? 'var(--warn)' : 'var(--success)'};font-weight:600;">
        ${missing.length ? `⚠ ${declaredSections.length - missing.length} of ${declaredSections.length} declared sections filled — the BOM is incomplete until your app declares the rest` : '✓ All declared sections filled'}</div>` +
     declaredSections.map(([key, label, desc]) => {
       const items = bom[key] || [];
@@ -17901,7 +17903,7 @@ async function loadAibomDrift() {
   try {
     const d = await apiCall('/v1/tenant/me/aibom/drift');
     if (d.clean) {
-      el.innerHTML = `<div style="color:var(--green);font-size:13px;font-weight:600;">✓ No drift — runtime matches snapshot ${escapeHtml(d.snapshot_id || '')}</div>`;
+      el.innerHTML = `<div style="color:var(--success);font-size:13px;font-weight:600;">✓ No drift — runtime matches snapshot ${escapeHtml(d.snapshot_id || '')}</div>`;
       if (badge) badge.classList.remove('visible');
       return;
     }
@@ -17913,8 +17915,8 @@ async function loadAibomDrift() {
         ⚠ ${d.drift_count} change${d.drift_count === 1 ? '' : 's'} since snapshot ${escapeHtml(d.snapshot_id || '')}</div>` +
       sections.map(([name, v]) => {
         const bits = [];
-        (v.added || []).forEach(k => bits.push(`<span style="color:var(--green);">+ ${escapeHtml(String(k))}</span>`));
-        (v.removed || []).forEach(k => bits.push(`<span style="color:var(--red);">− ${escapeHtml(String(k))}</span>`));
+        (v.added || []).forEach(k => bits.push(`<span style="color:var(--success);">+ ${escapeHtml(String(k))}</span>`));
+        (v.removed || []).forEach(k => bits.push(`<span style="color:var(--danger);">− ${escapeHtml(String(k))}</span>`));
         (v.changed || []).forEach(c => bits.push(
           `<span style="color:var(--warn);">~ ${escapeHtml(String(c.key))}.${escapeHtml(String(c.field))}: ${escapeHtml(JSON.stringify(c.before))} → ${escapeHtml(JSON.stringify(c.after))}</span>`));
         return `<div style="font-size:12px;padding:0.3rem 0;border-bottom:1px solid var(--border);">
@@ -17969,9 +17971,9 @@ async function loadBoardReport() {
     // Summary cards
     document.getElementById('board-report-cards').innerHTML = `
       <div class="stat-card"><div class="stat-value">${(s.total_requests || 0).toLocaleString()}</div><div class="stat-label">Total Requests</div></div>
-      <div class="stat-card"><div class="stat-value" style="color:var(--red);">${(s.blocked_count || 0).toLocaleString()}</div><div class="stat-label">Blocked</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:var(--danger);">${(s.blocked_count || 0).toLocaleString()}</div><div class="stat-label">Blocked</div></div>
       <div class="stat-card"><div class="stat-value">${s.block_rate_pct || 0}%</div><div class="stat-label">Block Rate</div></div>
-      <div class="stat-card"><div class="stat-value" style="color:${s.compliance_score >= 80 ? 'var(--green)' : s.compliance_score >= 50 ? 'var(--warn)' : 'var(--red)'};">${s.compliance_score || 0}%</div><div class="stat-label">Compliance Score</div></div>
+      <div class="stat-card"><div class="stat-value" style="color:${s.compliance_score >= 80 ? 'var(--success)' : s.compliance_score >= 50 ? 'var(--warn)' : 'var(--danger)'};">${s.compliance_score || 0}%</div><div class="stat-label">Compliance Score</div></div>
     `;
 
     // Daily trend chart (simple bar chart)
@@ -17983,7 +17985,7 @@ async function loadBoardReport() {
           const bh = Math.max(0, (d.blocked / maxReq) * 160);
           return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;" title="${d.date}: ${d.requests} requests, ${d.blocked} blocked">
             <div style="width:100%;background:var(--accent);border-radius:2px 2px 0 0;height:${h}px;position:relative;">
-              <div style="position:absolute;bottom:0;width:100%;height:${bh}px;background:var(--red);border-radius:0 0 2px 2px;"></div>
+              <div style="position:absolute;bottom:0;width:100%;height:${bh}px;background:var(--danger);border-radius:0 0 2px 2px;"></div>
             </div>
           </div>`;
         }).join('')
@@ -17995,9 +17997,9 @@ async function loadBoardReport() {
       ? threats.map(t => `
           <div style="display:flex;align-items:center;gap:0.75rem;padding:0.5rem 0;border-bottom:1px solid var(--border);">
             <span style="font-weight:600;font-size:12px;color:var(--text);flex:1;">${t.guardrail}</span>
-            <span style="font-size:12px;color:var(--red);font-weight:600;">${t.blocked} blocked</span>
+            <span style="font-size:12px;color:var(--danger);font-weight:600;">${t.blocked} blocked</span>
             <span style="font-size:11px;color:var(--text-dim);">${(t.block_rate * 100).toFixed(1)}%</span>
-            <span>${t.trend === 'up' ? '<span style="color:var(--red);">&#9650;</span>' : t.trend === 'down' ? '<span style="color:var(--green);">&#9660;</span>' : '&#8722;'}</span>
+            <span>${t.trend === 'up' ? '<span style="color:var(--danger);">&#9650;</span>' : t.trend === 'down' ? '<span style="color:var(--success);">&#9660;</span>' : '&#8722;'}</span>
           </div>`).join('')
       : '<div style="color:var(--text-dim);font-size:13px;">No threats detected</div>';
 
@@ -18014,11 +18016,11 @@ async function loadBoardReport() {
     const cov = data.guardrail_coverage || {};
     document.getElementById('board-coverage').innerHTML = `
       <div style="display:flex;gap:2rem;font-size:12px;">
-        <div><strong>Enabled:</strong> <span style="color:var(--green);">${(cov.enabled || []).join(', ') || 'None'}</span></div>
-        <div><strong>Missing:</strong> <span style="color:var(--red);">${(cov.missing || []).join(', ') || 'None — full coverage!'}</span></div>
+        <div><strong>Enabled:</strong> <span style="color:var(--success);">${(cov.enabled || []).join(', ') || 'None'}</span></div>
+        <div><strong>Missing:</strong> <span style="color:var(--danger);">${(cov.missing || []).join(', ') || 'None — full coverage!'}</span></div>
       </div>`;
   } catch (e) {
-    document.getElementById('board-report-cards').innerHTML = `<div style="color:var(--red);padding:1rem;grid-column:1/-1;">Failed: ${e.message}</div>`;
+    document.getElementById('board-report-cards').innerHTML = `<div style="color:var(--danger);padding:1rem;grid-column:1/-1;">Failed: ${e.message}</div>`;
   }
 }
 
@@ -18347,7 +18349,7 @@ async function loadAuthzRecent() {
     tbody.innerHTML = events.map(e => {
       const style = _AUTHZ_EVENT_STYLES[e.event] || { label: e.event, color: 'var(--text)' };
       return `
-        <tr style="border-bottom:1px solid var(--border-dim);">
+        <tr style="border-bottom:1px solid var(--border);">
           <td style="padding:0.5rem 0.75rem;color:var(--text-muted);white-space:nowrap;">${_esc(_fmtAge(e.ts))}</td>
           <td style="padding:0.5rem 0.75rem;color:${style.color};font-weight:500;white-space:nowrap;">${_esc(style.label)}</td>
           <td style="padding:0.5rem 0.75rem;"><code style="font-size:11px;">${_esc(e.agent_id || '—')}</code></td>
@@ -19323,7 +19325,7 @@ function ppRender(d, m) {
               <option value="admin" ${p.role === 'admin' ? 'selected' : ''}>Admin</option>
               <option value="viewer" ${p.role === 'viewer' ? 'selected' : ''}>Viewer</option></select>`
             : pwEsc(p.role)}</td>
-        <td>${p.status === 'invited' ? '<span style="color:var(--warning,#b45309);">Invited</span>' : 'Active'}</td>
+        <td>${p.status === 'invited' ? '<span style="color:var(--warn,#b45309);">Invited</span>' : 'Active'}</td>
         <td>${p.has_password ? 'Set' : '<span style="color:var(--text-muted);">None</span>'}</td>
         <td>${pwEsc(when(p.last_sign_in)) || '<span style="color:var(--text-muted);">never</span>'}</td>
         <td style="white-space:nowrap;">${edit ? `${p.status === 'invited' ? '<button class="small" onclick="ppResend(this)">Resend</button> ' : ''}
@@ -20206,7 +20208,7 @@ async function idStatus() {
     else if (!s.proxy_secret_set) warn.push('<code>SHIELD_TRUSTED_PROXY_SECRET</code> is not set: only the proxy IP list identifies the proxy, which is safe only when forwarded IPs are locked to it.');
     if (s.trust_header_escape_hatch) warn.push('<code>SHIELD_CERT_IDENTITY_TRUST_HEADER</code> is on: certificate headers identify agents without proof the sender holds the key, so identity is spoofable. Use it only while migrating to proxy mTLS or DPoP-bound agent tokens, then turn it off.');
     if (s.agent_token_pop !== 'required') warn.push(`Agent tokens are not bound to a key (<code>SHIELD_AGENT_TOKEN_POP=${_esc(s.agent_token_pop)}</code>): a copied token works for whoever holds it. Set it to <code>required</code>.`);
-    el.innerHTML = warn.length ? `<div class="card" style="border-left:3px solid var(--warning);"><div class="card-title" style="margin-bottom:0.4rem;">Setup check</div>${warn.map(w => `<div style="font-size:13px;margin:0.3rem 0;">• ${w}</div>`).join('')}</div>` : '';
+    el.innerHTML = warn.length ? `<div class="card" style="border-left:3px solid var(--warn);"><div class="card-title" style="margin-bottom:0.4rem;">Setup check</div>${warn.map(w => `<div style="font-size:13px;margin:0.3rem 0;">• ${w}</div>`).join('')}</div>` : '';
   } catch (e) { el.innerHTML = ''; }
 }
 
@@ -21355,7 +21357,7 @@ function rpLiveChange(c) {
   if (!c) return '';
   if (!c.sandbox_changed) return 'Only Shield\'s own checks change; sandbox policies are untouched.';
   if (c.live) return 'Running sandboxes take this change live on their next sync, no restart.';
-  return `<span style="color:var(--warning, #b45309);"><b>Needs a sandbox restart:</b> ${(c.reasons || []).map(xfEsc).join('; ')}. Sandboxes keep the previous policy and show as restart required until restarted.</span>`;
+  return `<span style="color:var(--warn, #b45309);"><b>Needs a sandbox restart:</b> ${(c.reasons || []).map(xfEsc).join('; ')}. Sandboxes keep the previous policy and show as restart required until restarted.</span>`;
 }
 document.addEventListener('change', async (e) => {
   if (!e.target || e.target.id !== 'rp-template' || !e.target.value) return;
@@ -21425,7 +21427,7 @@ async function rpExport() {
     const uns = (r.unsupported || []).map(u => `<li>${xfEsc(u)}</li>`).join('');
     const notes = (r.notes || []).map(u => `<li>${xfEsc(u)}</li>`).join('');
     document.getElementById('rp-export-result').innerHTML = `
-      ${uns ? `<div style="color:var(--warning, #b45309);"><b>Not enforced by ${xfEsc(r.target)}</b> (Shield's own checks may still cover these):<ul style="margin:0.3rem 0 0.6rem 1.1rem;">${uns}</ul></div>` : ''}
+      ${uns ? `<div style="color:var(--warn, #b45309);"><b>Not enforced by ${xfEsc(r.target)}</b> (Shield's own checks may still cover these):<ul style="margin:0.3rem 0 0.6rem 1.1rem;">${uns}</ul></div>` : ''}
       ${notes ? `<div style="color:var(--text-dim);"><ul style="margin:0 0 0.6rem 1.1rem;">${notes}</ul></div>` : ''}
       <pre style="max-height:420px;overflow:auto;background:var(--bg-3);padding:0.75rem;border-radius:var(--radius-sm);font-size:12px;">${xfEsc(r.artifact)}</pre>`;
   } catch (e) { rpMsg('rp-export-result', xfErrors(e), 'error'); }
@@ -21439,8 +21441,8 @@ function rpDownload() {
 }
 const RP_STATE = {
   current: ['On current policy', 'var(--success, #15803d)'],
-  reverted: ['Restored after tampering', 'var(--warning, #b45309)'],
-  restart_required: ['Needs restart', 'var(--warning, #b45309)'],
+  reverted: ['Restored after tampering', 'var(--warn, #b45309)'],
+  restart_required: ['Needs restart', 'var(--warn, #b45309)'],
   apply_failed: ['Apply failed', 'var(--danger, #b91c1c)'],
   tampered: ['Changed outside Shield', 'var(--danger, #b91c1c)'],
 };
@@ -21486,7 +21488,7 @@ async function rpAdvice() {
     const d = await rpApi('/' + encodeURIComponent(RP_OPEN) + '/advice?status=' + status);
     const el = document.getElementById('rp-advice');
     if (!d.enabled) { el.innerHTML = 'The advisor is off on this Shield (SHIELD_RUNTIME_ADVISOR=off).'; return; }
-    const dropped = d.dropped ? `<div style="color:var(--warning, #b45309);margin-bottom:0.4rem;">${d.dropped} more denial(s) were not kept: the suggestion list is full.</div>` : '';
+    const dropped = d.dropped ? `<div style="color:var(--warn, #b45309);margin-bottom:0.4rem;">${d.dropped} more denial(s) were not kept: the suggestion list is full.</div>` : '';
     if (!d.advice.length) { el.innerHTML = dropped + `No ${xfEsc(status === 'all' ? '' : status)} suggestions. Denials forwarded from sandboxes (<code>openshell_events.py</code>) appear here.`; return; }
     const what = { network_allow: 'Allow a new host', network_method: 'Allow more on an allowed host', binary: 'Allow a program to connect' };
     el.innerHTML = dropped + `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
@@ -21500,7 +21502,7 @@ async function rpAdvice() {
           ${a.sample_reason ? `<div style="color:var(--text-dim);font-size:12px;">${xfEsc(a.sample_reason)}</div>` : ''}</td>
         <td style="padding:0.35rem 0.5rem;">${a.hits}x<br><span style="color:var(--text-dim);font-size:12px;">last ${xfEsc(rpWhen(a.last_seen))}</span></td>
         <td style="padding:0.35rem 0.5rem;">${xfEsc((a.agents || []).join(', ') || '-')}</td>
-        <td style="padding:0.35rem 0.5rem;color:var(--warning, #b45309);">${(a.flags || []).map(f => xfEsc(RP_FLAG_TEXT[f] || f)).join('<br>') || '<span style="color:var(--text-dim);">none</span>'}</td>
+        <td style="padding:0.35rem 0.5rem;color:var(--warn, #b45309);">${(a.flags || []).map(f => xfEsc(RP_FLAG_TEXT[f] || f)).join('<br>') || '<span style="color:var(--text-dim);">none</span>'}</td>
         <td style="padding:0.35rem 0.5rem;white-space:nowrap;">${a.status === 'pending' ? `
           <button class="primary small" onclick="rpApprove('${xfEsc(a.id)}', false)">Approve</button>
           <button class="small" onclick="rpApprove('${xfEsc(a.id)}', true)">Edit...</button>
@@ -21556,7 +21558,7 @@ async function rpHistory() {
     if (!d.versions.length) { el.innerHTML = 'No saved versions yet.'; return; }
     const verdict = c => !c ? '<span style="color:var(--text-dim);">first kept version</span>' :
       !c.sandbox_changed ? 'Shield checks only' : c.live ? '<span style="color:var(--success, #15803d);">live</span>' :
-      `<span style="color:var(--warning, #b45309);" title="${xfEsc((c.reasons || []).join('; '))}">restart needed</span>`;
+      `<span style="color:var(--warn, #b45309);" title="${xfEsc((c.reasons || []).join('; '))}">restart needed</span>`;
     el.innerHTML = `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
         <th style="padding:0.35rem 0.5rem;">Version</th><th style="padding:0.35rem 0.5rem;">When</th><th style="padding:0.35rem 0.5rem;">By</th>
         <th style="padding:0.35rem 0.5rem;">Why</th><th style="padding:0.35rem 0.5rem;">Running sandboxes</th><th></th></tr></thead>
@@ -21591,7 +21593,7 @@ async function emApi(path, options = {}) {
   return data;
 }
 const EM_VERDICT = { pass: ['Allowed', 'var(--success, #15803d)'], block: ['Blocked', 'var(--danger, #b91c1c)'],
-                     require_approval: ['Needs approval', 'var(--warning, #b45309)'] };
+                     require_approval: ['Needs approval', 'var(--warn, #b45309)'] };
 function emVerdict(v) { const [t, c] = EM_VERDICT[v] || [v, 'var(--text-dim)']; return `<b style="color:${c};">${xfEsc(t)}</b>`; }
 async function emLoad() {
   try {
@@ -21724,9 +21726,9 @@ async function emFleet() {
 let CC_FILES = {};
 const CC_DECISION = { allow: ['allowed', 'var(--success, #15803d)'],
                       deny: ['denied', 'var(--danger, #b91c1c)'],
-                      ask: ['asked', 'var(--warning, #b45309)'] };
+                      ask: ['asked', 'var(--warn, #b45309)'] };
 const CC_STATE = { active: ['hook active', 'var(--success, #15803d)'],
-                   conflict: ['settings conflict', 'var(--warning, #b45309)'],
+                   conflict: ['settings conflict', 'var(--warn, #b45309)'],
                    error: ['error', 'var(--danger, #b91c1c)'],
                    off: ['off', 'var(--text-dim)'],
                    not_reported: ['not reported', 'var(--text-dim)'] };
@@ -21737,7 +21739,7 @@ async function ccLoad() {
     const url = document.getElementById('cc-url');
     if (!url.value) url.value = d.shield_url || '';
     document.getElementById('cc-url-note').innerHTML = d.shield_url_source === 'request'
-      ? '<span style="color:var(--warning, #b45309);">This is the portal\'s own address, which may not be where laptops reach Shield. Use your Shield API URL, or set SHIELD_DEVICE_AGENT_SHIELD_URL on the portal service.</span>' : '';
+      ? '<span style="color:var(--warn, #b45309);">This is the portal\'s own address, which may not be where laptops reach Shield. Use your Shield API URL, or set SHIELD_DEVICE_AGENT_SHIELD_URL on the portal service.</span>' : '';
     ccStatus(d.status || {});
   } catch (e) { xfMsg('cc-status', xfErrors(e), 'error'); }
   ccCoverage();
@@ -21759,7 +21761,7 @@ async function ccCoverage(cursor) {
     const versions = Object.entries(d.by_version || {}).map(([v, n]) => `${xfEsc(v)} (${n})`).join(', ');
     document.getElementById('cc-coverage-summary').innerHTML = d.total ? `<b>${d.total}</b> laptop${d.total === 1 ? '' : 's'}:
       <span style="color:var(--success, #15803d);">${modes.managed || 0} managed</span>,
-      <span style="color:var(--warning, #b45309);">${modes.user || 0} user install${(modes.user || 0) === 1 ? '' : 's'}</span>${modes.unknown ? `, ${modes.unknown} older hook` : ''};
+      <span style="color:var(--warn, #b45309);">${modes.user || 0} user install${(modes.user || 0) === 1 ? '' : 's'}</span>${modes.unknown ? `, ${modes.unknown} older hook` : ''};
       <span style="color:${d.stale_count ? 'var(--danger, #b91c1c)' : 'var(--text-dim)'};">${d.stale_count} stale (no call for ${d.stale_after_hours} h)</span>.
       <span class="muted">Versions: ${versions || 'none'}.</span>${d.truncated ? ' <span class="muted">Only the 5,000 most recent laptops are shown.</span>' : ''}` : '';
     el.innerHTML = CC_ROWS.length ? `<table style="width:100%;border-collapse:collapse;">
@@ -21804,7 +21806,7 @@ async function ccFleets() {
   try {
     const d = await ddApi('/hooks/fleets');
     el.classList.remove('muted');
-    const banner = d.disabled_by_server ? '<div style="color:var(--warning, #b45309);margin-bottom:0.5rem;">Turned off on this Shield (SHIELD_DEVICE_AGENT_HOOKS=off): every fleet is off whatever is set here.</div>' : '';
+    const banner = d.disabled_by_server ? '<div style="color:var(--warn, #b45309);margin-bottom:0.5rem;">Turned off on this Shield (SHIELD_DEVICE_AGENT_HOOKS=off): every fleet is off whatever is set here.</div>' : '';
     if (!(d.fleets || []).length) {
       el.innerHTML = banner + '<div class="muted">No device fleets yet. Fleets come from the Votal device agent\'s rollout kits (Device DLP).</div>';
       return;
@@ -21836,7 +21838,7 @@ async function ccSaveFleets() {
   } catch (e) { xfMsg('cc-fleet-msg', xfErrors(e), 'error'); }
 }
 const CC_INSTALL = { managed: ['managed', 'var(--success, #15803d)'],
-                     user: ['user install', 'var(--warning, #b45309)'],
+                     user: ['user install', 'var(--warn, #b45309)'],
                      unknown: ['older hook', 'var(--text-dim)'] };
 function ccRow(r) {
   const dec = CC_DECISION[r.decision] || [xfEsc(r.decision || '-'), 'var(--text-dim)'];
@@ -21885,7 +21887,7 @@ async function ccBuild() {
         <div class="muted" style="margin-top:0.25rem;">${xfEsc(CC_FILE_NOTES[n] || '')}</div>
         ${n === 'managed-settings.json' ? `<pre class="mono" style="margin-top:0.5rem;max-height:260px;overflow:auto;">${xfEsc(CC_FILES[n].content)}</pre>` : ''}
       </div>`).join('');
-    const warn = (d.warnings || []).map(w => `<div style="color:var(--warning, #b45309);">${xfEsc(w)}</div>`).join('');
+    const warn = (d.warnings || []).map(w => `<div style="color:var(--warn, #b45309);">${xfEsc(w)}</div>`).join('');
     document.getElementById('cc-msg').innerHTML = `<div style="color:var(--success, #15803d);">Files built. The key is in them: hand them only to your MDM.</div>${warn}`;
   } catch (e) { CC_FILES = {}; document.getElementById('cc-files').innerHTML = ''; xfMsg('cc-msg', xfErrors(e), 'error'); }
 }
@@ -21992,7 +21994,7 @@ async function dkLoad() {
           <td style="${DD_TD}">${xfEsc(k.fleet)}</td><td style="${DD_TD}">${xfEsc(k.mdm)}</td>
           <td style="${DD_TD}">${k.uses_left === null ? '-' : `${k.uses_left} of ${k.uses}`}</td>
           <td style="${DD_TD}">${xfEsc(new Date(k.expires_at * 1000).toLocaleDateString())}</td>
-          <td style="${DD_TD}"><span class="badge ${DK_STATUS[k.status] || ''}">${xfEsc(k.status)}</span>${(k.stale || []).map(s => `<div style="color:var(--warning, #b45309);font-size:12px;">${xfEsc(s)}</div>`).join('')}</td>
+          <td style="${DD_TD}"><span class="badge ${DK_STATUS[k.status] || ''}">${xfEsc(k.status)}</span>${(k.stale || []).map(s => `<div style="color:var(--warn, #b45309);font-size:12px;">${xfEsc(s)}</div>`).join('')}</td>
           <td style="${DD_TD}">${k.status === 'active' ? `<button class="small danger" onclick="dkRevoke('${xfEsc(k.kit_id)}')">Revoke</button>` : ''}</td></tr>`).join('')}</tbody></table>`);
   } catch (e) { xfMsg('dk-list', xfErrors(e), 'error'); }
 }
@@ -22070,7 +22072,7 @@ function switchDDSubtab(name) {
   document.querySelectorAll('.dd-subtab').forEach(b => {
     const on = b.dataset.subtab === name;
     b.classList.toggle('active', on);
-    b.style.borderBottomColor = on ? 'var(--primary)' : 'transparent';
+    b.style.borderBottomColor = on ? 'var(--accent)' : 'transparent';
     b.style.color = on ? 'var(--text)' : 'var(--text-muted)';
   });
   document.querySelectorAll('.dd-subtab-pane').forEach(p => { p.style.display = p.id === `dd-sub-${name}` ? '' : 'none'; });
@@ -22125,9 +22127,9 @@ function ddQuery() {
   return p.toString();
 }
 function ddCard(label, value, active, onclick, tone) {
-  const color = tone === 'danger' && value ? 'var(--danger)' : tone === 'warn' && value ? 'var(--warning, #fbbf24)' : 'inherit';
+  const color = tone === 'danger' && value ? 'var(--danger)' : tone === 'warn' && value ? 'var(--warn, #fbbf24)' : 'inherit';
   return `<div class="stat" role="button" tabindex="0" onclick="${onclick}" onkeydown="if(event.key==='Enter')${onclick}"
-    style="cursor:pointer;padding:0.6rem 0.8rem;${active ? 'outline:2px solid var(--primary);' : ''}">
+    style="cursor:pointer;padding:0.6rem 0.8rem;${active ? 'outline:2px solid var(--accent);' : ''}">
     <div class="stat-label" title="${xfEsc(label)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${xfEsc(label)}</div>
     <div class="stat-value" style="color:${color};">${value}</div></div>`;
 }
@@ -22291,7 +22293,7 @@ function exTab(status) {
   EX.status = status;
   document.querySelectorAll('.ex-tab').forEach(b => {
     const on = b.dataset.status === status;
-    b.style.borderBottomColor = on ? 'var(--primary)' : 'transparent';
+    b.style.borderBottomColor = on ? 'var(--accent)' : 'transparent';
     b.style.color = on ? 'var(--text)' : 'var(--text-muted)';
   });
   exList(true);
@@ -22326,7 +22328,7 @@ async function exCounts() {
       : '<div class="muted">No requests yet.</div>';
     // Lead with the policy when one is producing the queue.
     const top = c.by_policy.find(p => p.pending >= 10);
-    document.getElementById('ex-lead').innerHTML = !top ? '' : `<div class="card" style="border-left:3px solid var(--warning, #f59e0b);">
+    document.getElementById('ex-lead').innerHTML = !top ? '' : `<div class="card" style="border-left:3px solid var(--warn, #f59e0b);">
       <div style="font-size:14px;"><b>${top.pending} requests are waiting for "${xfEsc(exPolicyName(top))}".</b>
       Many requests for one policy usually mean the policy needs rewording, not that each request needs a decision.</div>
       <div style="display:flex;gap:0.5rem;margin-top:0.6rem;">
@@ -22377,7 +22379,7 @@ function exDetail(rec) {
     <div style="margin-top:0.4rem;"><span class="muted">Blocked by</span>${blocked}</div>
     <div style="margin-top:0.5rem;"><span class="muted">Their reason</span><div style="white-space:pre-wrap;">${xfEsc(rec.reason)}</div></div>
     <div style="margin-top:0.5rem;"><span class="muted">Prompt</span>
-      <pre style="white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;margin:0.2rem 0 0;padding:0.6rem;background:var(--bg-soft, rgba(127,127,127,0.08));border-radius:6px;font-size:12.5px;">${xfEsc(rec.prompt)}</pre>${cut}</div>
+      <pre style="white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;margin:0.2rem 0 0;padding:0.6rem;background:var(--bg, rgba(127,127,127,0.08));border-radius:6px;font-size:12.5px;">${xfEsc(rec.prompt)}</pre>${cut}</div>
     ${decided}${actions}`;
 }
 function exToggle(id) {
