@@ -929,6 +929,32 @@
     color: #1d4ed8;
     background: #dbeafe;
   }
+  /* Shadow report (docs/specs/shadow-mode-report.md, task 3). Would-blocks use
+     the monitor pill's blue so they never read as real (red) blocks. */
+  .shadow-report > summary { cursor: pointer; list-style: none; }
+  .shadow-report > summary::-webkit-details-marker { display: none; }
+  .shadow-report .sr-controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+  .shadow-report .sr-headline { font-size: 20px; font-weight: 700; color: var(--text); margin: 0.25rem 0 0.35rem; }
+  .shadow-report .sr-sub { font-size: 13px; color: var(--text-dim); margin-bottom: 1rem; }
+  .shadow-report .sr-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin-top: 1rem; }
+  .shadow-report .sr-bar { height: 8px; border-radius: 4px; background: #3b82f6; }
+  .shadow-report .sr-day { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 1px; }
+  .shadow-report .sr-would { background: #3b82f6; border-radius: 2px 2px 0 0; }
+  .shadow-report .sr-blocked { background: var(--danger); }
+  .shadow-report .sr-notes { font-size: 11.5px; color: var(--text-dim); margin-top: 1rem; padding-left: 1.1rem; }
+  .shadow-report table { width: 100%; font-size: 12px; border-collapse: collapse; }
+  .shadow-report th { text-align: left; padding: 0.4rem; border-bottom: 2px solid var(--border); }
+  .shadow-report td { padding: 0.4rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .shadow-report .sr-print-only { display: none; }
+  @media print {
+    body * { visibility: hidden; }
+    #shadow-report, #shadow-report * { visibility: visible; }
+    #shadow-report { position: absolute; left: 0; top: 0; width: 100%; border: none; box-shadow: none; }
+    #shadow-report .sr-no-print { display: none !important; }
+    #shadow-report .sr-print-only { display: block; }
+    #shadow-report .sr-bar, #shadow-report .sr-would, #shadow-report .sr-blocked {
+      -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
   .telemetry-source {
     display: inline-flex;
     align-items: center;
@@ -3671,6 +3697,7 @@
               <option value="pass">Pass</option>
               <option value="warn">Warn</option>
               <option value="block">Block</option>
+              <option value="monitor">Would block (monitor)</option>
             </select>
           </div>
           <div class="field" style="margin-bottom:0;">
@@ -3722,6 +3749,11 @@
           <div class="stat-label">Blocked</div>
           <div id="telemetry-stat-blocked" class="stat-value">0</div>
           <div class="muted">input or output hard blocks</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Would block</div>
+          <div id="telemetry-stat-monitor" class="stat-value">0</div>
+          <div class="muted">let through by monitor mode</div>
         </div>
         <div class="stat">
           <div class="stat-label">Warnings</div>
@@ -5988,6 +6020,29 @@ if __name__ == "__main__":
           <button class="small" onclick="exportEvidencePack('json')">Export JSON</button>
         </div>
       </div>
+      <!-- Shadow report (docs/specs/shadow-mode-report.md, task 3). Moved to the
+           top and opened when the tenant is in monitor mode; otherwise it sits
+           closed at the bottom of this tab. -->
+      <details id="shadow-report" class="card shadow-report" style="margin-bottom:1rem;">
+        <summary class="card-header">
+          <div>
+            <div class="card-title">Shadow report: what Shield would have stopped</div>
+            <div class="card-desc">Monitor mode checks every request and records would-be blocks without enforcing them.</div>
+          </div>
+        </summary>
+        <div class="sr-controls sr-no-print" style="padding:0 1rem;">
+          <select id="shadow-report-days" onchange="loadShadowReport()" aria-label="Range" style="width:auto;">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+          </select>
+          <select id="shadow-report-team" class="hidden" onchange="loadShadowReport()" aria-label="Team" style="width:auto;">
+            <option value="">All teams</option>
+          </select>
+          <button class="small" onclick="printShadowReport()">Print / Save as PDF</button>
+          <button id="shadow-report-enforce" class="primary small hidden" onclick="shadowSwitchToEnforce()">Switch to enforce</button>
+        </div>
+        <div id="shadow-report-body" style="padding:1rem;"></div>
+      </details>
       <div id="board-report-cards" class="stat-grid" style="grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
         <div class="card">
@@ -9852,6 +9907,10 @@ function telemetryDisplayStatus(entry) {
     return s === 'block' ? 'blocked' : s;
   }
   if ((entry.status || '') === 'block' || entry.block_reason) return 'blocked';
+  // Monitor mode let a would-be block through (docs/specs/shadow-mode-report.md).
+  // Shown as its own pill, never as "pass": it is exactly what the admin is
+  // looking for when deciding whether to enforce.
+  if ((entry.status || '') === 'monitor') return 'monitor';
   if ((entry.tool_calls || []).some(tool => !((tool.rbac || {}).allowed))) return 'blocked';
   if ((entry.status || '') === 'warn') return 'warn';
   return 'pass';
@@ -9884,6 +9943,24 @@ function telemetryTeamTag(entry) {
   return `<div><span class="telemetry-team" title="Team: ${psEsc(where)}">team: ${psEsc(telemetryTeamLabel(scope.rule))}</span></div>`;
 }
 
+// [value, label] pairs for a team picker, or null when the tenant has no teams.
+// Shared by Telemetry and the shadow report, which accept the same values.
+function telemetryTeamOptions(scopes) {
+  const rules = (scopes && Array.isArray(scopes.rules)) ? scopes.rules : [];
+  const hasOther = !!(scopes && scopes.unmatched && typeof scopes.unmatched === 'object');
+  if (!rules.length && !hasOther) return null;
+  const options = [['', 'All teams'], ['global', 'Global']];
+  for (const rule of rules) {
+    if (!rule || !rule.id) continue;
+    const match = rule.match || {};
+    const sample = (match.exact || [])[0] || (match.glob || [])[0];
+    options.push([rule.id, sample ? `${rule.id} (${sample})` : rule.id]);
+  }
+  if (hasOther) options.push(['unmatched', 'Other values']);
+  options.push([TELEMETRY_TEAM_NONE, 'No team recorded']);
+  return options;
+}
+
 async function loadTelemetryTeams() {
   const field = document.getElementById('telemetry-team-field');
   const select = document.getElementById('telemetry-team-filter');
@@ -9896,24 +9973,14 @@ async function loadTelemetryTeams() {
   } catch (e) {
     scopes = null;   // no teams view; the rest of the page still loads
   }
-  const rules = (scopes && Array.isArray(scopes.rules)) ? scopes.rules : [];
-  const hasOther = !!(scopes && scopes.unmatched && typeof scopes.unmatched === 'object');
   TELEMETRY_TEAMS_LOADED = true;
-  if (!rules.length && !hasOther) {
+  const options = telemetryTeamOptions(scopes);
+  if (!options) {
     select.innerHTML = '<option value="">All teams</option>';
     select.value = '';
     field.classList.add('hidden');
     return;
   }
-  const options = [['', 'All teams'], ['global', 'Global']];
-  for (const rule of rules) {
-    if (!rule || !rule.id) continue;
-    const match = rule.match || {};
-    const sample = (match.exact || [])[0] || (match.glob || [])[0];
-    options.push([rule.id, sample ? `${rule.id} (${sample})` : rule.id]);
-  }
-  if (hasOther) options.push(['unmatched', 'Other values']);
-  options.push([TELEMETRY_TEAM_NONE, 'No team recorded']);
   select.innerHTML = options
     .map(([value, label]) => `<option value="${psEsc(value)}">${psEsc(label)}</option>`).join('');
   // Keep the admin's choice across a refresh while that team still exists.
@@ -10078,6 +10145,7 @@ function updateTelemetrySummary(summary) {
   const byStatus = (summary && summary.by_status) || {};
   document.getElementById('telemetry-stat-messages').textContent = summary && summary.messages || 0;
   document.getElementById('telemetry-stat-blocked').textContent = byStatus.block || 0;
+  document.getElementById('telemetry-stat-monitor').textContent = byStatus.monitor || 0;
   document.getElementById('telemetry-stat-warn').textContent = byStatus.warn || 0;
   document.getElementById('telemetry-stat-tools').textContent = summary && summary.tool_calls || 0;
   document.getElementById('telemetry-stat-tools-note').textContent = `${summary && summary.blocked_tool_calls || 0} blocked`;
@@ -17956,6 +18024,171 @@ async function loadBoardReport() {
   }
 }
 
+// ── Shadow report (docs/specs/shadow-mode-report.md, task 3) ─────────────
+// GET /v1/tenant/me/shadow-report. Every server value is escaped with srEsc:
+// guardrail names, team rule ids, agent keys and reasons come from requests.
+// The report never carries prompt text, so a printed copy cannot leak it.
+const srEsc = v => psEsc(v);
+let SHADOW_TEAMS_LOADED = false;
+
+function srNum(n) { return Number(n || 0).toLocaleString(); }
+
+function srTeamLabel(t) {
+  return t === null || t === undefined ? 'No team' : telemetryTeamLabel(t);
+}
+
+async function loadShadowTeams() {
+  if (SHADOW_TEAMS_LOADED) return;
+  const select = document.getElementById('shadow-report-team');
+  if (!select) return;
+  let scopes = null;
+  try { scopes = (await apiCall(PS_BASE)).policy_scopes; } catch (e) { scopes = null; }
+  SHADOW_TEAMS_LOADED = true;
+  const options = telemetryTeamOptions(scopes);
+  if (!options) { select.classList.add('hidden'); return; }
+  select.innerHTML = options
+    .map(([value, label]) => `<option value="${srEsc(value)}">${srEsc(label)}</option>`).join('');
+  select.classList.remove('hidden');
+}
+
+// Monitor: the report is the point of the tab, so it goes first and opens.
+// Enforce: it stays available, closed, at the bottom.
+function placeShadowReport(monitor) {
+  const section = document.getElementById('shadow-report');
+  const tab = document.getElementById('tab-board-report');
+  const cards = document.getElementById('board-report-cards');
+  if (!section || !tab || !cards) return;
+  if (monitor) {
+    tab.insertBefore(section, cards);
+    section.open = true;
+  } else {
+    tab.appendChild(section);
+    section.style.marginTop = '1rem';
+  }
+}
+
+function renderShadowReport(d) {
+  const monitor = d.policy_mode === 'monitor';
+  const days = d.days;
+  const reqs = d.would_block_requests;
+  const parts = [];
+
+  if (d.degraded) {
+    return '<div style="color:var(--danger);">Report unavailable: the Shield data store is not reachable. Try again shortly.</div>';
+  }
+  parts.push(`<div class="sr-print-only" style="font-size:12px;color:var(--text-dim);margin-bottom:0.5rem;">
+    Shield shadow report &middot; tenant ${srEsc(d.tenant_id)} &middot; last ${srEsc(days)} days
+    ${d.team ? `&middot; team ${srEsc(srTeamLabel(d.team))}` : ''} &middot; generated ${srEsc(new Date().toISOString().slice(0, 16).replace('T', ' '))} UTC</div>`);
+
+  if (!d.would_block_total && !reqs) {
+    parts.push(monitor
+      ? `<div class="sr-headline">No would-blocks in the last ${srEsc(days)} days.</div>
+         <div class="sr-sub">Shield checked ${srNum(d.checked_total)} requests in monitor mode and none tripped a blocking guardrail.</div>`
+      : `<div class="sr-headline">This tenant enforces its policy.</div>
+         <div class="sr-sub">To see what a new policy would stop before it blocks anything, run it in monitor mode for a week. Shield checks every request, records would-be blocks here, and lets the traffic through.</div>`);
+  } else {
+    parts.push(`<div class="sr-headline">Shield would have stopped ${srNum(reqs)} of ${srNum(d.checked_total)} requests in the last ${srEsc(days)} days${d.would_block_rate_pct != null ? ` (${srEsc(d.would_block_rate_pct)}%)` : ''}.</div>
+      <div class="sr-sub">${srNum(d.would_block_total)} guardrail findings across ${srNum((d.by_guardrail || []).length)} guardrails.
+      ${monitor ? 'Nothing was blocked: this tenant is in monitor mode.' : 'This tenant now enforces its policy; these would-blocks are from days it ran in monitor mode.'}
+      ${d.blocked_total ? ` ${srNum(d.blocked_total)} findings were actually blocked in the same period.` : ''}</div>`);
+  }
+
+  const guards = d.by_guardrail || [];
+  const top = Math.max(1, ...guards.map(g => g.would_blocked || 0));
+  const guardHtml = guards.length
+    ? guards.slice(0, 10).map(g => `
+        <div style="padding:0.35rem 0;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;"><span style="font-weight:600;">${srEsc(g.guardrail)}</span><span>${srNum(g.would_blocked)}</span></div>
+          <div class="sr-bar" style="width:${Math.max(2, (g.would_blocked / top) * 100)}%;"></div>
+        </div>`).join('')
+    : '<div style="color:var(--text-dim);font-size:12px;">None</div>';
+
+  const daily = d.daily || [];
+  const peak = Math.max(1, ...daily.map(x => (x.would_blocked || 0) + (x.blocked || 0)));
+  const dailyHtml = `<div style="height:120px;display:flex;align-items:flex-end;gap:2px;">${daily.map(x => `
+      <div class="sr-day" title="${srEsc(x.date)}: ${srNum(x.checked)} requests, ${srNum(x.would_blocked)} would block, ${srNum(x.blocked)} blocked">
+        <div class="sr-would" style="height:${((x.would_blocked || 0) / peak) * 110}px;"></div>
+        <div class="sr-blocked" style="height:${((x.blocked || 0) / peak) * 110}px;"></div>
+      </div>`).join('')}</div>
+    <div style="font-size:11px;color:var(--text-dim);margin-top:0.35rem;"><span style="color:#3b82f6;">&#9632;</span> would block &nbsp; <span style="color:var(--danger);">&#9632;</span> blocked</div>`;
+
+  const teams = d.by_team || [];
+  const teamHtml = teams.length
+    ? teams.map(t => `<div style="display:flex;justify-content:space-between;font-size:12px;padding:0.3rem 0;border-bottom:1px solid var(--border);"><span>${srEsc(srTeamLabel(t.team))}</span><span>${srNum(t.would_blocked)}</span></div>`).join('')
+    : '<div style="color:var(--text-dim);font-size:12px;">None</div>';
+
+  parts.push(`<div class="sr-grid">
+    <div><div class="card-title" style="font-size:13px;margin-bottom:0.5rem;">Top guardrails</div>${guardHtml}</div>
+    <div><div class="card-title" style="font-size:13px;margin-bottom:0.5rem;">Daily</div>${dailyHtml}</div>
+    <div><div class="card-title" style="font-size:13px;margin-bottom:0.5rem;">By team (requests)</div>${teamHtml}</div>
+  </div>`);
+
+  const ex = d.examples || [];
+  parts.push(`<div class="card-title" style="font-size:13px;margin:1.25rem 0 0.5rem;">Latest would-blocks</div>` + (ex.length
+    ? `<table><tr><th>Time (UTC)</th><th>Guardrails</th><th>Team</th><th>Agent</th><th>Source</th><th>Reason</th></tr>
+        ${ex.map(e => `<tr>
+          <td style="white-space:nowrap;color:var(--text-dim);">${srEsc(String(e.timestamp || '').slice(0, 19).replace('T', ' '))}</td>
+          <td style="font-weight:600;">${srEsc((e.guardrails || []).join(', ') || '-')}</td>
+          <td>${srEsc(srTeamLabel(e.team))}</td>
+          <td>${srEsc(e.agent_key || '-')}</td>
+          <td>${srEsc(e.source)}</td>
+          <td style="color:var(--text-dim);">${srEsc(e.reason || '')}</td></tr>`).join('')}
+      </table>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:0.35rem;">Prompt text is never included. Open Telemetry with Status "Would block (monitor)" to review a request.</div>`
+    : '<div style="color:var(--text-dim);font-size:12px;">None in this range.</div>'));
+
+  const notes = [];
+  notes.push('Findings count guardrail checks (one request can trip several guardrails); requests and the rate count each request once.');
+  if (d.counts_from === 'audit') notes.push('Filtered by team, so every count comes from the request log rather than the per-guardrail counters.');
+  if (d.sampled) notes.push('Based on the most recent 50,000 requests in this range.');
+  if (d.exact_since && d.exact_since > String(d.since || '').slice(0, 10)) {
+    notes.push(`Before ${srEsc(d.exact_since)}, monitor-mode would-blocks were counted as blocks, so earlier days may show them as blocked.`);
+  }
+  for (const n of (d.not_covered || [])) notes.push(srEsc(n));
+  parts.push(`<ul class="sr-notes">${notes.map(n => `<li>${n}</li>`).join('')}</ul>`);
+  return parts.join('');
+}
+
+async function loadShadowReport() {
+  const body = document.getElementById('shadow-report-body');
+  if (!body) return;
+  body.innerHTML = _metricsSpinner('Loading shadow report…');
+  loadShadowTeams();
+  const days = document.getElementById('shadow-report-days').value || '30';
+  const team = document.getElementById('shadow-report-team').value || '';
+  const qs = `days=${encodeURIComponent(days)}` + (team ? `&team=${encodeURIComponent(team)}` : '');
+  try {
+    const d = await apiCall(`/v1/tenant/me/shadow-report?${qs}`);
+    const monitor = d.policy_mode === 'monitor';
+    placeShadowReport(monitor);
+    document.getElementById('shadow-report-enforce').classList.toggle('hidden', !monitor);
+    body.innerHTML = renderShadowReport(d);
+  } catch (e) {
+    body.innerHTML = `<div style="color:var(--danger);">Failed: ${srEsc(e.message)}</div>`;
+  }
+}
+
+function printShadowReport() {
+  const section = document.getElementById('shadow-report');
+  if (section) section.open = true;
+  window.print();
+}
+
+// PUT /v1/tenant/me/policy-mode (docs/specs/tenant-enforce-mode.md). Switching
+// to enforce needs no reason; the server audits who changed it.
+async function shadowSwitchToEnforce() {
+  if (!confirm('Switch to enforce? Requests that would have been blocked will be blocked from now on.')) return;
+  try {
+    const r = await apiCall('/v1/tenant/me/policy-mode', {
+      method: 'PUT', body: JSON.stringify({ mode: 'enforce' }) });
+    const secs = r.takes_effect_within_seconds;
+    showToast(`Enforce mode is on. It reaches every server within ${secs ? Math.ceil(secs / 60) + ' minutes' : 'a few minutes'}.`, 'success');
+    loadShadowReport();
+  } catch (e) {
+    showToast(`Could not switch: ${e.message}`, 'error');
+  }
+}
+
 // ── Evidence Pack Export ─────────────────
 async function exportEvidencePack(format) {
   try {
@@ -18014,7 +18247,7 @@ document.addEventListener('click', (e) => {
     if (tab === 'device-dlp') ddLoad();
     if (tab === 'exception-requests') exLoad();
     if (tab === 'guardrail-metrics') { loadGuardrailDashboard(); loadGuardrailMetrics(); }
-    if (tab === 'board-report') loadBoardReport();
+    if (tab === 'board-report') { loadBoardReport(); loadShadowReport(); }
     if (tab === 'aibom') loadAibom();
     if (tab === 'ai-inventory') aiInvLoad();
     if (tab === 'model-routing') mrLoad();

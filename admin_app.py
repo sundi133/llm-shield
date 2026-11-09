@@ -85,6 +85,7 @@ from api.routes_siem import router as siem_router
 from api.routes_vault import router as vault_router
 from api.routes_evidence import router as evidence_router
 from api.routes_board_report import router as board_report_router
+from api.routes_shadow_report import router as shadow_report_router
 from api.routes_aibom import router as aibom_router
 from api.routes_mcp_admin import router as mcp_admin_router
 
@@ -1125,6 +1126,7 @@ def create_admin_app() -> FastAPI:
     app.include_router(vault_router)                   # /v1/tenant/me/vault
     app.include_router(evidence_router)                # /v1/tenant/me/compliance/*
     app.include_router(board_report_router)             # /v1/tenant/me/board-report
+    app.include_router(shadow_report_router)            # /v1/tenant/me/shadow-report
     app.include_router(aibom_router)                    # /v1/tenant/me/aibom (AI Bill of Materials)
     app.include_router(mcp_admin_router)                # /v1/tenant/me/mcp (MCP gateway console)
 
