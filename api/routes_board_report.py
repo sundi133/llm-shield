@@ -62,6 +62,10 @@ async def board_report(request: Request, days: int = 30):
 
     total_requests = sum(g.get("total", 0) for g in guardrail_summary)
     total_blocked = sum(g.get("blocked", 0) for g in guardrail_summary)
+    # Blocks monitor mode let through. Never part of blocked_count: a
+    # monitor-mode tenant's report must not claim blocks that did not happen
+    # (docs/specs/shadow-mode-report.md).
+    total_would_blocked = sum(g.get("would_blocked", 0) for g in guardrail_summary)
 
     # ── Top threats ───────────────────────────────────────────────────
     top_threats = [
@@ -110,9 +114,11 @@ async def board_report(request: Request, days: int = 30):
             for d in eff.get("daily", []):
                 date = d["date"]
                 if date not in day_totals:
-                    day_totals[date] = {"date": date, "requests": 0, "blocked": 0}
+                    day_totals[date] = {"date": date, "requests": 0, "blocked": 0,
+                                        "would_blocked": 0}
                 day_totals[date]["requests"] += d.get("total", 0)
                 day_totals[date]["blocked"] += d.get("blocked", 0)
+                day_totals[date]["would_blocked"] += d.get("would_blocked", 0)
         except Exception:
             pass
 
@@ -145,6 +151,7 @@ async def board_report(request: Request, days: int = 30):
             "total_requests": total_requests,
             "blocked_count": total_blocked,
             "block_rate_pct": round(total_blocked / max(total_requests, 1) * 100, 1),
+            "would_blocked_count": total_would_blocked,
             "agent_count": agent_count,
             "shadow_agent_count": shadow_count,
             "guardrails_enabled": len(enabled_all),

@@ -8,7 +8,9 @@ Redis key pattern:
     guardrail:metrics:{tenant_id}:{guardrail_name}:{YYYY-MM-DD}
 
 Each key is a Redis hash with fields:
-    total, passed, blocked, warned, logged
+    total, passed, blocked, would_blocked, warned, logged
+    (would_blocked: a block that monitor mode let through,
+    docs/specs/shadow-mode-report.md)
     latency_sum_ms, latency_count (for avg calculation)
     TTL: 90 days (auto-cleanup)
 """
@@ -24,6 +26,66 @@ logger = logging.getLogger("votal.guardrail_metrics")
 
 _METRICS_TTL_DAYS = 90
 _METRICS_KEY_PREFIX = "guardrail:metrics"
+
+# The date the would-block split was first written on this deployment.
+# Before it, monitor-mode would-blocks were counted as ``blocked``, so a report
+# can say from which day its numbers are exact. Platform-wide, no TTL. The
+# prefix deliberately does not start with ``guardrail:metrics:`` so the
+# per-tenant SCAN in get_all_guardrails_summary can never pick it up.
+_SPLIT_SINCE_KEY = "guardrail:metrics_split_since"
+_split_marked = False
+
+# Actions that stop a request when enforced (core.policy_mode.BLOCKING_ACTIONS).
+# Repeated here rather than imported so this storage module stays free of
+# core imports on the admin plane.
+_BLOCKING_ACTIONS = ("block", "pending_confirmation")
+
+
+def split_would_block() -> bool:
+    """Escape hatch: SHIELD_METRICS_SPLIT_WOULD_BLOCK=off counts monitor-mode
+    would-blocks as ``blocked`` again, as before this split existed."""
+    return os.environ.get("SHIELD_METRICS_SPLIT_WOULD_BLOCK", "on").strip().lower() \
+        not in ("0", "off", "false", "no")
+
+
+def _result_enforced(gr: dict) -> bool:
+    """False when monitor mode let a would-be block through.
+
+    core.policy_mode.apply marks the result dict itself; the chat-proxy
+    pipeline (core.tenant_pipeline) marks its ``details``. Anything else,
+    including no mark at all, is an enforced result: today's behaviour."""
+    if gr.get("enforced") is False:
+        return False
+    details = gr.get("details")
+    return not (isinstance(details, dict) and details.get("enforced") is False)
+
+
+def _mark_split_since(r) -> None:
+    """Record the first day would-blocks were split out. One SET NX per
+    process, so the metrics write keeps its number of Redis calls."""
+    global _split_marked
+    if _split_marked:
+        return
+    try:
+        r.set(_SPLIT_SINCE_KEY, datetime.utcnow().strftime("%Y-%m-%d"), nx=True)
+        _split_marked = True
+    except Exception as e:
+        logger.debug(f"guardrail_metrics split marker failed: {e}")
+
+
+def get_split_since() -> Optional[str]:
+    """The YYYY-MM-DD from which would-blocks are counted on their own, or
+    None if never recorded (no would-block yet, or the store is down)."""
+    r = _get_redis()
+    if not r:
+        return None
+    try:
+        v = r.get(_SPLIT_SINCE_KEY)
+    except Exception:
+        return None
+    if isinstance(v, bytes):
+        v = v.decode()
+    return v or None
 
 
 def _key(tenant_id: str, guardrail_name: str, date_str: str) -> str:
@@ -108,7 +170,8 @@ def _compute_effectiveness(guardrail_name: str, days: int, dated_data: list) -> 
     single source of truth for the math so the single-guardrail and all-guardrail
     paths return identical values.
     """
-    totals = {"total": 0, "passed": 0, "blocked": 0, "warned": 0, "logged": 0}
+    totals = {"total": 0, "passed": 0, "blocked": 0, "would_blocked": 0,
+              "warned": 0, "logged": 0}
     latency_sum = 0.0
     latency_count = 0
     daily = []
@@ -120,12 +183,14 @@ def _compute_effectiveness(guardrail_name: str, days: int, dated_data: list) -> 
         day_total = int(data.get("total", 0))
         day_passed = int(data.get("passed", 0))
         day_blocked = int(data.get("blocked", 0))
+        day_would_blocked = int(data.get("would_blocked", 0))
         day_warned = int(data.get("warned", 0))
         day_logged = int(data.get("logged", 0))
 
         totals["total"] += day_total
         totals["passed"] += day_passed
         totals["blocked"] += day_blocked
+        totals["would_blocked"] += day_would_blocked
         totals["warned"] += day_warned
         totals["logged"] += day_logged
 
@@ -137,6 +202,7 @@ def _compute_effectiveness(guardrail_name: str, days: int, dated_data: list) -> 
             "total": day_total,
             "passed": day_passed,
             "blocked": day_blocked,
+            "would_blocked": day_would_blocked,
             "warned": day_warned,
             "logged": day_logged,
         })
@@ -161,6 +227,7 @@ def _compute_effectiveness(guardrail_name: str, days: int, dated_data: list) -> 
         **totals,
         "pass_rate": round(totals["passed"] / t, 4),
         "block_rate": round(totals["blocked"] / t, 4),
+        "would_block_rate": round(totals["would_blocked"] / t, 4),
         "avg_latency_ms": round(avg_lat, 2),
         "daily": daily,
         "trend": trend,
@@ -174,8 +241,14 @@ def record_result(
     action: str,
     latency_ms: float = 0.0,
     unjudged: bool = False,
+    enforced: bool = True,
 ) -> None:
     """Record a single guardrail check result. Fire-and-forget.
+
+    ``enforced=False``: monitor mode let this would-be block through. It is
+    counted as ``would_blocked``, not ``blocked``, so a monitor-mode tenant's
+    reports never claim blocks that did not happen
+    (docs/specs/shadow-mode-report.md). Enforced results count as before.
 
     ``unjudged``: the check could not run (docs/specs/tool-policy-fail-safe.md).
     Counted on its own as well as under passed/blocked, because a let-through
@@ -196,10 +269,14 @@ def record_result(
     # executes via .exec() not .execute()), so a pipeline here raised and was
     # silently swallowed — metrics never recorded while audit_log (direct calls)
     # worked. Mirror audit_log and call directly; works on both clients.
+    would_block = (not passed and not enforced and action in _BLOCKING_ACTIONS
+                   and split_would_block())
     try:
         r.hincrby(key, "total", 1)
         if passed:
             r.hincrby(key, "passed", 1)
+        elif would_block:
+            r.hincrby(key, "would_blocked", 1)
         elif action == "block":
             r.hincrby(key, "blocked", 1)
         elif action == "warn":
@@ -214,6 +291,9 @@ def record_result(
         r.expire(key, _METRICS_TTL_DAYS * 86400)
     except Exception as e:
         logger.debug(f"guardrail_metrics record failed: {e}")
+        return
+    if would_block:
+        _mark_split_since(r)
 
 
 def record_results_batch(tenant_id: str, guardrail_results: list) -> None:
@@ -229,6 +309,7 @@ def record_results_batch(tenant_id: str, guardrail_results: list) -> None:
             action=gr.get("action", "pass"),
             latency_ms=gr.get("latency_ms", 0.0),
             unjudged=bool((gr.get("details") or {}).get("unjudged")),
+            enforced=_result_enforced(gr),
         )
 
 
@@ -346,8 +427,9 @@ def get_effectiveness(
     r = _get_redis()
     if not r:
         return {"guardrail": guardrail_name, "days": days, "total": 0,
-                "passed": 0, "blocked": 0, "warned": 0, "logged": 0,
-                "pass_rate": 0.0, "block_rate": 0.0, "avg_latency_ms": 0.0,
+                "passed": 0, "blocked": 0, "would_blocked": 0, "warned": 0,
+                "logged": 0, "pass_rate": 0.0, "block_rate": 0.0,
+                "would_block_rate": 0.0, "avg_latency_ms": 0.0,
                 "daily": [], "trend": "stable"}
 
     dates = [
@@ -471,7 +553,8 @@ def _daily_totals(tenant_id: str, days: int) -> list[dict]:
         (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
         for i in range(days)
     ]
-    totals = {d: {"date": d, "blocked": 0, "warned": 0, "passed": 0, "total": 0}
+    totals = {d: {"date": d, "blocked": 0, "would_blocked": 0, "warned": 0,
+                  "passed": 0, "total": 0}
               for d in dates}
     r = _get_redis()
     if not r:
@@ -486,6 +569,7 @@ def _daily_totals(tenant_id: str, days: int) -> list[dict]:
             if not data:
                 continue
             totals[d]["blocked"] += int(data.get("blocked", 0))
+            totals[d]["would_blocked"] += int(data.get("would_blocked", 0))
             totals[d]["warned"] += int(data.get("warned", 0))
             totals[d]["passed"] += int(data.get("passed", 0))
             totals[d]["total"] += int(data.get("total", 0))
@@ -657,9 +741,11 @@ def get_all_guardrails_summary(
                 "total": eff["total"],
                 "passed": eff["passed"],
                 "blocked": eff["blocked"],
+                "would_blocked": eff["would_blocked"],
                 "warned": eff["warned"],
                 "pass_rate": eff["pass_rate"],
                 "block_rate": eff["block_rate"],
+                "would_block_rate": eff["would_block_rate"],
                 "avg_latency_ms": eff["avg_latency_ms"],
                 "trend": eff["trend"],
             })

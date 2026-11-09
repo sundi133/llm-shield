@@ -1,6 +1,6 @@
 # Spec: shadow mode report ("what we would have stopped")
 
-Status: **draft 2026-11-08, awaiting approval.** Branch `spec/shadow-mode-report`.
+Status: **approved 2026-11-08.** Branch `feat/shadow-mode-report`.
 
 Builds on `core/policy_mode.py` (monitor vs enforce), `docs/specs/tenant-enforce-mode.md`
 (the portal switch), `docs/specs/self-serve-signup.md` (trial mode) and
@@ -85,7 +85,7 @@ already fire-and-forget on a thread (`storage/guardrail_metrics.py:238` onward).
 
 **No new Redis keys.** One new field in an existing hash:
 
-`guardrail_metrics:{tenant_id}:{guardrail}:{YYYY-MM-DD}` (HASH, TTL 90 days,
+`guardrail:metrics:{tenant_id}:{guardrail}:{YYYY-MM-DD}` (HASH, TTL 90 days,
 `_METRICS_TTL_DAYS`), existing fields `total, passed, blocked, warned, logged,
 unjudged, latency_*`. **New field `would_blocked`.**
 
@@ -169,8 +169,9 @@ Read-only, so the config write-scope gate does not apply.
 - A tenant in enforce mode still gets a `200`: `would_block_total` covers only the
   days it was in monitor, and `policy_mode: "enforce"` lets the portal say so.
 - `exact_since`: the deploy date of task 1, recorded as `shadow_split_since` in
-  the metrics module on first write (one `SETNX` on
-  `guardrail_metrics:split_since`, platform-wide, no TTL). Days before it may have
+  the metrics module on the first would-block (one `SET NX` per process on
+  `guardrail:metrics_split_since`, platform-wide, no TTL; outside the
+  `guardrail:metrics:{tenant}:*` SCAN pattern). Days before it may have
   would-blocks counted as blocks; the portal footnotes them.
 
 Errors: `401` no tenant; `422` bad `days` or `team`.
@@ -228,9 +229,10 @@ tile without guessing. No other change: `status=monitor` already works.
   (like `api/routes_board_report.py`). **Add `COPY api/routes_shadow_report.py api/` to
   `Dockerfile.admin`** (enforced by `tests/test_admin_dockerfile_imports.py`).
 - No new pip packages. No change to `requirements*.txt`.
-- New env flag `SHIELD_METRICS_SPLIT_WOULD_BLOCK` (default on), read on both
-  planes; add it to the OpenShift `shield-guardrail` ConfigMap docs comment
-  (not set, so default).
+- New env flag `SHIELD_METRICS_SPLIT_WOULD_BLOCK` (default on), read where
+  metrics are written (data plane, and the admin plane's playground path).
+  Documented on the task 4 docs page; the OpenShift manifests do not set it,
+  so the default applies.
 - Rebuild: `llm-shield-cloud` / `llm-shield` (data plane metrics) and
   `llm-shield-admin` (router + portal).
 
@@ -293,7 +295,7 @@ CI gate green.
 ## 9. Tasks (one PR each, in order)
 
 1. **Count would-blocks honestly.** `storage/guardrail_metrics.py` split +
-   `split_since` marker + escape-hatch flag; Board Report `would_blocked_count`;
+   `guardrail:metrics_split_since` marker + escape-hatch flag; Board Report `would_blocked_count`;
    telemetry `by_status.monitor`. Data plane plus one existing read route.
 2. **Shadow report endpoint.** `api/routes_shadow_report.py`, admin plane, `Dockerfile.admin` COPY, tests.
 3. **Portal.** Shadow report section on Board Report, print view, Telemetry
