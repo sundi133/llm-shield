@@ -3592,15 +3592,11 @@
 
             <div class="cp-grid-21">
               <div class="field" id="custom-policy-confidence-field">
-                <label for="custom-policy-confidence" class="cp-label">Confidence threshold</label>
+                <span class="cp-label">Confidence threshold</span>
                 <div class="cp-panel">
-                  <div class="cp-row" style="gap: 0.75rem; margin-bottom: 0.5rem;">
-                    <span class="cp-scale">50%</span>
-                    <input type="range" id="custom-policy-confidence" class="cp-range" min="0.5" max="1.0" step="0.1" value="0.8">
-                    <span class="cp-scale">100%</span>
-                  </div>
-                  <div class="cp-hint" style="text-align: center; margin-top: 0;">
-                    Current: <span id="custom-policy-confidence-value" class="cp-strong">80%</span>
+                  <input type="hidden" id="custom-policy-confidence" value="0.8">
+                  <div class="cp-hint" style="margin-top: 0;">
+                    <span id="custom-policy-confidence-value" class="cp-strong">80%</span>, the same for every policy. A verdict below it is shown as suppressed, not blocked.
                   </div>
                 </div>
               </div>
@@ -9388,7 +9384,7 @@ function psOpenCustomPolicy(stage, policyId) {
     document.getElementById('custom-policy-description').value = p.description || '';
     document.getElementById('custom-policy-prompt').value = p.prompt || '';
     document.getElementById('custom-policy-action').value = p.action || 'warn';
-    document.getElementById('custom-policy-confidence').value = String(p.confidence_threshold ?? 0.8);
+    document.getElementById('custom-policy-confidence').value = '0.8';
     document.getElementById('custom-policy-priority').value = String(p.priority ?? 100);
   }
 }
@@ -20515,7 +20511,7 @@ function renderCustomPoliciesForStage(stage, policies) {
       : `<div class="custom-policy-prompt" style="max-height: 60px; overflow-y: auto;">${escapeHtml(policy.prompt)}</div>`;
     const scoreBadge = isSigma
       ? `<span class="badge badge-basic" title="Deterministic Sigma rule, no LLM call">Sigma</span>`
-      : `<span class="badge badge-basic">Confidence: ${policy.confidence_threshold}</span>`;
+      : `<span class="badge badge-basic">Confidence: 0.8</span>`;
     return `
     <div class="custom-policy-card">
       <div class="custom-policy-toggle">
@@ -20609,7 +20605,7 @@ function editCustomPolicy(policyId) {
     policy.sigma_source || (policy.sigma_rule ? JSON.stringify(policy.sigma_rule, null, 2) : '');
   document.getElementById('custom-policy-sigma-sample').value = '';
   document.getElementById('custom-policy-action').value = policy.action;
-  document.getElementById('custom-policy-confidence').value = policy.confidence_threshold;
+  document.getElementById('custom-policy-confidence').value = '0.8';
   document.getElementById('custom-policy-priority').value = policy.priority;
   EDITING_POLICY_FORMAT = policy.format === 'sigma' ? 'sigma' : 'natural_language';
   setCustomPolicyFormat(EDITING_POLICY_FORMAT);

@@ -180,7 +180,7 @@ whenever they apply:
 
 | Field | Meaning | What to do |
 |---|---|---|
-| `suppressed_by_threshold` | The model DID flag the content, but below the policy's `confidence_threshold` (default `0.8`), so it was not acted on. Each entry has the policy, the confidence, and the threshold it missed. | Lower that policy's threshold, or sharpen its `prompt` so the model commits. |
+| `suppressed_by_threshold` | The model DID flag the content, but below the confidence threshold (`0.8` for every policy, see `SHIELD_CUSTOM_POLICY_THRESHOLD` below), so it was not acted on. Each entry has the policy, the confidence, and the threshold it missed. | Sharpen the policy's `prompt` so the model commits. |
 | `errors` | The policy could not be evaluated at all (LLM error, unparseable verdict). `policies_evaluated` drops below `policies_checked`. | Investigate the upstream. These are NOT passes. |
 
 Long, multi-topic messages are the common cause of a low-confidence miss: the
@@ -193,6 +193,21 @@ policy simply does not fire.
 policy that failed to evaluate. The default lets it pass, which is the historic
 behavior. Set it to `0` when your custom policies are the control rather than
 defense in depth, and an unevaluated policy will block instead.
+
+**`SHIELD_CUSTOM_POLICY_THRESHOLD`** (default `0.8`) is the confidence a
+custom policy verdict must reach to count, the same for every policy. A
+policy's stored `confidence_threshold` is ignored, and the portal no longer
+offers a per-policy slider. This replaced per-policy thresholds after a policy
+saved at `1.0` never fired: the evaluator reports `0.99` on a clear hit, so
+every detection was suppressed. Set a number from `0.5` to `1.0` to use that
+value for every policy, or `policy` to go back to each policy's own threshold.
+An out-of-range or unreadable value means `0.8`. Read on every call, so it
+takes effect without a restart.
+
+**Migration:** a policy saved above `0.8` now fires on verdicts between `0.8`
+and its old threshold, and one saved below `0.8` now needs `0.8`. If you tuned
+thresholds on purpose, set `SHIELD_CUSTOM_POLICY_THRESHOLD=policy` on the
+guardrail server before upgrading.
 
 **`SHIELD_CUSTOM_POLICY_PROMPT_LAYOUT`** (default `cached`) sets how each
 policy's prompt is laid out. Every enabled natural-language policy is one
