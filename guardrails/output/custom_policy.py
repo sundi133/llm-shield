@@ -45,6 +45,35 @@ from core.text_utils import (  # noqa: E402,F401
 )
 
 
+DEFAULT_CUSTOM_POLICY_THRESHOLD = 0.8
+
+
+def custom_policy_threshold(policy: Dict) -> float:
+    """The confidence a custom policy verdict must reach to count.
+
+    Default: 0.8 for every policy, whatever threshold the policy stores. A
+    per-policy slider let a policy be saved at 1.0, which silently disabled it:
+    the evaluator reports 0.99 on a clear hit, so every detection was dropped
+    as "below threshold". SHIELD_CUSTOM_POLICY_THRESHOLD overrides it:
+      - a number in [0.5, 1.0] uses that value for every policy;
+      - "policy" restores the old behaviour (each policy's own threshold,
+        0.8 when unset).
+    An unreadable value falls back to 0.8 rather than disabling policies.
+    """
+    raw = os.environ.get("SHIELD_CUSTOM_POLICY_THRESHOLD", "").strip().lower()
+    if raw == "policy":
+        return safe_float(policy.get("confidence_threshold"),
+                          DEFAULT_CUSTOM_POLICY_THRESHOLD)
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = None
+        if value is not None and 0.5 <= value <= 1.0:
+            return value
+    return DEFAULT_CUSTOM_POLICY_THRESHOLD
+
+
 def custom_policy_fail_open() -> bool:
     """Whether a policy that FAILED TO EVALUATE should be treated as passing.
 
@@ -200,7 +229,7 @@ def _sigma_match_result(policy: Dict, stage: str, matched: bool, selections: lis
             "matched_selections": selections,
             "reasoning": reasoning,
             "confidence": 1.0,
-            "threshold": policy.get("confidence_threshold", 0.8),
+            "threshold": custom_policy_threshold(policy),
         },
     }
 
@@ -362,7 +391,7 @@ class CustomPolicyOutputGuardrail(BaseGuardrail):
             # the second is the one an operator needs to see to tune the
             # threshold or the policy prompt.
             suppressed = False
-            if confidence < policy.get("confidence_threshold", 0.8):
+            if confidence < custom_policy_threshold(policy):
                 suppressed = bool(violates_policy)
                 violates_policy = False  # Not confident enough
 
@@ -379,7 +408,7 @@ class CustomPolicyOutputGuardrail(BaseGuardrail):
                     "violation_type": result.get("violation_type"),
                     "reasoning": result.get("reasoning", ""),
                     "confidence": confidence,
-                    "threshold": policy.get("confidence_threshold", 0.8)
+                    "threshold": custom_policy_threshold(policy)
                 }
             }
 

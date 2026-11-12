@@ -10,6 +10,7 @@ from core.llm_backend import async_llm_call
 from guardrails.output.custom_policy import (
     _parse_policy_csv,
     custom_policy_fail_open,
+    custom_policy_threshold,
     evaluate_sigma_policies,
     is_sigma_policy,
 )
@@ -167,7 +168,7 @@ class CustomPolicyInputGuardrail(BaseGuardrail):
             # the second is the one an operator needs to see to tune the
             # threshold or the policy prompt.
             suppressed = False
-            if confidence < policy.get("confidence_threshold", 0.8):
+            if confidence < custom_policy_threshold(policy):
                 suppressed = bool(violates_policy)
                 violates_policy = False  # Not confident enough
 
@@ -184,7 +185,7 @@ class CustomPolicyInputGuardrail(BaseGuardrail):
                     "violation_type": result.get("violation_type"),
                     "reasoning": result.get("reasoning", ""),
                     "confidence": confidence,
-                    "threshold": policy.get("confidence_threshold", 0.8)
+                    "threshold": custom_policy_threshold(policy)
                 }
             }
 
