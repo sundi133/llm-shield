@@ -240,7 +240,7 @@
   .usage-fill { height: 100%; background: linear-gradient(90deg, var(--success) 0%, var(--warn) 75%, var(--danger) 100%); transition: width 0.3s ease; border-radius: 3px; }
 
   /* Policy grid */
-  .policy-grid { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
+  .policy-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem; }
   .policy-card {
     background: var(--bg-3);
     border: 1px solid var(--border);
@@ -1051,6 +1051,13 @@
     #platform-features-grid { grid-template-columns: 1fr; }
     .guardrail-row { flex-wrap: wrap; }
     .guardrail-controls { width: 100%; justify-content: flex-end; margin-top: 0.5rem; }
+    /* Narrow screens: the summary column takes what is left, so a card is
+       never wider than the screen; the button row starts at the card edge. */
+    .guardrail-controls.gr-controls-grid { grid-template-columns: 96px minmax(0, 1fr) 36px; gap: 0.75rem; }
+    .gr-actions, .gr-detail { padding-left: 0; }
+    .gr-actions button.small { flex: 1 1 auto; justify-content: center; }
+    .gr-actions .gr-remove { margin-left: 0; }
+    .guardrail-info .gr-name { flex-wrap: wrap; row-gap: 0.25rem; }
     .wf-hero-grid,
     .wf-surface-grid,
     .wf-dual-grid,
