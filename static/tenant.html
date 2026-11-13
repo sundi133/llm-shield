@@ -767,6 +767,30 @@
   .guardrail-controls select:focus { outline: none; border-color: var(--accent); }
   .gr-setting-chip { font-size: 10px; font-weight: 600; color: var(--text-dim); letter-spacing: 0.3px; }
   .gr-setting-chip .mono { font-family: 'JetBrains Mono', monospace; }
+  /* Guardrail cards on the Input & Output Guardrails page: the action select,
+     setting summary and switch sit in fixed columns so they line up from card
+     to card, and the switch can never be squeezed narrower than its track. */
+  .guardrail-controls .switch { flex: none; }
+  .guardrail-controls.gr-controls-grid {
+    display: grid; grid-template-columns: 96px 88px 36px;
+    align-items: center; justify-items: start; gap: 1rem;
+  }
+  .gr-controls-grid select { width: 100%; height: 30px; font-size: 12px; }
+  .gr-controls-grid .gr-summary .gr-setting-chip {
+    display: flex; flex-direction: column; gap: 2px; line-height: 1.2;
+  }
+  .gr-controls-grid .gr-summary .gr-setting-chip .mono { font-size: 12px; color: var(--text); }
+  .gr-actions {
+    width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+    margin-top: 0.6rem; padding-left: calc(36px + 0.75rem);
+  }
+  .gr-actions button.small {
+    height: 26px; padding: 0 0.7rem; font-size: 12px; line-height: 1;
+    display: inline-flex; align-items: center;
+  }
+  .gr-actions .gr-remove { margin-left: auto; color: var(--danger); }
+  .gr-actions .gr-remove:hover { border-color: var(--danger); }
+  .gr-detail { width: 100%; margin-top: 0.5rem; padding-left: calc(36px + 0.75rem); }
   .gr-arrow { cursor: pointer; color: var(--text-muted); font-size: 18px; padding: 0 0.15rem; transition: color 0.1s; }
   .gr-arrow:hover { color: var(--text); }
 
@@ -8701,31 +8725,31 @@ function renderPolicyStage(stage) {
           </div>
           ${desc ? `<div class="gr-desc">${desc}</div>` : ''}
         </div>
-        <div class="guardrail-controls">
-          <select onchange="changeAction('${stage}','${name}',this.value)" style="font-size:11px;">
+        <div class="guardrail-controls gr-controls-grid">
+          <select onchange="changeAction('${stage}','${name}',this.value)" aria-label="Action for ${label}">
             <option value="block" ${action==='block'?'selected':''}>Block</option>
             <option value="warn" ${action==='warn'?'selected':''}>Warn</option>
             <option value="log" ${action==='log'?'selected':''}>Log</option>
           </select>
-          ${summary || ''}
-          <label class="switch">
+          <div class="gr-summary">${summary || ''}</div>
+          <label class="switch" title="${isEnabled ? 'Turn off' : 'Turn on'}">
             <input type="checkbox" ${isEnabled?'checked':''} onchange="togglePolicy('${stage}','${name}',this.checked)">
             <span class="slider"></span>
           </label>
         </div>
-        <div style="width:100%;display:flex;gap:0.4rem;margin-top:0.4rem;padding-left:2.75rem;">
-          <button class="small" onclick="document.getElementById('${configId}').classList.toggle('hidden')" style="font-size:10px;padding:0.15rem 0.5rem;">Config</button>
-          <button class="small" onclick="editPolicy('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;background:rgba(99,102,241,0.1);border-color:rgba(99,102,241,0.25);color:var(--accent-hover);">Edit</button>
-          ${ex ? `<button class="small" onclick="toggleGrDetail('${rowId}','example')" style="font-size:10px;padding:0.15rem 0.5rem;">Example</button>` : ''}
-          <button class="small" onclick="copyGrConfig('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;">Copy</button>
-          <button class="small" onclick="deletePolicy('${stage}','${name}')" style="font-size:10px;padding:0.15rem 0.5rem;color:var(--danger);border-color:rgba(239,68,68,0.25);">Remove</button>
+        <div class="gr-actions">
+          <button class="small" onclick="editPolicy('${stage}','${name}')">Edit</button>
+          <button class="small" onclick="document.getElementById('${configId}').classList.toggle('hidden')">Config</button>
+          ${ex ? `<button class="small" onclick="toggleGrDetail('${rowId}','example')">Example</button>` : ''}
+          <button class="small" onclick="copyGrConfig('${stage}','${name}')">Copy</button>
+          <button class="small gr-remove" onclick="deletePolicy('${stage}','${name}')">Remove</button>
         </div>
-        <div id="${configId}" class="hidden" style="width:100%;margin-top:0.5rem;padding-left:2.75rem;">
+        <div id="${configId}" class="hidden gr-detail">
           <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0.6rem 0.75rem;">
             <pre style="font-size:11px;margin:0;padding:0;background:none;border:none;color:var(--text-dim);white-space:pre-wrap;max-height:160px;overflow-y:auto;line-height:1.5;">${escapeHtml(settingsJson)}</pre>
           </div>
         </div>
-        <div id="${rowId}" class="hidden" style="width:100%;margin-top:0.5rem;padding-left:2.75rem;"></div>
+        <div id="${rowId}" class="hidden gr-detail"></div>
       </div>
     `;
   }).join('');
