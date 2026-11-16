@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 960" width="1400" height="960" font-family="Arial, Helvetica, sans-serif">
+  <defs>
+    <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#333333"/></marker>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#1F4E79"/></marker>
+    <marker id="o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#C55A11"/></marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2E7D32"/></marker>
+    <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5B6770"/></marker>
+  </defs>
+  <rect width="1400" height="960" fill="#FFFFFF"/>
+
+  <text x="30" y="34" font-size="22" font-weight="bold" fill="#1B2433">AI agent and fleet detection: architecture (spec rev 6)</text>
+  <text x="30" y="56" font-size="13" fill="#5B6474">Tier 1 reads the logs and alerts you already have. Tier 2 (optional) adds a page tag or mobile SDK. Shield never sits inline: your own edge and SOAR act.</text>
+
+  <!-- zones -->
+  <rect x="22" y="72" width="740" height="835" rx="12" fill="#F7F7F5" stroke="#D0D0D0"/>
+  <text x="38" y="94" font-size="12" font-weight="bold" fill="#6B6B6B" letter-spacing="1">YOUR ENVIRONMENT</text>
+  <rect x="812" y="72" width="570" height="835" rx="12" fill="#EEF4FB" stroke="#B8CCE4"/>
+  <text x="828" y="94" font-size="12" font-weight="bold" fill="#1F4E79" letter-spacing="1">SHIELD (ADMIN PLANE, CPU, OFF THE GUARD PATH)</text>
+
+  <!-- visitors -->
+  <rect x="40" y="108" width="430" height="132" rx="8" fill="#FFFFFF" stroke="#999999"/>
+  <text x="55" y="130" font-size="14" font-weight="bold" fill="#1B2433">Visitors</text>
+  <rect x="55" y="142" width="150" height="86" rx="6" fill="#FFFFFF" stroke="#BBBBBB"/>
+  <text x="65" y="162" font-size="12" font-weight="bold" fill="#1B2433">Real people</text>
+  <text x="65" y="182" font-size="12" fill="#333333">browsers and phones,</text>
+  <text x="65" y="199" font-size="12" fill="#333333">office NAT, VDI users</text>
+  <rect x="220" y="142" width="235" height="86" rx="6" fill="#FDECEC" stroke="#C00000"/>
+  <text x="230" y="162" font-size="12" font-weight="bold" fill="#8B0000">AI agent fleet</text>
+  <text x="230" y="180" font-size="12" fill="#333333">one LLM controller drives many</text>
+  <text x="230" y="197" font-size="12" fill="#333333">sandboxes, VMs or emulators,</text>
+  <text x="230" y="214" font-size="12" fill="#333333">one image, residential IPs</text>
+
+  <line x1="255" y1="240" x2="255" y2="277" stroke="#333333" stroke-width="1.6" marker-end="url(#k)"/>
+  <text x="263" y="263" font-size="11" fill="#333333">every request</text>
+
+  <!-- edge -->
+  <rect x="40" y="280" width="430" height="120" rx="8" fill="#FFFFFF" stroke="#999999"/>
+  <text x="55" y="302" font-size="14" font-weight="bold" fill="#1B2433">Your edge: CDN, WAF, bot manager, Nginx</text>
+  <text x="55" y="324" font-size="12" fill="#333333">Logs every request, with the tag's _shs cookie id</text>
+  <text x="55" y="347" font-size="12" font-weight="bold" fill="#2E7D32">Applies Shield indicators: challenge or block</text>
+  <text x="55" y="365" font-size="12" fill="#2E7D32">the rest of the fleet from its next request</text>
+  <text x="55" y="387" font-size="11" fill="#6B6B6B">Shield publishes; your edge decides and enforces</text>
+
+  <line x1="255" y1="400" x2="255" y2="437" stroke="#333333" stroke-width="1.6" marker-end="url(#k)"/>
+
+  <!-- site -->
+  <rect x="40" y="440" width="430" height="165" rx="8" fill="#FFFFFF" stroke="#999999"/>
+  <text x="55" y="462" font-size="14" font-weight="bold" fill="#1B2433">Your site or app</text>
+  <text x="180" y="462" font-size="11" fill="#6B6B6B">(sign-up, login, promotions, checkout)</text>
+  <rect x="55" y="477" width="200" height="116" rx="6" fill="#FBE5D6" stroke="#C55A11" stroke-dasharray="5 3"/>
+  <text x="65" y="497" font-size="12" font-weight="bold" fill="#C55A11">Tier 2: shs.js tag</text>
+  <text x="65" y="515" font-size="12" fill="#333333">or the mobile SDK</text>
+  <text x="65" y="535" font-size="12" fill="#333333">timings, device traits,</text>
+  <text x="65" y="552" font-size="12" fill="#333333">automation traces</text>
+  <text x="65" y="572" font-size="12" fill="#333333">never what people type</text>
+  <rect x="265" y="477" width="190" height="116" rx="6" fill="#FBE5D6" stroke="#C55A11" stroke-dasharray="5 3"/>
+  <text x="275" y="497" font-size="12" font-weight="bold" fill="#C55A11">Tier 2: rotating traps</text>
+  <text x="275" y="515" font-size="12" fill="#333333">T1 to T4, per-session codes</text>
+  <text x="275" y="535" font-size="12" fill="#333333">only an LLM reads and</text>
+  <text x="275" y="552" font-size="12" fill="#333333">follows them; hidden from</text>
+  <text x="275" y="569" font-size="12" fill="#333333">people and screen readers</text>
+
+  <!-- beacons -->
+  <polyline points="470,535 506,535 506,163 826,163" fill="none" stroke="#C55A11" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#o)"/>
+  <text x="518" y="155" font-size="11" fill="#C55A11">beacons from the browser (204, no verdict sent back)</text>
+
+  <!-- SIEM -->
+  <rect x="520" y="280" width="225" height="175" rx="8" fill="#FFFFFF" stroke="#1F4E79" stroke-width="1.4"/>
+  <text x="535" y="302" font-size="14" font-weight="bold" fill="#1F4E79">Your SIEM</text>
+  <text x="535" y="323" font-size="12" fill="#333333">Splunk, Sentinel, Elastic</text>
+  <text x="535" y="346" font-size="12" fill="#333333">Web, CDN and login logs</text>
+  <text x="535" y="364" font-size="12" fill="#333333">Existing alerts and UEBA</text>
+  <text x="535" y="387" font-size="12" fill="#333333">Shield's detections arrive as</text>
+  <text x="535" y="405" font-size="12" fill="#333333">new alerts, or as evidence on</text>
+  <text x="535" y="423" font-size="12" fill="#333333">the existing alert (no duplicates)</text>
+
+  <line x1="470" y1="330" x2="517" y2="330" stroke="#1F4E79" stroke-width="1.8" marker-end="url(#b)"/>
+  <text x="474" y="322" font-size="11" fill="#1F4E79">logs</text>
+
+  <!-- SOAR -->
+  <rect x="520" y="495" width="225" height="150" rx="8" fill="#FFFFFF" stroke="#2E7D32" stroke-width="1.4"/>
+  <text x="535" y="517" font-size="14" font-weight="bold" fill="#2E7D32">SOAR, IdP, app</text>
+  <text x="535" y="540" font-size="12" fill="#333333">Suspends or reviews the</text>
+  <text x="535" y="558" font-size="12" fill="#333333">fleet's new accounts</text>
+  <text x="535" y="581" font-size="12" fill="#333333">Undo list: orders and</text>
+  <text x="535" y="599" font-size="12" fill="#333333">promotions to reverse</text>
+
+  <!-- SIEM <-> worker -->
+  <line x1="745" y1="320" x2="826" y2="320" stroke="#1F4E79" stroke-width="1.8" marker-end="url(#b)"/>
+  <text x="752" y="312" font-size="11" fill="#1F4E79">read-only</text>
+  <text x="752" y="336" font-size="11" fill="#1F4E79">summaries</text>
+  <line x1="828" y1="425" x2="748" y2="425" stroke="#1F4E79" stroke-width="1.8" marker-end="url(#b)"/>
+  <text x="752" y="417" font-size="11" fill="#1F4E79">detections</text>
+
+  <!-- worker -> SOAR, feed -> edge -->
+  <line x1="828" y1="625" x2="748" y2="625" stroke="#2E7D32" stroke-width="1.8" marker-end="url(#g)"/>
+  <text x="752" y="617" font-size="11" fill="#2E7D32">webhooks</text>
+  <polyline points="828,660 14,660 14,340 37,340" fill="none" stroke="#2E7D32" stroke-width="1.8" marker-end="url(#g)"/>
+  <text x="40" y="680" font-size="11" fill="#2E7D32">Indicator feed (pulled every 60 s with ETag): fleet sessions, new accounts, rare fingerprints and networks, 1 h expiry</text>
+
+  <!-- guarantees -->
+  <rect x="40" y="735" width="705" height="160" rx="8" fill="#FFFFFF" stroke="#999999"/>
+  <text x="55" y="757" font-size="14" font-weight="bold" fill="#1B2433">Guarantees</text>
+  <text x="55" y="780" font-size="12" fill="#333333">Guard path untouched: nothing on /guardrails/*, cap/mint or tools/call, and no data plane change.</text>
+  <text x="55" y="800" font-size="12" fill="#333333">Shield never sits inline and holds no write credentials; your own tools do the blocking.</text>
+  <text x="55" y="820" font-size="12" fill="#333333">The tag only reports: no block, no CAPTCHA, no verdict to the browser, no typed content.</text>
+  <text x="55" y="840" font-size="12" fill="#333333">Indicators come only from confirmed fleets and clear agents, rare traits only, expire in 1 h, kill switch.</text>
+  <text x="55" y="860" font-size="12" fill="#333333">Works on logs alone (tier 1); the tag adds evidence and is measured in the lab before it ships.</text>
+  <text x="55" y="880" font-size="12" fill="#333333">New tenants start in monitor mode, with "would have challenged" counts before enforcing.</text>
+
+  <!-- collector -->
+  <rect x="830" y="108" width="535" height="110" rx="8" fill="#FBE5D6" stroke="#C55A11" stroke-width="1.4"/>
+  <text x="845" y="130" font-size="14" font-weight="bold" fill="#C55A11">Collector (tier 2, its own small service)</text>
+  <text x="845" y="152" font-size="12" fill="#333333">Serves shs.js; checks schema, 16 KB cap, origin and rate limits</text>
+  <text x="845" y="172" font-size="12" fill="#333333">Returns 204 with no body: nothing for an attacker to tune against</text>
+  <text x="845" y="192" font-size="12" fill="#333333">Appends beacons to a Redis stream, joined to log sessions by _shs</text>
+  <line x1="1097" y1="218" x2="1097" y2="257" stroke="#C55A11" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#o)"/>
+
+  <!-- worker -->
+  <rect x="830" y="260" width="535" height="480" rx="8" fill="#FFFFFF" stroke="#1F4E79" stroke-width="1.6"/>
+  <text x="845" y="282" font-size="14" font-weight="bold" fill="#1F4E79">Worker: scheduled funnel (statistics first, model only when unsure)</text>
+
+  <rect x="845" y="295" width="505" height="40" rx="6" fill="#EAF1FB" stroke="#B8CCE4"/>
+  <text x="857" y="320" font-size="12" fill="#1B2433"><tspan font-weight="bold">1  Summaries inside your SIEM:</tspan> one row per session, every 2 min</text>
+
+  <rect x="845" y="345" width="505" height="185" rx="6" fill="#EAF1FB" stroke="#B8CCE4"/>
+  <text x="857" y="366" font-size="12" fill="#1B2433"><tspan font-weight="bold">2  Statistics on every session,</tspan> every 2 min</text>
+  <rect x="857" y="378" width="235" height="142" rx="6" fill="#FFFFFF" stroke="#B8CCE4"/>
+  <text x="867" y="397" font-size="12" font-weight="bold" fill="#1B2433">Agent checks</text>
+  <text x="867" y="416" font-size="12" fill="#1F4E79">Tier 1 (logs): A1 rhythm, A2 form</text>
+  <text x="867" y="433" font-size="12" fill="#1F4E79">timing, A3 error recovery, A4 goal</text>
+  <text x="867" y="450" font-size="12" fill="#1F4E79">path, A5 traps, A6 client traits</text>
+  <text x="867" y="472" font-size="12" fill="#C55A11">Tier 2 (tag): A7 interaction,</text>
+  <text x="867" y="489" font-size="12" fill="#C55A11">A8 automation, A9 environment,</text>
+  <text x="867" y="506" font-size="12" fill="#C55A11">A10 tag missing or contradicting</text>
+  <rect x="1102" y="378" width="236" height="142" rx="6" fill="#FFFFFF" stroke="#B8CCE4"/>
+  <text x="1112" y="397" font-size="12" font-weight="bold" fill="#1B2433">Fleet linking (clustering)</text>
+  <text x="1112" y="416" font-size="12" fill="#1F4E79">Two independent traits from:</text>
+  <text x="1112" y="433" font-size="12" fill="#1F4E79">behavior, time, environment,</text>
+  <text x="1112" y="450" font-size="12" fill="#1F4E79">network; 10+ across 3+ networks</text>
+  <text x="1112" y="472" font-size="12" fill="#C55A11">A trap code reused in another</text>
+  <text x="1112" y="489" font-size="12" fill="#C55A11">session links the two on its own</text>
+  <text x="1112" y="506" font-size="12" fill="#C55A11">Rare device print = one image</text>
+
+  <rect x="845" y="540" width="505" height="62" rx="6" fill="#EAF1FB" stroke="#B8CCE4"/>
+  <text x="857" y="562" font-size="12" font-weight="bold" fill="#1B2433">3  Investigator agent: grey zone only (about 1 to 2% of sessions)</text>
+  <text x="857" y="582" font-size="12" fill="#333333">Derived features only, read-only tools, can raise but never clear, daily budget</text>
+
+  <rect x="845" y="612" width="505" height="62" rx="6" fill="#E2F0D9" stroke="#2E7D32"/>
+  <text x="857" y="634" font-size="12" font-weight="bold" fill="#2E7D32">4  Enforcement handoff</text>
+  <text x="857" y="654" font-size="12" fill="#333333">Prevalence under 0.1%, 1 h expiry, monitor first, kill switch, undo list</text>
+
+  <rect x="845" y="684" width="505" height="44" rx="6" fill="#EEF0F2" stroke="#C9CED3"/>
+  <text x="857" y="711" font-size="12" fill="#1B2433"><tspan font-weight="bold">5  Nightly hunt:</tspan> proposes rule changes; an admin approves</text>
+
+  <!-- lab -->
+  <rect x="830" y="770" width="535" height="125" rx="8" fill="#EEF0F2" stroke="#5B6770" stroke-width="1.4"/>
+  <text x="845" y="792" font-size="14" font-weight="bold" fill="#5B6770">Agent traffic lab (our own test shop only)</text>
+  <text x="845" y="814" font-size="12" fill="#333333">Claude or any OpenAI-compatible model drives real Chrome, 1 to 50 at once</text>
+  <text x="845" y="834" font-size="12" fill="#333333">Page-text and screenshot-only agents; human baseline sessions</text>
+  <text x="845" y="854" font-size="12" fill="#333333">Every run scored on logs alone and with the tag (tier 2 gain measured)</text>
+  <text x="845" y="874" font-size="12" fill="#333333">Output: a versioned detector pack with a release gate</text>
+  <line x1="1097" y1="770" x2="1097" y2="743" stroke="#5B6770" stroke-width="1.8" marker-end="url(#s)"/>
+  <text x="1105" y="760" font-size="11" fill="#5B6770">detector pack, weekly</text>
+
+  <!-- legend -->
+  <g font-size="12" fill="#333333">
+    <line x1="30" y1="933" x2="62" y2="933" stroke="#333333" stroke-width="1.8"/><text x="70" y="937">request</text>
+    <line x1="140" y1="933" x2="172" y2="933" stroke="#1F4E79" stroke-width="1.8"/><text x="180" y="937">tier 1: logs and alerts</text>
+    <line x1="340" y1="933" x2="372" y2="933" stroke="#C55A11" stroke-width="1.8" stroke-dasharray="6 4"/><text x="380" y="937">tier 2: tag or SDK (optional)</text>
+    <line x1="580" y1="933" x2="612" y2="933" stroke="#2E7D32" stroke-width="1.8"/><text x="620" y="937">enforcement by your tools</text>
+    <line x1="810" y1="933" x2="842" y2="933" stroke="#5B6770" stroke-width="1.8"/><text x="850" y="937">lab</text>
+  </g>
+</svg>
