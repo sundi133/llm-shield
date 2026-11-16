@@ -1,6 +1,6 @@
 # Spec: AI agent and fleet detection from SIEM logs
 
-Status: **draft rev 4, 2026-11-15, awaiting approval.** Branch `spec/agent-impersonation-defense`.
+Status: **draft rev 5, 2026-11-15, awaiting approval.** Branch `spec/agent-impersonation-defense`.
 
 - Rev 2 moved detection to SIEM logs with no front-end SDK.
 - Rev 3 narrows the scope to the two things a SIEM can't already do:
@@ -15,6 +15,11 @@ Status: **draft rev 4, 2026-11-15, awaiting approval.** Branch `spec/agent-imper
   about the uncertain few, with summaries computed inside the SIEM, a daily
   model budget, and safeguards against prompt injection in attacker-written
   log fields.
+- Rev 5 adds the enforcement handoff (section 5): once a fleet is confirmed,
+  Shield publishes indicators that the customer's existing WAF, bot manager,
+  app and SOAR apply, so the rest of the fleet is stopped at its first
+  request and the fleet's accounts are handled. Shield still never sits
+  inline and never holds write credentials to those systems.
 
 Reuses SIEM export (`core/siem_dispatcher.py`, `storage/siem_store.py`) and
 ASIM shaping (`core/asim.py`).
@@ -47,11 +52,20 @@ alerts**, and sends back to the SIEM only:
   that link them.
 
 Each detection either is new (no existing alert covers it) or is attached to
-the existing alert it adds evidence to. The customer's existing response
-process (SOAR, analysts, bot manager rules) acts on them.
+the existing alert it adds evidence to.
+
+Once a fleet is confirmed, Shield also publishes **enforcement indicators**
+(section 5): the fleet's accounts and sessions, and its client fingerprints
+and networks where they are rare among real users. The customer's WAF, bot
+manager, app and SOAR pull or receive them and challenge or block the
+fleet's next sessions at their first request, and suspend or review the
+accounts it created. What can be said to the customer: **detects a fleet
+within minutes, stops the rest of it through the tools you already run, and
+lists what it did so you can undo it.** The fleet's first few minutes still
+get through; stopping those needs the inline option (phase 2).
 
 Observable success:
-- on the evaluation set, the rates in section 9 are met;
+- on the evaluation set, the rates in section 10 are met;
 - on a pilot tenant, at least 80% of Shield detections are not already
   covered by an existing alert (if most are, we are duplicating and the
   product has no reason to exist).
@@ -60,8 +74,10 @@ Observable success:
 - **Rebuilding anything in the table above:** volume thresholds, per-user
   baselines, IP reputation, WAF signatures, headless or automation checks.
   Their outputs are inputs to Shield, never re-alerted.
-- **Blocking or enforcement:** the customer acts through their SOAR, WAF or
-  bot manager. No block list, no edge integration in this spec.
+- **Shield inline or holding write credentials:** Shield never sits in the
+  request path and never holds credentials that can change the customer's
+  WAF, bot manager, identity provider or app. It publishes indicators; the
+  customer's own automation applies them (section 5).
 - Inline browser script, device and VM checks, mobile SDKs.
 - Cross-customer sharing; separate spec, if wanted later.
 - Storing raw logs; Shield keeps 24-hour per-session summaries.
@@ -72,7 +88,7 @@ Observable success:
 Each detector targets something specific to an LLM driving a browser or
 app. Each lists why existing alerts miss it and which log fields it needs.
 Detectors only score sessions; a detection is raised when the combined score
-passes the threshold set by the evaluation (section 5).
+passes the threshold set by the evaluation (section 6).
 
 | ID | What it looks for | Why existing alerts miss it | Fields needed |
 |---|---|---|---|
@@ -84,7 +100,7 @@ passes the threshold set by the evaluation (section 5).
 | **A6 Agent framework traits** | Header, client hint and timing defaults of known agent frameworks, kept current from the traffic library | Bot managers fingerprint automation tools, not agent frameworks running real browsers. If the customer's CDN bot score already labels it, Shield uses that and doesn't re-alert | headers or client hints if logged, user agent |
 
 Detectors that need a field the customer doesn't log are switched off for that
-source, and the source test (section 8) says which.
+source, and the source test (section 9) says which.
 
 ### 2.2 The agent traffic library (what keeps Part 1 ahead)
 Any team could write rules like A1 to A6 once. The value is in keeping them
@@ -257,7 +273,7 @@ ignore previous instructions").
 - Tool results pass through the same reduction.
 - Where a raw value is needed for an analyst-facing explanation, it is
   inserted by code after the model has answered, never fed to it.
-- Tests include crafted injection strings in every log field (section 11).
+- Tests include crafted injection strings in every log field (section 12).
 
 ### 4.5 Nightly hunt
 Once a day the agent reviews:
@@ -314,7 +330,75 @@ Assumptions, not measurements:
 Task 0 reports the real figures: SIEM query time per poll, worker CPU per
 1,000 sessions, candidate rate, model calls and tokens per tenant per day.
 
-## 5. Scoring and thresholds
+## 5. Enforcement handoff (stopping the rest of the fleet)
+
+### 5.1 Principle
+Shield decides **what** to stop; the customer's existing tools do the
+stopping. No new blocking engine, no duplicate of the WAF or bot manager, and
+no write access to customer systems: least privilege, and the customer keeps
+control of every action.
+
+### 5.2 Indicators
+Published only for **confirmed fleets** (section 3.3) and statistically
+**clear agents** (section 6). Detections the investigator agent raised from
+the grey zone go to the SIEM but never become indicators unless an analyst
+promotes them, so prompt injection can't make Shield block anyone.
+
+| Indicator | Matched by | Default action | Safety rule |
+|---|---|---|---|
+| Account id | the app or identity provider, via SOAR | `review` (suspend is opt-in) | accounts older than the low-history age (section 3.1) are never included |
+| Session id | the app or edge | `challenge` | expires with the session |
+| Client fingerprint (user agent plus client hints plus TLS fingerprint where logged) | WAF or bot manager custom rule | `challenge` | published only if its **prevalence** among this tenant's non-fleet sessions in the last 24 h is under 0.1% |
+| Network (/24 or /48) | WAF or edge | `challenge` | published only with fleet evidence **and** prevalence under 0.1%; never on network evidence alone |
+
+**Prevalence check.** A common browser's fingerprint is shared by many real
+users. Before any fingerprint or network is published, Shield counts how
+many of the tenant's sessions **outside** the fleet share it. Above the
+threshold it is not published, and the detection says why. This is what
+keeps a fleet running a popular Chrome build from getting all Chrome users
+challenged.
+
+**Lifetime.** Every indicator expires (default 1 hour) and is renewed only
+while its fleet is still active. Analysts can revoke one, or clear all of
+them at once (the kill switch).
+
+### 5.3 Delivery
+| Path | For | How |
+|---|---|---|
+| **Pull feed** | WAFs, edges and bot managers that load lists | `GET /v1/agent-detection/indicators` as JSON, CSV or an Nginx `map`, with `ETag` so polling every 60 s is cheap |
+| **Webhook push** | SOAR and custom automation | the existing outbound webhooks (`core/webhook_dispatcher.py`), event types `agent_fleet.indicators` and `agent_fleet.ended`, signed like every other Shield webhook |
+| **SIEM** | analysts and SIEM-native playbooks | the indicators ride on the fleet detection event (section 8) |
+
+Shipped examples (docs, not connectors):
+- an Nginx `map` plus `auth_request` snippet that challenges matching sessions;
+- a Splunk SOAR playbook and a Sentinel playbook that suspend or flag fleet
+  accounts in the identity provider and open a case;
+- a generic webhook receiver.
+
+### 5.4 Undo list
+For each fleet, the detection lists what Shield saw it do: accounts created,
+promotions redeemed, orders or other protected-route actions, by route. This
+is for the customer's own clean-up (cancel orders, void promotions,
+suspend accounts). Shield doesn't call commerce or identity systems.
+
+### 5.5 Monitor first
+New tenants start in **monitor**:
+- indicators are computed and shown in the portal and the shadow report as
+  "would have challenged N later sessions";
+- the pull feed returns an empty list and webhooks don't fire.
+
+Switching to enforce is per indicator type, so a tenant can enforce session
+challenges before account actions.
+
+### 5.6 Measuring containment
+The lab's test app runs the reference Nginx integration, so containment is
+measured, not assumed:
+- **fleet sessions that got through before the first indicator** (the
+  unavoidable window);
+- **fleet sessions after it that were challenged or blocked**;
+- **human sessions challenged**.
+
+## 6. Scoring and thresholds
 - **Part 1:** weighted sum of detector scores, weights from the latest
   detector pack. Explainable: each detection lists the detectors that fired
   and their evidence.
@@ -326,7 +410,7 @@ Task 0 reports the real figures: SIEM query time per poll, worker CPU per
   (fewer detections), never looser without an admin acknowledging the
   measured false-positive rate.
 
-## 6. Plane & latency contract
+## 7. Plane & latency contract
 - **Plane: admin.** A worker process
   (`python -m core.agent_detection.worker`, same admin image, CPU) runs the
   schedules in section 4.1: polls sources, scores sessions, links fleets,
@@ -348,7 +432,7 @@ Task 0 reports the real figures: SIEM query time per poll, worker CPU per
   checkout, search by default), plus one alerts query per interval, plus at
   most 2 agent context queries per batch.
 
-## 7. Data model
+## 8. Data model
 
 Prefix `agd:` (agent detection). All keys are tenant-scoped.
 
@@ -368,18 +452,23 @@ Prefix `agd:` (agent detection). All keys are tenant-scoped.
 | `agd:{tenant}:budget:{yyyymmdd}` | counters: model calls, input and output tokens, tool calls | 2 days |
 | `agd:{tenant}:proposals` | JSON list of hunt rule proposals: condition, motivating sessions, evaluation result, status (pending, approved, rejected) | 30 days after decision |
 | `agd:{tenant}:feedback` | analyst marks: detection id, verdict (true or false positive), who, when | 30 days |
-| `agd:{tenant}:stats:{yyyymmdd}` | counters: detections, enrichments, by detector, fleets, agent decisions, budget hits | 35 days |
+| `agd:{tenant}:indicators` | sorted set by expiry; members are JSON `{id, type, value_hash, value (only for types the edge must match), action, fleet_id, prevalence, created}` | entries expire individually (default 1 h, renewed while the fleet is active) |
+| `agd:{tenant}:indicators:etag` | version counter, bumped on any change | none |
+| `agd:{tenant}:prevalence:{kind}:{yyyymmddhh}` | hash of fingerprint or network hash to count of non-fleet sessions | 25 h |
+| `agd:{tenant}:enforcement_log` | capped list (10,000) of publish, renew, revoke, clear events with who and why | 30 days |
+| `agd:{tenant}:stats:{yyyymmdd}` | counters: detections, enrichments, by detector, fleets, agent decisions, budget hits, indicators published, revoked | 35 days |
 
 - **Tenant scoping:** routes resolve the tenant with
   `resolve_request_tenant_id`; the worker processes one tenant at a time and
   reads only its keys.
 - **Settings** live in the tenant config (`tenant:{tenant_id}`) under
   `agent_detection`: enabled, routes, low-history age, `min_size`, threshold
-  overrides, schedules, daily model budget.
+  overrides, schedules, daily model budget, and an `enforcement` block (mode
+  per indicator type, actions, lifetime, prevalence threshold).
 - **Privacy:** IPs stored only as a salted hash of the /24 or /48 plus ASN
   class; account ids hashed; no bodies, query strings or field values kept.
 
-## 8. API / interface (admin plane)
+## 9. API / interface (admin plane)
 
 | Method, path | Auth | Purpose |
 |---|---|---|
@@ -392,19 +481,25 @@ Prefix `agd:` (agent detection). All keys are tenant-scoped.
 | `POST /v1/agent-detection/detections/{id}/feedback` | portal session | Mark a detection true or false positive (feeds the nightly hunt) |
 | `GET /v1/agent-detection/proposals`; `POST .../{id}/approve` or `/reject` | portal admin | Hunt rule proposals with their lab evaluation; approval queues the rule for the next detector pack |
 | `GET /v1/agent-detection/budget` | portal session | Today's model calls, tokens and remaining budget |
+| `GET /v1/agent-detection/indicators?format=json\|csv\|nginx` | tenant API key with a new `indicators:read` scope | Current indicators; `ETag` and `If-None-Match` supported; empty in monitor mode |
+| `POST /v1/agent-detection/indicators/{id}/revoke` | portal admin | Remove one indicator early |
+| `POST /v1/agent-detection/indicators/clear` | portal admin | Kill switch: remove all indicators and pause publishing for this tenant |
+| `POST /v1/agent-detection/detections/{id}/promote` | portal admin | Make a grey-zone (agent-raised) detection eligible for indicators |
 
 Detections and enrichments go to the customer's SIEM through the existing
 dispatcher as ASIM-shaped events (`event_type: agent_detection` and
-`agent_fleet`, with `related_alert_ids` on enrichments).
+`agent_fleet`, with `related_alert_ids` on enrichments). Fleet events carry
+the fleet's indicators and its undo list.
 
 Portal: an **AI Agent Detection** page with Sources, Detections (with the
 agent's explanation and feedback buttons), Fleets, Proposals, Budget, and the
 detector pack summary.
 
-## 9. Security, compatibility, failure modes
+## 10. Security, compatibility, failure modes
 
 **Compatibility.** Opt-in per tenant: nothing runs until a source is added.
-Detection only, so no traffic is ever blocked by this feature.
+Shield itself never blocks traffic; in enforce mode the customer's own tools
+act on the indicators it publishes, and new tenants start in monitor.
 `SHIELD_AGENT_DETECTION=off` stops the worker and hides the routes.
 
 **Security:**
@@ -422,6 +517,10 @@ Detection only, so no traffic is ever blocked by this feature.
   has read-only tools (sections 4.3 and 4.4).
 - **Hunt proposals** never take effect without the lab gate and an admin's
   approval.
+- **Indicators:** only from confirmed fleets and clear agents; fingerprints
+  and networks only under the prevalence threshold; every one expires; a
+  kill switch clears them all. The `indicators:read` scope can read the feed
+  but nothing else.
 
 **Failure modes:**
 
@@ -443,6 +542,10 @@ Detection only, so no traffic is ever blocked by this feature.
 | Injection string in a log field | never reaches the model (section 4.4); tested per field |
 | Guardrail model latency rising on a shared GPU | agent pauses until it recovers (section 4.7) |
 | Agent loop runs long | 6 tool calls and 60 s per batch, then statistical fallback |
+| Fleet uses a common browser fingerprint | prevalence check withholds it; account and session indicators still publish |
+| Indicator feed unreachable from the edge | the edge keeps its last list until the entries' own expiry; Shield doesn't push removals it can't deliver, so entries are short-lived by design |
+| A real user caught by an indicator | default action is a challenge, not a block; analyst revokes; the hunt gets it as false-positive feedback |
+| Fleet ends | indicators stop renewing and expire; `agent_fleet.ended` webhook fires |
 
 **Targets (proposals; the first lab run sets the operating point):**
 - Part 1, per session: at most 0.5% of human baseline sessions scored as
@@ -452,7 +555,7 @@ Detection only, so no traffic is ever blocked by this feature.
   a fleet; zero human sessions grouped into a fleet in the baseline.
 - At least 80% of detections on a pilot tenant are new rather than enrichment.
 
-## 10. Packaging & deploy
+## 11. Packaging & deploy
 - New package `core/agent_detection/` (connectors and summarizing queries,
   field mapping, detectors, LSH and fleets, dedupe, investigator agent and
   tools, hunt, worker and schedules) and `api/routes_agent_detection.py`.
@@ -478,7 +581,7 @@ Detection only, so no traffic is ever blocked by this feature.
   `SHIELD_AGENT_DETECTION_LLM_CONCURRENCY` (default 2),
   `SHIELD_AGENT_DETECTION_AGENT=off` (statistics only, no model calls at all).
 
-## 11. Test plan (Definition of Done)
+## 12. Test plan (Definition of Done)
 - Detector unit tests on recorded lab samples: each detector fires on its
   agent sample and stays quiet on the human sample.
 - Fleet tests: a fleet forms across 3 or more networks; NAT-only and
@@ -501,11 +604,17 @@ Detection only, so no traffic is ever blocked by this feature.
   marked; the separate-server routing and the concurrency cap are honored.
 - Hunt tests: a proposal stays pending until approved, and a proposal that
   fails the lab gate can't be approved.
+- Enforcement tests: a fingerprint above the prevalence threshold is never
+  published; agent-raised detections produce no indicators until promoted;
+  monitor mode returns an empty feed and fires no webhook; expiry, renewal,
+  revoke and the kill switch; `ETag` behavior; the Nginx `map` output parses.
+- Containment test in the lab: with the reference Nginx integration, fleet
+  sessions after the first indicator are challenged.
 - Regression guards: the Dockerfile imports test; a test that no new route
   mounts on the data plane app.
 - Full suite green in a clean venv; CI `pytest` gate passes.
 
-## 12. Tasks (one PR each, in order)
+## 13. Tasks (one PR each, in order)
 0. **Lab v0 and baseline:**
    - test app with Nginx and login logs into a local Elastic;
    - three agent frameworks across containers, VMs and an Android emulator,
@@ -531,7 +640,10 @@ Detection only, so no traffic is ever blocked by this feature.
 5. **No duplicates, then send:** reading existing alerts, enrichment events
    (the agent handles the fuzzy matches), the new vs enrichment metric, and
    only now sending detections to the SIEM.
-6. **Nightly hunt:** analyst feedback, rule proposals, lab evaluation of each
+6. **Enforcement handoff:** indicators with the prevalence check, pull feed
+   (JSON, CSV, Nginx), webhook events, undo list, monitor-first, kill switch,
+   Nginx and SOAR examples, containment measured in the lab.
+7. **Nightly hunt:** analyst feedback, rule proposals, lab evaluation of each
    proposal, admin approval in the portal.
-7. **Lab as a routine:** scheduled weekly runs, framework onboarding steps,
+8. **Lab as a routine:** scheduled weekly runs, framework onboarding steps,
    detector pack release process and docs.
