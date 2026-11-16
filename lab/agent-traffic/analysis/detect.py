@@ -1,0 +1,191 @@
+"""The "after": Shield's agent checks and fleet linking (spec sections 2 and 3).
+
+Lab prototype of detectors A1 to A6 and the two-trait fleet rule. Weights and
+thresholds are hand-set starting values; the lab's job is to measure them and
+replace them with numbers from data. Every verdict carries its reasons.
+"""
+
+from __future__ import annotations
+
+import statistics
+from dataclasses import dataclass, field
+from itertools import combinations
+
+from sessions import Session
+
+CLEAR_AGENT = 0.8
+GREY_LOW = 0.4
+
+
+@dataclass
+class Verdict:
+    key: str
+    score: float
+    band: str                      # clear_agent | grey | human_like
+    reasons: list = field(default_factory=list)
+    signals: dict = field(default_factory=dict)
+
+
+def _rhythm(s: Session):
+    """A1: gaps between actions sit in the model-latency band with low variation."""
+    g = s.gaps()
+    if len(g) < 4:
+        return 0.0, None
+    med = statistics.median(g)
+    cv = statistics.pstdev(g) / statistics.mean(g)
+    fast = sum(x < 1.2 for x in g) / len(g)
+    in_band = 1.5 <= med <= 30
+    score = 1.0 if (in_band and cv <= 0.6 and fast <= 0.1) else 0.5 if (in_band and cv <= 0.9 and fast <= 0.2) else 0.0
+    return score, f"action gaps median {med:.1f}s, variation {cv:.2f}, quick follow-ups {fast:.0%}"
+
+
+def _fill_timing(s: Session):
+    """A2: seconds per form field are steady across forms (fields filled one model step at a time)."""
+    per_field = [secs / n for _, secs, n in s.form_fill_seconds() if n >= 2 and secs > 0]
+    if len(per_field) < 2:
+        return 0.0, None
+    mean = statistics.mean(per_field)
+    cv = statistics.pstdev(per_field) / mean if mean else 1
+    score = 1.0 if (2 <= mean <= 20 and cv <= 0.35) else 0.5 if (2 <= mean <= 25 and cv <= 0.6) else 0.0
+    return score, f"{mean:.1f}s per form field, variation {cv:.2f} across {len(per_field)} forms"
+
+
+def _error_recovery(s: Session):
+    """A3: after a rejected submit, a changed resubmit follows after a model-latency pause."""
+    hits = 0
+    posts = [e for e in s.events if e["method"] == "POST"]
+    for a, b in zip(posts, posts[1:]):
+        if a["status"] in (400, 401) and b["uri"] == a["uri"] and 2.0 <= b["msec"] - a["msec"] <= 60 \
+                and b.get("req_len") != a.get("req_len"):
+            hits += 1
+    return (1.0 if hits else 0.0), (f"{hits} rejected submit(s) fixed and resubmitted" if hits else None)
+
+
+def _goal_directed(s: Session):
+    """A4: completes the funnel with almost no browsing."""
+    funnel = s.signups + s.promos + s.orders
+    browse = s.browsing_pages()
+    if funnel >= 2 and browse <= 1:
+        return 1.0, f"completed {funnel} funnel steps while viewing {browse} other page(s)"
+    if funnel >= 2 and browse <= 2:
+        return 0.5, f"completed {funnel} funnel steps while viewing {browse} other pages"
+    return 0.0, None
+
+
+def _tripwire(s: Session):
+    """A5: acted on the hidden instruction no person can see."""
+    return (1.0, "filled in the hidden verification field") if s.tripwire else (0.0, None)
+
+
+def _client_traits(s: Session):
+    """A6: client hints contradict the claimed browser."""
+    ua = s.ua
+    reasons = []
+    if "Headless" in ua:
+        reasons.append("headless browser")
+    claims_windows, claims_mac = "Windows" in ua, "Macintosh" in ua
+    plat = s.platform.strip('"')
+    if plat and ((claims_windows and plat != "Windows") or (claims_mac and plat != "macOS")):
+        reasons.append(f"user agent claims {'Windows' if claims_windows else 'macOS'} but the browser reports {plat}")
+    if "Chrome/" in ua and not s.chua:
+        reasons.append("claims Chrome but sends no client hints")
+    import re
+    claimed = re.search(r"Chrome/(\d+)", ua)
+    hinted = re.search(r'"(?:Google Chrome|Chromium)";v="(\d+)"', s.chua)
+    if claimed and hinted and claimed.group(1) != hinted.group(1):
+        reasons.append(f"user agent claims Chrome {claimed.group(1)} but client hints say {hinted.group(1)}")
+    return (1.0, "; ".join(reasons)) if reasons else (0.0, None)
+
+
+DETECTORS = [  # id, function, weight
+    ("A1", _rhythm, 0.45), ("A2", _fill_timing, 0.35), ("A3", _error_recovery, 0.25),
+    ("A4", _goal_directed, 0.30), ("A5", _tripwire, 0.95), ("A6", _client_traits, 0.60),
+]
+
+
+def score_session(s: Session) -> Verdict:
+    keep = 1.0
+    reasons, signals = [], {}
+    for did, fn, weight in DETECTORS:
+        value, why = fn(s)
+        signals[did] = value
+        if value:
+            keep *= 1 - weight * value
+            reasons.append(f"{did}: {why}")
+    score = round(1 - keep, 3)
+    band = "clear_agent" if score >= CLEAR_AGENT else "grey" if score >= GREY_LOW else "human_like"
+    return Verdict(s.key, score, band, reasons, signals)
+
+
+# ── fleets (spec section 3) ───────────────────────────────────────────────
+
+def _shingles(seq: list[str], k: int = 3) -> set:
+    return {tuple(seq[i:i + k]) for i in range(max(1, len(seq) - k + 1))}
+
+
+def _timing_profile(s: Session):
+    g = s.gaps()
+    if len(g) < 3:
+        return None
+    return round(statistics.median(g) / 2)   # 2-second buckets
+
+
+def link_traits(a: Session, b: Session, sh: dict) -> set[str]:
+    groups = set()
+    jacc = len(sh[a.key] & sh[b.key]) / max(1, len(sh[a.key] | sh[b.key]))
+    ta, tb = _timing_profile(a), _timing_profile(b)
+    if jacc >= 0.6 and ta is not None and ta == tb:
+        groups.add("behavior")
+    if abs(a.start - b.start) <= 30:
+        groups.add("time")
+    if a.fingerprint == b.fingerprint:
+        groups.add("client")
+    if a.net24 == b.net24:
+        groups.add("network")
+    return groups
+
+
+def find_fleets(sessions: list[Session], *, min_size: int = 10, min_networks: int = 3) -> list[dict]:
+    """Union-find over pairs that share at least two independent trait groups.
+
+    A shared network alone, or a shared path alone, never links two sessions.
+    Behavior is required, so people who merely share an office IP and a
+    browser build don't form a fleet.
+    """
+    parent = {s.key: s.key for s in sessions}
+
+    def root(k):
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    sh = {s.key: _shingles(s.path_sequence()) for s in sessions}
+    link_groups: dict[tuple, set] = {}
+    for a, b in combinations(sessions, 2):
+        g = link_traits(a, b, sh)
+        if len(g) >= 2 and "behavior" in g:
+            parent[root(a.key)] = root(b.key)
+            link_groups[(a.key, b.key)] = g
+    groups: dict[str, list[Session]] = {}
+    for s in sessions:
+        groups.setdefault(root(s.key), []).append(s)
+    fleets = []
+    for members in groups.values():
+        nets = {m.net24 for m in members}
+        if len(members) >= min_size and len(nets) >= min_networks:
+            keys = {m.key for m in members}
+            traits = {}
+            for (a, b), g in link_groups.items():
+                if a in keys:
+                    for t in g:
+                        traits[t] = traits.get(t, 0) + 1
+            fleets.append({
+                "id": f"fleet-{min(keys)[:8]}", "size": len(members), "networks": len(nets),
+                "members": sorted(keys), "linking_traits": traits,
+                "start": min(m.start for m in members), "end": max(m.end for m in members),
+                "accounts": sorted({m.account for m in members if m.account}),
+                "signups": sum(m.signups for m in members), "promos": sum(m.promos for m in members),
+                "orders": sum(m.orders for m in members),
+            })
+    return fleets
