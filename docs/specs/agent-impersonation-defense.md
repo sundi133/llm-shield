@@ -28,7 +28,9 @@ Status: **draft rev 6, 2026-11-16, awaiting approval.** Branch `spec/agent-imper
   - rotating per-session traps that only an LLM reacts to, with codes that
     also link sessions to one controller (section 2.4);
   - device-level fleet linking that exposes many sandboxes started from one
-    image (section 3.4).
+    image (section 3.4);
+  - declared agents through Web Bot Auth: signed agents are told apart from
+    impersonators, and a forged signature is evidence (section 2.5).
 
   Everything still works from logs alone; the tag only adds evidence. It
   never blocks, challenges or returns a verdict to the browser.
@@ -182,7 +184,7 @@ as weaker.
 
 | ID | What it looks for | Why existing tools miss it | Signals |
 |---|---|---|---|
-| **A7 Interaction** | Fields that change with no key events (values set by script, as Playwright `fill` does); clicks within a few pixels of the exact centre of every element; pointer jumps with no path between them, or no pointer at all before clicks; synthetic events (`isTrusted` false); steady per-key timing | Bot managers check for automation tools; an LLM driving real Chrome passes those, but it still clicks and types like a program | counts and summary statistics per page: key and input events per field, click offset from element centre, pointer path straightness, inter-key timing mean and variation |
+| **A7 Interaction** | Fields that change with no key events (values set by script, as Playwright `fill` does); no corrections at all (people mistype, delete and retype); clicks within a few pixels of the exact centre of every element; pointer jumps with no path between them, or no pointer at all before clicks; synthetic events (`isTrusted` false); steady per-key timing where people pause unevenly | Bot managers check for automation tools; an LLM driving real Chrome passes those, but it still clicks and types like a program | counts and summary statistics per page: key and input events per field, click offset from element centre, pointer path straightness, inter-key timing mean and variation |
 | **A8 Automation traces** | `navigator.webdriver`, side effects of a browser-control (CDP) connection, a headless window shape, client hints that contradict the user agent | Often already covered by the customer's bot manager; if its score is in the logs, Shield uses that instead and doesn't re-alert (rev 3 rule) | booleans and short strings |
 | **A9 Environment** | Software graphics (SwiftShader, llvmpipe), VM graphics adapters (VMware, VirtualBox, Parallels), emulator properties on Android, no battery or sensors, core count and memory identical across "different" users | Nobody correlates these across sessions; on their own they also describe real VDI and Citrix users, so A9 is **supporting only** and never raises a detection alone | graphics renderer string, cores, memory, screen, time zone, a canvas hash |
 | **A10 Tag missing or contradicting** | A protected form submitted with no tag beacon for that session, or a tag reporting a different user agent or time zone than the request and the IP | Ad blockers also stop tags, so A10 is weak on its own; it matters combined with others | join state, user agent, time zone, the CDN's country field if logged |
@@ -241,6 +243,47 @@ session B proves one controller passed it between them.
   accessibility risk, so the spec doesn't do it. Those agents are caught by
   A1, A7 and fleet linking, and the lab measures this separately.
 
+### 2.5 Declared agents (Web Bot Auth)
+Not every agent is an attacker. Some operators **sign** their agents'
+requests with Web Bot Auth:
+- HTTP Message Signatures (RFC 9421) plus a `Signature-Agent` header that
+  points to the operator's public key directory
+  (`/.well-known/http-message-signatures-directory`);
+- so a site can check **which operator** sent a request, instead of
+  trusting a user agent string or an IP list that anyone can copy.
+
+**Status (checked 2026-11-16):**
+- Still IETF work in progress (the `webbotauth` working group), not yet an
+  RFC.
+- Verified in production by Cloudflare's verified bots program, and
+  reportedly by AWS WAF, Akamai, HUMAN and Vercel.
+- The draft and Cloudflare's docs reportedly differ on the `Signature-Agent`
+  syntax (dictionary vs plain string), so a verifier must accept both.
+
+**Impersonation is the unsigned case.** An agent that signs is declaring
+itself; this spec is about agents posing as people. Web Bot Auth tells the
+two apart:
+
+| Edge verification result | What Shield does |
+|---|---|
+| Valid signature, operator on the tenant's allow list | Labeled **declared agent**. Never linked into an impersonation fleet, never an indicator. Volume is shown per operator; the customer's edge policy and threshold rules apply to it as one entity |
+| Valid signature, operator not on the allow list | **Declared agent, unknown operator**: reported for the customer to allow or limit; not impersonation and never an indicator on its own |
+| Signature present but invalid, or a known operator's `Signature-Agent` with no valid signature | **A11 Forged identity**: strong evidence, high weight. Someone is posing as a trusted agent |
+| No signature | Most agents today, and every person. Absence is **not** evidence |
+
+- **Verification happens at the edge, not in Shield.** The CDN does it
+  (Cloudflare and the others above), or a reference verifier in front of
+  Nginx for self-run edges. The edge logs the result and the operator's key
+  directory host; Shield reads those log fields. The worker holds no keys
+  and does no cryptography.
+- **If the edge doesn't verify, Shield can't.** Logs don't hold the signed
+  request components. The source test says A11 and the declared-agent
+  label are off for that source.
+- **A signature names the operator, not the person it acts for.** It
+  doesn't exempt the accounts it creates from account-level rules.
+- **Allow list:** per tenant, by key directory host, in the tenant config
+  under `agent_detection.declared_agents`.
+
 ## 3. Part 2: fleet detection across new sessions
 
 ### 3.1 Scope: where UEBA can't look
@@ -258,7 +301,7 @@ traits** from different groups:
 | Behavior | Path sequence | MinHash over overlapping chunks of the first 20 page or API paths, so small variations still match |
 | Behavior | Timing profile | A1 and A2 features bucketed into a short vector; distance under a threshold |
 | Behavior | Interaction profile (tier 2) | A7 features bucketed; distance under a threshold |
-| Time | Synchronized start | Starts within the same 30-second bucket as many others |
+| Time | Synchronized start or stop | Starts, or stops, within the same 30-second bucket as many others (a controller launching or halting its sandboxes together) |
 | Environment | Client fingerprint | User agent plus client hints plus TLS fingerprint where logged, exact match |
 | Environment | Device fingerprint (tier 2) | Graphics renderer, canvas hash, screen, cores, memory, fonts hash, time zone; exact match, and only when **rare** (section 3.4) |
 | Network | Network | Same ASN class and /24, used only as a supporting trait |
@@ -748,6 +791,9 @@ beacons, and tier 1 carries on unchanged.
 | VDI or Citrix office users (VM graphics) | A9 is supporting only and never links sessions (section 3.4) |
 | Popular phone model shares a device fingerprint | prevalence check: not rare, so not a linking trait and not an indicator |
 | Collector down or slow | beacons are lost (fire and forget); pages are unaffected; tier 1 carries on |
+| Signed agent from an allowed operator | declared agent: never a fleet member or an indicator (section 2.5) |
+| Edge doesn't verify Web Bot Auth | A11 and the declared-agent label are off for that source; the source test says so |
+| Signature syntax differs between verifiers | the reference verifier accepts both the dictionary and plain string forms of `Signature-Agent` |
 | Screenshot-only agent | never sees traps; caught by A1, A7 and fleets or not at all; the lab reports this rate separately |
 
 **Targets (proposals; the first lab run sets the operating point):**
@@ -842,6 +888,10 @@ beacons, and tier 1 carries on unchanged.
     order (axe-core run in a headless browser in the lab job);
   - `shs.js` stays under 15 KB and sends no field values (a test types into
     a form and inspects the beacon).
+- Declared agent tests: a verified, allowed operator is never linked into a
+  fleet or published as an indicator; an invalid signature, or a known
+  operator's `Signature-Agent` without a valid signature, raises A11; no
+  signature changes nothing.
 - Regression guards: the Dockerfile imports test; a test that no new route
   mounts on the data plane app or on `admin_app.py` for the collector paths.
 - Full suite green in a clean venv; CI `pytest` gate passes.
@@ -872,6 +922,8 @@ beacons, and tier 1 carries on unchanged.
    - a screenshot-only agent mode next to the page-text mode;
    - sandbox variety: Docker Chrome containers from one image vs varied
      local browsers;
+   - a signing agent mode (Web Bot Auth) and a reference verifier in front
+     of the shop, with a forged-signature case;
    - the report gets a third column: SIEM rules, Shield on logs, Shield
      with the tag.
 
@@ -879,8 +931,9 @@ beacons, and tier 1 carries on unchanged.
 1. **Sources:** log and alert connectors for Splunk, Sentinel and Elastic
    with the default summarizing queries, NDJSON push, field mapping, source
    test, cursors, credential storage.
-2. **Part 1 detectors** A1 to A6, detector pack format and CI gate, portal
-   Detections. Nothing is sent to the SIEM yet, so no duplicates can reach it
+2. **Part 1 detectors** A1 to A6, plus the declared-agent label and A11
+   from the edge's Web Bot Auth log fields (section 2.5), detector pack
+   format and CI gate, portal Detections. Nothing is sent to the SIEM yet, so no duplicates can reach it
    before task 5.
 3. **Part 2 fleets:** low-history scope, LSH and trait linking, fleets,
    portal Fleets.
