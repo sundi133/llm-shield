@@ -244,6 +244,16 @@ session B proves one controller passed it between them.
 - **Accessibility:** every trap is `aria-hidden`, `inert`, removed from the
   tab order and not displayed to sighted users, so screen-reader users never
   meet it. An automated accessibility check runs in CI (section 12).
+- **Lab finding on `inert` (2026-11-16, task 0b):** `inert` makes
+  Playwright's `fill` and `click` fail on the trap field and link, so it
+  blinds T1 for the commonest agent tooling, while the instruction text stays
+  readable. Without it, `aria-hidden`, off-screen placement and
+  `tabindex="-1"` already keep every trap out of Chrome's accessibility tree
+  and the tab order (checked with the DevTools accessibility tree and a Tab
+  walk). The lab rotates `inert` per session and reports hits for each half;
+  whether the product keeps `inert` is decided from that number.
+- **Canaries answer `204`:** Chrome aborts a navigation to a `204`, so the
+  agent stays where it was; the access log row is the hit.
 - **Known blind spot:** agents that work only from screenshots never see a
   hidden trap. Showing them something people would also see is an
   accessibility risk, so the spec doesn't do it. Those agents are caught by

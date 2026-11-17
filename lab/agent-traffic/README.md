@@ -14,13 +14,15 @@ navigation elsewhere is refused. IPs are simulated residential proxies sent as
 
 | Path | What it is |
 |---|---|
-| `shop/app.py` | The test shop (sign-up, login, promotion, products, checkout, a hidden tripwire field) |
+| `shop/app.py` | The test shop (sign-up, login, promotion, products, checkout) with traps on every page and form |
+| `shop/traps.py` | Rotating traps T1 to T4 with per-session codes `HMAC(secret, _shs, trap, day)` (spec 2.4); the secret is `state/trap_secret` or `LAB_TRAP_SECRET` |
 | `shop/nginx.conf` | The edge: writes the JSON access log a SIEM would hold, and enforces Shield's indicator maps |
 | `agents/llm.py` | Model adapter: Claude (Anthropic SDK) or any OpenAI-compatible endpoint (OpenRouter, Azure OpenAI, vLLM, Ollama) |
 | `agents/browser_agent.py` | The agent: reads the page as text plus numbered controls, asks the model for one action, acts in real Chrome |
 | `agents/fleet.py` | One controller running N agents, each with its own persona and IP |
 | `tag/shs.js` | Tier 2 tag prototype (spec 2.3): device, automation and interaction signals as counts, timings and hashes; sets the `_shs` cookie |
 | `collector/app.py` | Tier 2 collector prototype on `/_shs/` (port 8201 behind Nginx): serves the tag, validates beacons (schema v1, 16 KB, origin, rate limit), always `204`; writes `state/logs/beacons.jsonl` |
+| `analysis/trapcheck.py` | Resolves canary hits (`/_shs/v/{code}`) to their session; another session's code is controller evidence |
 | `analysis/beacons.py` | Joins beacons to log sessions by `_shs` (fallback: IP, user agent, time; marked weak) |
 | `analysis/siem_rules.py` | "Before": per-IP and per-account threshold rules and an automation user-agent list |
 | `analysis/detect.py` | "After": agent checks A1 to A6 and fleet linking (two independent traits) |

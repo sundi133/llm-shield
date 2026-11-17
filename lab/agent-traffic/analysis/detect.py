@@ -73,8 +73,24 @@ def _goal_directed(s: Session):
 
 
 def _tripwire(s: Session):
-    """A5: acted on the hidden instruction no person can see."""
-    return (1.0, "filled in the hidden verification field") if s.tripwire else (0.0, None)
+    """A5 (spec 2.4): acted on a hidden instruction no person can see.
+
+    The session's own code (T1 field, T2 link, T3 comment) or another
+    session's code is clear; a value in a trap field with no code (T4, which
+    browser autofill can also produce) is weak; an unknown canary code is in
+    between.
+    """
+    hits = set(s.trap_hits)
+    own = sorted(h for h in hits if h in ("T1", "T2", "T3"))
+    if s.reused_codes:
+        return 1.0, f"presented trap codes shown to {len(s.reused_codes)} other session(s): one controller"
+    if own:
+        return 1.0, f"followed a hidden instruction with this session's code ({', '.join(own)})"
+    if "T2?" in hits:
+        return 0.5, "opened a hidden verification link with an unknown code"
+    if "T4" in hits:
+        return 0.35, "filled a hidden field that carries no instruction (autofill can do this too)"
+    return 0.0, None
 
 
 def _client_traits(s: Session):

@@ -31,6 +31,7 @@ sys.path.insert(0, str(LAB / "agents"))
 
 import detect  # noqa: E402
 import siem_rules  # noqa: E402
+import trapcheck  # noqa: E402
 from sessions import build_sessions, load_events  # noqa: E402
 
 HUMAN_PREFIXES = ("192.168.65.", "172.17.", "172.18.", "127.")
@@ -149,6 +150,7 @@ def main() -> None:
 
     events = load_events(LAB / "state" / "logs" / "access.jsonl", since, until)
     sessions = build_sessions(events)
+    trapcheck.resolve(sessions, trapcheck.traps.secret(LAB / "state"))
     by_key = {s.key: s for s in sessions}
     truth = {s.key: truth_for(s, agent_ips) for s in sessions}
     sessions = [s for s in sessions if truth[s.key] != "tooling"]

@@ -16,6 +16,7 @@ from pathlib import Path
 
 STATIC = re.compile(r"^/(static/|favicon)")
 TAG = re.compile(r"^/_shs/")       # the tier 2 tag and its beacons: never page actions
+CANARY = re.compile(r"^/_shs/v/([0-9a-f]{8})$")   # T2 and T3 canary links (spec 2.4), visible in logs
 FORM_FIELDS = {"/signup": 4, "/checkout": 3, "/promo": 1, "/login": 2}
 BROWSE = re.compile(r"^/(product/\d+|help|about)$")
 
@@ -39,13 +40,24 @@ class Session:
     promo_failed: int = 0
     logins_failed: int = 0
     orders: int = 0
-    tripwire: bool = False
+    trap_hits: list = field(default_factory=list)   # T1 | T4 | T1x:<shs> from the app; T2/T3 after resolve
+    canary_codes: list = field(default_factory=list)
     enforced_requests: int = 0
     first_request_enforced: bool = False
     shs_ids: set = field(default_factory=set)       # tag session ids seen on this session's log rows
     tag_requests: int = 0
 
     # derived
+    @property
+    def tripwire(self) -> bool:
+        """Acted on a hidden instruction with this session's own code (T1, T2 or T3)."""
+        return any(h in ("T1", "T2", "T3") for h in self.trap_hits)
+
+    @property
+    def reused_codes(self) -> set:
+        """Tag session ids whose trap codes this session presented (one controller)."""
+        return {h.split(":", 1)[1] for h in self.trap_hits if "x:" in h}
+
     @property
     def net24(self) -> str:
         parts = self.ip.split(".")
@@ -101,7 +113,8 @@ class Session:
             "start": self.start, "end": self.end, "pages": len(self.events), "assets": self.assets,
             "median_gap": round(statistics.median(gaps), 2) if gaps else None,
             "signups": self.signups, "promos": self.promos, "orders": self.orders,
-            "tripwire": self.tripwire, "enforced_requests": self.enforced_requests,
+            "tripwire": self.tripwire, "trap_hits": sorted(set(self.trap_hits)),
+            "enforced_requests": self.enforced_requests,
         }
 
 
@@ -146,8 +159,11 @@ def build_sessions(events: list[dict]) -> list[Session]:
         s.promo_failed += ev == "promo_failed"
         s.logins_failed += ev == "login_failed"
         s.orders += ev == "order"
-        s.tripwire |= e.get("trip") == "1" or e["uri"].startswith("/partners/verify")
-        if TAG.match(e["uri"]):
+        s.trap_hits += [h for h in (e.get("trip") or "").split(",") if h]
+        canary = CANARY.match(e["uri"])
+        if canary:
+            s.canary_codes.append(canary.group(1))
+        elif TAG.match(e["uri"]):
             s.tag_requests += 1
         elif STATIC.match(e["uri"]):
             s.assets += 1
