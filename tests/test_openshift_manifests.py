@@ -21,7 +21,7 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TREE = ROOT / "openshift"
 OVERLAYS = ["split", "combined", "external"]
-OPTIONAL = ["fp16", "vault", "external-redis", "redis-auth"]
+OPTIONAL = ["fp16", "vault", "external-redis", "redis-auth", "agent-detection-collector"]
 CLUSTER_SCOPED = {"Namespace", "ClusterRole", "ClusterRoleBinding", "CustomResourceDefinition",
                   "SecurityContextConstraints", "PersistentVolume", "StorageClass"}
 
@@ -263,6 +263,17 @@ def test_every_component_builds_with_every_overlay(tmp_path, overlay, component)
         assert not [d for d in docs if d["metadata"]["name"] in ("redis", "redis-data", "redis-ingress")]
     if component == "redis-auth":
         assert "--requirepass" in _container(deps["redis"])["args"]
+    if component == "agent-detection-collector":
+        c = _container(deps["shield-agd-collector"])
+        assert c["image"].endswith("shield-admin") or "llm-shield-admin" in c["image"]
+        assert c["command"] == ["python3", "-m", "core.agent_detection.collector"]
+        assert "envFrom" not in c, "the public pod must not get the whole admin secret"
+        refs = {e["name"]: e["valueFrom"]["secretKeyRef"] for e in c["env"] if "valueFrom" in e}
+        assert refs["REDIS_URL"] == {"name": "shield-admin-secrets", "key": "REDIS_URL"}
+        assert set(refs) == {"REDIS_URL", "SHIELD_AGENT_DETECTION_HASH_SALT"}
+        np = _one(docs, "NetworkPolicy", "redis-ingress")
+        allowed = {p["podSelector"]["matchLabels"]["app"] for p in np["spec"]["ingress"][0]["from"]}
+        assert allowed == {"shield-guardrail", "shield-admin", "shield-agd-collector"}
 
 
 # ── the CI job's validator gets every overlay ────────────────────────────────

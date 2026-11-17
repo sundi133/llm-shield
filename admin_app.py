@@ -172,6 +172,9 @@ from api.routes_inbound_webhooks import router as _inbound_webhooks_router
 # Password sign-in (docs/specs/password-sign-in.md): hard, like sign-up.
 from api.routes_password_auth import router as _password_auth_router
 from api.routes_people import router as _people_router
+# AI agent detection (docs/specs/agent-impersonation-defense.md rev 8): hard,
+# like the inbox. The collector is a separate process and is not mounted here.
+from api.routes_agent_detection import router as _agent_detection_router
 try:
     from api.routes_admin_auth import router as _admin_auth_router
 except Exception:
@@ -1170,6 +1173,7 @@ def create_admin_app() -> FastAPI:
     app.include_router(_password_auth_router)          # /v1/tenant/auth/password*, /v1/tenant/me/password
     app.include_router(_people_router)                 # /v1/tenant/me/people*, /v1/tenant/me/sign-in-methods
     app.include_router(_inbound_webhooks_router)       # /v1/inbound/{token}, /v1/tenant/me/inboxes*, /v1/admin/inboxes*
+    app.include_router(_agent_detection_router)        # /v1/agent-detection/* (off: SHIELD_AGENT_DETECTION=off)
     if _admin_auth_router:
         app.include_router(_admin_auth_router)         # /v1/admin/auth/*
     if _mcp_signin_router:

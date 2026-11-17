@@ -764,6 +764,7 @@ Prefix `agd:` (agent detection). All keys are tenant-scoped.
 | `agd:{tenant}:sess:{key_hash}` | hash: entity age class, detector scores, timing vector, path MinHash, fingerprint hash, network hash, fleet_id; tier 2 adds device hash, environment class, interaction vector, tag state (joined, missing, contradicting), trap hits | 24 h |
 | `agd:sitekey:{site_key}` | `{tenant, origins, platform (web, android, ios), consent, created}` | none |
 | `agd:{tenant}:sitekeys` | set of the tenant's site keys | none |
+| `agd:tag_tenants` | set of tenants with at least one site key; the worker reads only their beacon streams (rev 8) | none |
 | `agd:{tenant}:beacons` | Redis stream of validated beacons (`XADD MAXLEN ~ 200000`), read by the worker with a consumer group | trimmed by length |
 | `agd:{tenant}:trapcode:{code}` | the `_shs` hash that was shown this code | 24 h |
 | `agd:{tenant}:lsh:{band}:{bucket_hash}` | set of session key hashes (path similarity candidates) | 1 h |

@@ -136,6 +136,10 @@ COPY storage/signup_store.py storage/
 # Webhook inbox (docs/specs/webhook-inbox.md), imported by admin_app.py.
 COPY api/routes_inbound_webhooks.py api/
 COPY storage/webhook_inbox_store.py storage/
+# AI agent detection (rev 8): admin routes, and the collector, which runs from
+# this image as its own service: python -m core.agent_detection.collector
+COPY api/routes_agent_detection.py api/
+COPY core/agent_detection/ core/agent_detection/
 # Password sign-in (docs/specs/password-sign-in.md), imported by admin_app.py.
 COPY api/routes_password_auth.py api/
 COPY api/routes_people.py api/

@@ -1,0 +1,56 @@
+# The collector: python -m core.agent_detection.collector (admin image).
+# Reads only REDIS_URL from shield-admin-secrets, never the admin key: this
+# pod faces the internet.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shield-agd-collector
+  labels: { app: shield-agd-collector }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: shield-agd-collector } }
+  template:
+    metadata:
+      labels: { app: shield-agd-collector }
+    spec:
+      containers:
+        - name: collector
+          image: shield-admin
+          command: ["python3", "-m", "core.agent_detection.collector"]
+          ports: [{ name: http, containerPort: 8090 }]
+          env:
+            - { name: PORT, value: "8090" }
+            - { name: SHIELD_TRUST_PROXY_HEADERS, value: "1" }
+            - name: REDIS_URL
+              valueFrom: { secretKeyRef: { name: shield-admin-secrets, key: REDIS_URL } }
+            - name: SHIELD_AGENT_DETECTION_HASH_SALT
+              valueFrom: { secretKeyRef: { name: shield-agent-detection, key: SHIELD_AGENT_DETECTION_HASH_SALT } }
+          readinessProbe:
+            httpGet: { path: /health, port: 8090 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8090 }
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: "1", memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shield-agd-collector
+  labels: { app: shield-agd-collector }
+spec:
+  selector: { app: shield-agd-collector }
+  ports: [{ name: http, port: 8090, targetPort: 8090 }]
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: shield-agd-collector
+  labels: { app: shield-agd-collector }
+spec:
+  to: { kind: Service, name: shield-agd-collector }
+  port: { targetPort: http }
+  tls: { termination: edge, insecureEdgeTerminationPolicy: Redirect }
