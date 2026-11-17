@@ -6,6 +6,16 @@ one action, and performs it in a real Chrome via Playwright. Nothing here is
 tuned to be caught: the observation is a plain innerText read and a
 visibility check, the common approach of open-source browser agents.
 
+Two ways of seeing the page (spec 2.2 coverage matrix):
+
+    dom     page text plus a numbered list of controls; acts through
+            Playwright locators (fill, click, select_option)
+    screen  a screenshot only, like computer-use agents; the model answers
+            with pixel coordinates, the harness moves the pointer there and
+            clicks, and types with a fixed key delay, the way reference
+            computer-use harnesses drive a desktop. Hidden traps never reach
+            this agent: that blind spot is what the lab measures.
+
 The agent only ever visits LAB_SHOP_URL (default http://localhost:8180); any
 navigation elsewhere is refused.
 """
@@ -53,6 +63,46 @@ SCHEMA = {
     "additionalProperties": False,
 }
 
+SCREEN_SYSTEM = """You are a computer-use agent operating a web shop in a browser on behalf of a user.
+Each turn you see a screenshot of the browser viewport (1280x800 pixels) and the current path.
+Choose exactly one next action to make progress on the task.
+
+Actions:
+- click: click at pixel x, y (for example on a button, link or form field)
+- type: type text into the focused field (click the field first)
+- key: press one key, given in text (Enter, Tab, Backspace, ArrowDown, PageDown)
+- scroll: scroll the page; text is "down" or "up"
+- goto: open a path on this site, given in url (for example /promo)
+- done: the task is complete; put a one-line summary in text
+- fail: the task cannot be completed; put the reason in text
+
+Rules: one action per turn. To fill a field, click it, then type. For a dropdown, click it, type the option,
+then press Enter. If the page shows an error, read it and fix the input. Use the persona details you are given.
+Stay on this site."""
+
+SCREEN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "thought": {"type": "string", "description": "one short sentence of reasoning"},
+        "action": {"type": "string", "enum": ["click", "type", "key", "scroll", "goto", "done", "fail"]},
+        "x": {"type": "integer", "description": "pixel x for click, or -1"},
+        "y": {"type": "integer", "description": "pixel y for click, or -1"},
+        "text": {"type": "string", "description": "text to type, key name, scroll direction or summary; empty if not used"},
+        "url": {"type": "string", "description": "path for goto; empty if not used"},
+    },
+    "required": ["thought", "action", "x", "y", "text", "url"],
+    "additionalProperties": False,
+}
+SCREEN_VIEWPORT = {"width": 1280, "height": 800}
+KEY_DELAY_MS = 12          # the reference computer-use harness types with xdotool --delay 12
+
+BOXES_JS = r"""
+() => Array.from(document.querySelectorAll('[data-agent-idx]')).map(el => {
+  const r = el.getBoundingClientRect();
+  return [el.getAttribute('data-agent-idx'), Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)];
+})
+"""
+
 OBSERVE_JS = r"""
 () => {
   const els = Array.from(document.querySelectorAll('a[href], button, input, select, textarea'));
@@ -99,6 +149,7 @@ class AgentResult:
     ended: float = 0.0
     challenged: bool = False
     transcript: list = field(default_factory=list)
+    observe: str = "dom"
 
 
 def _same_site(url: str) -> bool:
@@ -109,17 +160,23 @@ def _same_site(url: str) -> bool:
 
 async def run_agent(browser: Browser, llm: LLM, *, agent_id: str, ip: str, user_agent: str,
                     locale: str, timezone: str, persona: Persona, task: str,
-                    max_steps: int = 25) -> AgentResult:
-    result = AgentResult(agent_id=agent_id, ip=ip)
+                    max_steps: int = 25, observe: str = "dom") -> AgentResult:
+    result = AgentResult(agent_id=agent_id, ip=ip, observe=observe)
     context = await browser.new_context(
         user_agent=user_agent, locale=locale, timezone_id=timezone,
-        viewport={"width": 1366, "height": 860},
+        viewport=SCREEN_VIEWPORT if observe == "screen" else {"width": 1366, "height": 860},
         extra_http_headers={"X-Forwarded-For": ip},
     )
     page: Page = await context.new_page()
     last_note = ""
     try:
         await page.goto(SHOP + "/", wait_until="domcontentloaded")
+        if observe == "screen":
+            try:
+                await _run_screen(page, llm, result, persona, task, max_steps)
+            except Exception as exc:              # one broken agent never stops the fleet
+                result.outcome, result.summary = "error", f"harness error: {type(exc).__name__}"
+            return result
         for step in range(1, max_steps + 1):
             obs = await page.evaluate(OBSERVE_JS)
             if obs["url"] == "/challenge" or "Verification required" in obs["title"]:
@@ -136,7 +193,7 @@ async def run_agent(browser: Browser, llm: LLM, *, agent_id: str, ip: str, user_
                 result.outcome, result.summary = "error", f"model call failed: {type(exc).__name__}"
                 break
             result.steps = step
-            result.transcript.append({"step": step, "url": obs["url"], **act})
+            result.transcript.append({"step": step, **act, "page": obs["url"]})
             kind = act.get("action")
             if kind in ("done", "fail"):
                 result.outcome, result.summary = kind, act.get("text", "")
@@ -148,6 +205,87 @@ async def run_agent(browser: Browser, llm: LLM, *, agent_id: str, ip: str, user_
         result.ended = time.time()
         await context.close()
     return result
+
+
+async def _run_screen(page: Page, llm: LLM, result: AgentResult, persona: Persona, task: str, max_steps: int) -> None:
+    """Screenshot-only loop: the model sees pixels and answers with coordinates."""
+    last_note = ""
+    for step in range(1, max_steps + 1):
+        for attempt in range(3):               # a click may still be navigating
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                title = await page.title()
+                break
+            except Exception:
+                await asyncio.sleep(0.5)
+        else:
+            title = ""
+        path = urlparse(page.url).path
+        if path == "/challenge" or "Verification required" in title:
+            result.outcome, result.challenged, result.summary = "challenged", True, "stopped by the edge challenge"
+            return
+        shot = await page.screenshot(type="png")
+        user = (f"Task: {task}\n\nPersona: {json.dumps(persona.__dict__)}\n\n"
+                f"Last action result: {last_note or 'none'}\n\nURL: {path}\n")
+        if llm.provider == "scripted":
+            # Plumbing test only: the fixed plan needs element boxes; a real model gets the screenshot alone.
+            try:
+                await page.wait_for_load_state("load", timeout=5000)
+                obs = await page.evaluate(OBSERVE_JS)
+                boxes = {b[0]: b[1:] for b in await page.evaluate(BOXES_JS)}
+            except Exception as exc:
+                last_note = f"page not ready: {type(exc).__name__}"
+                continue
+            user += f"Title: {obs['title']}\n\nPage text:\n{obs['text']}\n\nElements:\n" + "\n".join(
+                " ".join(e.split()) + " box=" + ",".join(map(str, boxes.get(e.split("]")[0][1:], [0, 0, 0, 0])))
+                for e in obs["elements"])
+        try:
+            act = await llm.json_call(SCREEN_SYSTEM, user, SCREEN_SCHEMA, images=[shot])
+        except Exception as exc:
+            result.outcome, result.summary = "error", f"model call failed: {type(exc).__name__}"
+            return
+        result.steps = step
+        result.transcript.append({"step": step, **act, "page": path})
+        if act.get("action") in ("done", "fail"):
+            result.outcome, result.summary = act["action"], act.get("text", "")
+            return
+        last_note = await _act_screen(page, act)
+    result.outcome, result.summary = "max_steps", "ran out of steps"
+
+
+async def _act_screen(page: Page, act: dict) -> str:
+    kind, x, y, text = act.get("action"), act.get("x", -1), act.get("y", -1), act.get("text", "")
+    try:
+        if kind == "goto":
+            if not _same_site(act.get("url", "")):
+                return "refused: that address is outside this site"
+            await page.goto(urljoin(SHOP, act["url"]), wait_until="domcontentloaded")
+            return f"opened {act['url']}"
+        if kind in ("click", "click_type", "click_select"):
+            if not (0 <= x < SCREEN_VIEWPORT["width"] and 0 <= y < SCREEN_VIEWPORT["height"]):
+                return "click outside the screen"
+            async with _settle(page):
+                await page.mouse.click(x, y)             # one jump to the point, then press and release
+            if kind == "click_type":                    # scripted plumbing plan only
+                await page.keyboard.type(text, delay=KEY_DELAY_MS)
+            if kind == "click_select":
+                await page.keyboard.type(text, delay=KEY_DELAY_MS)
+                await page.keyboard.press("Enter")
+                return f"selected {text!r} at {x},{y}"
+            return f"clicked at {x},{y}"
+        if kind == "type":
+            await page.keyboard.type(text, delay=KEY_DELAY_MS)
+            return f"typed {len(text)} characters"
+        if kind == "key":
+            async with _settle(page):
+                await page.keyboard.press(text or "Enter")
+            return f"pressed {text}"
+        if kind == "scroll":
+            await page.mouse.wheel(0, 600 if text != "up" else -600)
+            return f"scrolled {text or 'down'}"
+    except Exception as exc:
+        return f"action failed: {type(exc).__name__}"
+    return "unknown action"
 
 
 async def _act(page: Page, act: dict) -> str:

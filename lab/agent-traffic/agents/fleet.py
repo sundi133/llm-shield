@@ -9,6 +9,11 @@ Usage:
     python fleet.py --n 10 --concurrency 5 --label fleet10
     python fleet.py --n 1 --label single --ua-mode careful
 
+--observe
+    dom       every agent reads page text and controls (default)
+    screen    every agent sees screenshots only (computer use)
+    mixed     alternate: even agents dom, odd agents screen
+
 --ua-mode
     spoofed   every agent claims Chrome on Windows while the real browser runs
               on this Mac (a common, slightly sloppy fleet setup)
@@ -81,6 +86,7 @@ async def main() -> None:
     ap.add_argument("--ua-mode", choices=["spoofed", "careful"], default="spoofed")
     ap.add_argument("--max-steps", type=int, default=25)
     ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--observe", choices=["dom", "screen", "mixed"], default="dom")
     args = ap.parse_args()
 
     llm = LLM.from_env()
@@ -101,8 +107,9 @@ async def main() -> None:
             async with sem:
                 res = await run_agent(browser, llm, agent_id=f"{args.label}-{i:02d}", ip=ips[i],
                                       user_agent=ua, locale="en-US", timezone="America/Chicago",
-                                      persona=_persona(i, args.label, rng), task=TASK, max_steps=args.max_steps)
-                print(f"  {res.agent_id} {res.ip:<16} {res.outcome:<10} steps={res.steps:<3} "
+                                      persona=_persona(i, args.label, rng), task=TASK, max_steps=args.max_steps,
+                                      observe=_mode(args.observe, i))
+                print(f"  {res.agent_id} {res.observe:<6} {res.ip:<16} {res.outcome:<10} steps={res.steps:<3} "
                       f"{res.ended - res.started:5.0f}s  {res.summary[:70]}", flush=True)
                 return res
 
@@ -112,7 +119,7 @@ async def main() -> None:
 
     manifest = {
         "label": args.label, "kind": "agent_fleet", "model": llm.describe(), "effort": llm.effort,
-        "ua_mode": args.ua_mode, "user_agent": ua, "task": TASK, "started": started, "ended": time.time(),
+        "ua_mode": args.ua_mode, "observe": args.observe, "user_agent": ua, "task": TASK, "started": started, "ended": time.time(),
         "usage": llm.usage.__dict__,
         "agents": [{k: v for k, v in r.__dict__.items() if k != "transcript"} for r in results],
     }
@@ -127,6 +134,10 @@ async def main() -> None:
     print(f"done in {time.time() - started:.0f}s; outcomes {outcomes}; model calls {llm.usage.calls}, "
           f"input tokens {llm.usage.input_tokens}, output tokens {llm.usage.output_tokens}, "
           f"cache reads {llm.usage.cache_read_tokens}", flush=True)
+
+
+def _mode(observe: str, i: int) -> str:
+    return observe if observe != "mixed" else ("dom" if i % 2 == 0 else "screen")
 
 
 async def _native_ua(browser) -> str:

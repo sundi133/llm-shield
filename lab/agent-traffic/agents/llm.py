@@ -26,6 +26,7 @@ usage, so the lab can report cost per run.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import stat
@@ -104,15 +105,18 @@ class LLM:
 
     # ── one structured call ─────────────────────────────────────────────
 
-    async def json_call(self, system: str, user: str, schema: dict, *, max_tokens: int = 4000) -> dict:
+    async def json_call(self, system: str, user: str, schema: dict, *, max_tokens: int = 4000,
+                        images: list[bytes] | None = None) -> dict:
+        """One structured step. `images` are PNG screenshots shown before the text (screen mode)."""
         if self.provider == "scripted":
             self.usage.add(Usage(1, 0, 0, 0))
-            return _scripted_step(user)
+            return _scripted_screen_step(user) if images else _scripted_step(user)
         if self.provider == "anthropic":
-            return await self._anthropic(system, user, schema, max_tokens)
-        return await self._openai_compatible(system, user, schema, max_tokens)
+            return await self._anthropic(system, user, schema, max_tokens, images)
+        return await self._openai_compatible(system, user, schema, max_tokens, images)
 
-    async def _anthropic(self, system: str, user: str, schema: dict, max_tokens: int) -> dict:
+    async def _anthropic(self, system: str, user: str, schema: dict, max_tokens: int,
+                         images: list[bytes] | None = None) -> dict:
         import anthropic
 
         client = _anthropic_client()
@@ -122,7 +126,10 @@ class LLM:
             model=self.model,
             max_tokens=max_tokens,
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": [
+                *({"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                               "data": base64.b64encode(img).decode()}} for img in images or []),
+                {"type": "text", "text": user}]}],
         )
         output_config = {"effort": self.effort, "format": {"type": "json_schema", "schema": schema}}
         try:
@@ -140,7 +147,8 @@ class LLM:
         text = next((b.text for b in resp.content if b.type == "text"), "")
         return json.loads(text)
 
-    async def _openai_compatible(self, system: str, user: str, schema: dict, max_tokens: int) -> dict:
+    async def _openai_compatible(self, system: str, user: str, schema: dict, max_tokens: int,
+                                 images: list[bytes] | None = None) -> dict:
         base = os.environ["AGENT_LLM_BASE_URL"].rstrip("/")
         key = os.environ.get("AGENT_LLM_API_KEY", "")
         if self.provider == "azure":
@@ -153,7 +161,10 @@ class LLM:
         body = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": [
+                {"type": "text", "text": user},
+                *({"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(img).decode()}}
+                  for img in images or [])]}],
             "response_format": {"type": "json_schema",
                                 "json_schema": {"name": "agent_step", "strict": True, "schema": schema}},
         }
@@ -243,3 +254,23 @@ def _scripted_step(user: str) -> dict:
                         ("Postal code", persona["zip"])])
         return s or step("click", find('text="Place order'))
     return step("goto", url_="/")
+
+
+def _scripted_screen_step(user: str) -> dict:
+    """Plumbing only: the harness adds element boxes to the text for the scripted plan (never for a model)."""
+    import random
+    import re
+
+    step = _scripted_step(user)
+    boxes = dict(re.findall(r"^\[(\d+)\] .* box=(\d+,\d+,\d+,\d+)$", user.split("Elements:", 1)[1], re.M))
+    out = {"thought": step["thought"], "action": step["action"], "x": -1, "y": -1, "text": step["text"],
+           "url": step["url"]}
+    box = boxes.get(str(step["index"]))
+    if step["action"] in ("click", "type", "select") and box:
+        x, y, w, h = map(int, box.split(","))
+        out["x"], out["y"] = x + int(w * random.uniform(0.3, 0.7)), y + int(h * random.uniform(0.3, 0.7))
+        if step["action"] == "type":
+            out["action"] = "click_type"
+        if step["action"] == "select":
+            out["action"] = "click_select"
+    return out
