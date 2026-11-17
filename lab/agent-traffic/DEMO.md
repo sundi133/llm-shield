@@ -66,13 +66,13 @@ feed: each request appears as the customer's CDN or SIEM would log it.
 ## Act 4: the fleet (5 minutes)
 
 ```bash
-AGENT_LLM_PROVIDER=scripted ./demo_fleet.sh "$PY" acme 10
+AGENT_LLM_PROVIDER=scripted ./demo_fleet.sh "$PY" acme
 ```
 (Drop `AGENT_LLM_PROVIDER=scripted` for real agents.)
 
 Narrate while it runs:
-1. **Wave 1:** 10 agents, one controller, each in its own browser or sandbox
-   container, each on its own home IP. They sign up, redeem the promotion, check
+1. **Wave 1:** 12 agents, one controller, half of them in sandbox containers,
+   each on its own home IP. They sign up, redeem the promotion, check
    out. The feed scrolls normally.
 2. **Shield analyzes:** the printed lines compare SIEM rules, Shield on logs, and
    Shield with the tag, then publish indicators to the edge.
