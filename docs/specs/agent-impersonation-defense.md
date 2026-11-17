@@ -800,7 +800,8 @@ Prefix `agd:` (agent detection). All keys are tenant-scoped.
 
 **Beacon schema** (version 1, at most 16 KB):
 `{v, site_key, shs, page (path template), t (ms since navigation), kind
-(load, leave, submit), device {renderer, renderer_class, cores, memory,
+(load, leave, submit), consent (given, not_required; rev 8: a site key with
+`consent: required` keeps only `given`), device {renderer, renderer_class, cores, memory,
 screen, dpr, tz, langs, touch, canvas_hash, fonts_hash}, automation
 {webdriver, cdp, headless_shape, hints_mismatch}, interaction {keys, inputs,
 inputs_without_keys, fields_touched, corrections, clicks, centre_clicks,

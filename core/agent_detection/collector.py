@@ -2,8 +2,9 @@
 
     python -m core.agent_detection.collector        (PORT, default 8090)
 
-    POST /b         one beacon; always 204, no body
-    GET  /health    liveness
+    GET  /shs.js           the tag (also /shs-{version}.js, immutable)
+    POST /b                one beacon; always 204, no body
+    GET  /health           liveness
 
 Every route also answers under `/_shs/`, the first-party path customers map
 on their CDN. It is neither plane's web app: it never touches the guard path
@@ -35,7 +36,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
 from core import agent_detection as _agd
-from core.agent_detection import beacons, sitekeys, stream
+from core.agent_detection import beacons, sitekeys, stream, tag
 
 log = logging.getLogger("shield.agent_detection.collector")
 
@@ -134,6 +135,8 @@ def create_app() -> FastAPI:
         origin = (request.headers.get("origin") or "").strip().lower()
         if origin not in site.get("origins", []):
             return _no_content()
+        if site.get("consent") == "required" and b.get("consent") != "given":
+            return _no_content()          # a stale snippet without data-consent: keep nothing
         ip = client_ip(request, int(site.get("xff_hops") or 1))
         if not per_key.allow(b["site_key"]) or not per_ip.allow(ip):
             return _no_content()
@@ -144,10 +147,27 @@ def create_app() -> FastAPI:
             log.warning("beacon not queued: %s", type(exc).__name__)
         return _no_content()
 
+    js, js_name, js_sri = tag.source(), tag.filename(), tag.sri()
+    js_headers = {"X-Content-Type-Options": "nosniff", "Access-Control-Allow-Origin": "*",
+                  "Cross-Origin-Resource-Policy": "cross-origin"}
+
+    def tag_latest():
+        # Short cache: this name moves to the next release. Pages that pin an
+        # SRI hash load the versioned name instead.
+        return Response(js, media_type="application/javascript",
+                        headers={**js_headers, "Cache-Control": "public, max-age=300",
+                                 "X-Shs-Version": tag.version(js), "X-Shs-Integrity": js_sri})
+
+    def tag_versioned():
+        return Response(js, media_type="application/javascript",
+                        headers={**js_headers, "Cache-Control": "public, max-age=31536000, immutable"})
+
     def health():
         return JSONResponse({"ok": True, "collector": "on" if _agd.collector_enabled() else "off"})
 
     for prefix in ("", "/_shs"):
+        app.add_api_route(f"{prefix}/shs.js", tag_latest, methods=["GET"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/{js_name}", tag_versioned, methods=["GET"], include_in_schema=False)
         app.add_api_route(f"{prefix}/b", beacon, methods=["POST"], include_in_schema=False)
         app.add_api_route(f"{prefix}/health", health, methods=["GET"], include_in_schema=False)
     return app

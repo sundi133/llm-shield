@@ -29,6 +29,7 @@ SCHEMA: dict = {
     "page": ("str", 120),
     "t": ("int", 0, 86_400_000),
     "kind": ("str", 8),
+    "consent": ("str", 16),             # "given" | "not_required", from the tag (rev 8)
     "device": {
         "renderer": ("str", 120), "renderer_class": ("str", 12), "cores": ("int", 0, 512),
         "memory": ("float", 0, 1024), "screen": ("str", 16), "dpr": ("float", 0, 10),
