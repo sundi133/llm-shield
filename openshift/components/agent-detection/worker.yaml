@@ -1,0 +1,25 @@
+# The worker: python -m core.agent_detection.worker (admin image). Reads the
+# beacon streams, scores sessions. Internal only: no Service, no Route. Needs
+# only REDIS_URL.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shield-agd-worker
+  labels: { app: shield-agd-worker }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: shield-agd-worker } }
+  template:
+    metadata:
+      labels: { app: shield-agd-worker }
+    spec:
+      containers:
+        - name: worker
+          image: shield-admin
+          command: ["python3", "-m", "core.agent_detection.worker"]
+          env:
+            - name: REDIS_URL
+              valueFrom: { secretKeyRef: { name: shield-admin-secrets, key: REDIS_URL } }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }

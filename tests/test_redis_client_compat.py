@@ -363,3 +363,32 @@ def test_agent_detection_site_keys_stream_and_trap_codes(kind, client_env, backe
 
     assert sitekeys.delete(tenant, rec["site_key"]) is True
     assert sitekeys.get(rec["site_key"]) is None and tenant not in sitekeys.tag_tenants()
+
+
+@live
+@pytest.mark.parametrize("kind", ["upstash", "redis-py"])
+def test_agent_detection_worker_store(kind, client_env, backend):
+    """The worker's reads and pipelined writes (XRANGE with an exclusive
+    start, GET/SET EX, ZADD, HINCRBY) on both clients."""
+    from core.agent_detection import stream, worker
+    raw, created = backend
+    r = _use(kind, client_env, raw)
+    tenant = f"compat-{kind}-{secrets.token_hex(4)}"
+    created.update({f"agd:{tenant}:*"})
+    a, b = "a" * 24, "b" * 24
+    req = {"ts": time.time(), "net_hash": "n", "ua": "UA", "hints": {}}
+    stream.append(tenant, {"shs": a, "kind": "load", "page": "/", "t": 5, "req": req,
+                           "device": {"renderer_class": "gpu"}, "automation": {"webdriver": True}})
+    stream.append(tenant, {"shs": b, "kind": "load", "page": "/", "t": 5, "req": req})
+    store = worker.RedisStore(r)
+    out = worker.process_tenant(store, tenant)
+    assert out["entries"] == 2 and out["sessions"] == 2
+    sess = store.get_sessions(tenant, [a, b])
+    assert sess[a]["verdict"]["signals"]["A8"] == 1.0 and sess[b]["n"] == 1
+    assert 0 < raw.execute_command("TTL", f"agd:{tenant}:sess:{a}") <= worker.SESSION_TTL_S
+    assert raw.execute_command("ZCARD", f"agd:{tenant}:sessions") == 2
+    assert worker.process_tenant(store, tenant)["entries"] == 0          # the cursor held
+    stream.append(tenant, {"shs": a, "kind": "leave", "page": "/", "t": 9, "req": req})
+    assert worker.process_tenant(store, tenant)["entries"] == 1
+    assert store.get_sessions(tenant, [a])[a]["n"] == 2
+    assert raw.execute_command("GET", f"agd:{tenant}:worker_lock") is None

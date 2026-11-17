@@ -768,7 +768,11 @@ Prefix `agd:` (agent detection). All keys are tenant-scoped.
 | `agd:sitekey:{site_key}` | `{tenant, origins, platform (web, android, ios), consent, created}` | none |
 | `agd:{tenant}:sitekeys` | set of the tenant's site keys | none |
 | `agd:tag_tenants` | set of tenants with at least one site key; the worker reads only their beacon streams (rev 8) | none |
-| `agd:{tenant}:beacons` | Redis stream of validated beacons (`XADD MAXLEN ~ 200000`), read by the worker with a consumer group | trimmed by length |
+| `agd:{tenant}:beacons` | Redis stream of validated beacons (`XADD MAXLEN ~ 200000`); rev 8 reads it with `XRANGE` after a cursor under a per-tenant lock (both Redis clients support it the same way) instead of a consumer group | trimmed by length |
+| `agd:{tenant}:cursor:beacons` | last stream id the worker saved sessions for (rev 8) | none |
+| `agd:{tenant}:worker_lock` | one worker per tenant per cycle, `SET NX` (rev 8) | 120 s |
+| `agd:{tenant}:sess:{shs}` | tag-only session summary and verdict, JSON (rev 8: keyed by `_shs` itself, since the `_shs` indicator must carry it) | 24 h |
+| `agd:{tenant}:sessions` | sorted set `_shs` to last seen, trimmed to 24 h (rev 8: what the portal lists and R5 links) | entries dropped after 24 h |
 | `agd:{tenant}:trapcode:{code}` | the `_shs` hash that was shown this code | 24 h |
 | `agd:{tenant}:lsh:{band}:{bucket_hash}` | set of session key hashes (path similarity candidates) | 1 h |
 | `agd:{tenant}:trait:{kind}:{value_hash}:{bucket}` | set of session key hashes (start, fingerprint, network) | 1 h |

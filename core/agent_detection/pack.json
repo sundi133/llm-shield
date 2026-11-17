@@ -1,0 +1,17 @@
+{
+  "version": "2026.11.18-tag.1",
+  "source": "lab task 0b hand-set starting values (scripted plumbing runs only; replace with the first real lab run)",
+  "bands": {"clear_agent": 0.8, "grey": 0.4},
+  "weights": {"A5": 0.95, "A7": 0.60, "A8": 0.50, "A10": 0.40, "A9": 0.25},
+  "a5": {"t4_value": 0.35},
+  "a7": {
+    "inputs_without_keys_min": 2,
+    "centre_ratio_min": 0.8,
+    "no_move_ratio_min": 0.8,
+    "clicks_min": 2,
+    "steady_keys_min": 20,
+    "steady_cv_max": 0.25,
+    "no_corrections_keys_min": 40
+  },
+  "session": {"max_beacons": 200, "max_pages": 50, "max_views": 100}
+}

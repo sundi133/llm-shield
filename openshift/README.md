@@ -38,7 +38,7 @@ Optional add-ons (uncomment in your overlay's `kustomization.yaml`):
 | `components/redis-auth` | Redis password (on by default in `split` and `external`) |
 | `components/vault` | The secret vault for the LLM gateway's vault mode |
 | `components/external-redis` | Use your own Redis instead of the bundled one |
-| `components/agent-detection-collector` | The public collector for the AI agent detection tag (see below) |
+| `components/agent-detection` | AI agent detection: the tag's public collector and the scoring worker (see below) |
 
 Nothing here is cluster-scoped and nothing has a hardcoded namespace, so a
 project admin can install it.
@@ -258,12 +258,13 @@ Add `components/external-redis` and put its address in `REDIS_URL` in both
 - Lua scripting enabled;
 - `maxmemory-policy noeviction`, persistence on.
 
-## AI agent detection collector
+## AI agent detection
 
-Only if you use the AI agent detection tag. The collector is a small public
-service browsers send tag beacons to; it runs from the admin image in its own
-pods and reads only `REDIS_URL` from `shield-admin-secrets`. Create its secret,
-add `components/agent-detection-collector` to your overlay, and apply:
+Only if you use the AI agent detection tag. Two deployments from the admin
+image: the collector, a small public service browsers send tag beacons to,
+and the worker, which scores them (internal, no Route). Both read only
+`REDIS_URL` from `shield-admin-secrets`. Create the secret, add
+`components/agent-detection` to your overlay, and apply:
 
 ```bash
 oc create secret generic shield-agent-detection --from-literal=SHIELD_AGENT_DETECTION_HASH_SALT=$(openssl rand -hex 32) --from-literal=SHIELD_AGENT_DETECTION_TRAP_SECRET=$(openssl rand -hex 32)

@@ -1,21 +1,27 @@
-# AI agent detection collector (docs/specs/agent-impersonation-defense.md,
-# rev 8): the public endpoint browsers send tag beacons to. Its own pod from
-# the admin image, CPU only, never the portal or the guard path.
+# AI agent detection (docs/specs/agent-impersonation-defense.md, rev 8): the
+# public collector browsers send tag beacons to, and the worker that scores
+# them. Their own pods from the admin image, CPU only, never the portal or
+# the guard path.
 #   oc create secret generic shield-agent-detection \
 #     --from-literal=SHIELD_AGENT_DETECTION_HASH_SALT=$(openssl rand -hex 32) \
 #     --from-literal=SHIELD_AGENT_DETECTION_TRAP_SECRET=$(openssl rand -hex 32)
-# Add `../../components/agent-detection-collector` to your overlay's
+# Add `../../components/agent-detection` to your overlay's
 # components, then route the customer's /_shs/ path to the shield-agd-collector Route.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
 
 resources:
   - collector.yaml
+  - worker.yaml
 
-# Let the collector reach Redis (base allows only the admin and guardrail pods).
+# Let the collector and the worker reach Redis (base allows only the admin
+# and guardrail pods).
 patches:
   - target: { kind: NetworkPolicy, name: redis-ingress }
     patch: |-
       - op: add
         path: /spec/ingress/0/from/-
         value: { podSelector: { matchLabels: { app: shield-agd-collector } } }
+      - op: add
+        path: /spec/ingress/0/from/-
+        value: { podSelector: { matchLabels: { app: shield-agd-worker } } }

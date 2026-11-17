@@ -1,0 +1,241 @@
+"""The agent detection worker (spec section 7; rev 8 step R4).
+
+    python -m core.agent_detection.worker          (admin image, CPU, its own process)
+
+Every cycle (SHIELD_AGENT_DETECTION_CYCLE_S, default 30 s), for each tenant
+with a site key: take the tenant's lock, read new entries from its beacon
+stream after the cursor, fold them into session summaries, rescore the
+sessions they touched, and store the results. Off the guard path: it reads
+and writes only `agd:` keys.
+
+Keys it writes (spec section 8; rev 8 adds the index and the stream cursor):
+
+  agd:{tenant}:cursor:beacons   last stream id processed
+  agd:{tenant}:worker_lock      one worker per tenant per cycle (SET NX, 120 s)
+  agd:{tenant}:sess:{shs}       session summary + verdict (JSON, 24 h)
+  agd:{tenant}:sessions         sorted set shs -> last seen, trimmed to 24 h
+  agd:{tenant}:stats:{yyyymmdd} hash of counters (35 days)
+
+Rev 8 reads the stream with a cursor and a per-tenant lock instead of a
+consumer group: both Redis clients support XRANGE the same way, and one
+tenant's stream is read by one worker at a time either way.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import socket
+import time
+from typing import Iterable, Optional
+
+from core import agent_detection as _agd
+from core.agent_detection import scoring, sitekeys, stream
+
+log = logging.getLogger("shield.agent_detection.worker")
+
+SESSION_TTL_S = 86_400
+LOCK_TTL_S = 120
+BATCH = 2000
+MAX_BATCHES = 10            # per tenant per cycle; the rest waits for the next cycle
+STATS_TTL_S = 35 * 86_400
+
+
+def _d(v):
+    return v.decode() if isinstance(v, (bytes, bytearray)) else v
+
+
+def _entry_pairs(raw) -> list[tuple[str, dict]]:
+    """XRANGE replies, normalized: redis-py gives [(id, {field: value})],
+    Upstash gives [[id, [field, value, ...]]]."""
+    out = []
+    for item in raw or []:
+        sid, fields = _d(item[0]), item[1]
+        if isinstance(fields, dict):
+            data = {_d(k): _d(v) for k, v in fields.items()}
+        else:
+            flat = [_d(x) for x in fields]
+            data = dict(zip(flat[0::2], flat[1::2]))
+        try:
+            out.append((sid, json.loads(data.get("b") or "{}")))
+        except ValueError:
+            out.append((sid, {}))
+    return out
+
+
+class RedisStore:
+    def __init__(self, r):
+        self.r = r
+
+    def lock(self, tenant: str, owner: str) -> bool:
+        return bool(self.r.set(f"agd:{tenant}:worker_lock", owner, nx=True, ex=LOCK_TTL_S))
+
+    def unlock(self, tenant: str, owner: str) -> None:
+        if _d(self.r.get(f"agd:{tenant}:worker_lock")) == owner:
+            self.r.delete(f"agd:{tenant}:worker_lock")
+
+    def cursor(self, tenant: str) -> Optional[str]:
+        return _d(self.r.get(f"agd:{tenant}:cursor:beacons"))
+
+    def set_cursor(self, tenant: str, sid: str) -> None:
+        self.r.set(f"agd:{tenant}:cursor:beacons", sid)
+
+    def read(self, tenant: str, after: Optional[str], count: int) -> list[tuple[str, dict]]:
+        start = f"({after}" if after else "-"
+        return _entry_pairs(self.r.xrange(stream.key(tenant), start, "+", count=count))
+
+    def get_sessions(self, tenant: str, ids: list[str]) -> dict[str, dict]:
+        if not ids:
+            return {}
+        from storage.tenant_store import run_pipeline
+        pipe = self.r.pipeline()
+        for shs in ids:
+            pipe.get(f"agd:{tenant}:sess:{shs}")
+        out = {}
+        for shs, raw in zip(ids, run_pipeline(pipe)):
+            try:
+                if raw:
+                    out[shs] = json.loads(_d(raw))
+            except ValueError:
+                pass
+        return out
+
+    def put_sessions(self, tenant: str, sessions: dict[str, dict], now: float, stats: dict) -> None:
+        from storage.tenant_store import run_pipeline
+        pipe = self.r.pipeline()
+        for shs, sess in sessions.items():
+            pipe.set(f"agd:{tenant}:sess:{shs}", json.dumps(sess, separators=(",", ":")), ex=SESSION_TTL_S)
+        if sessions:
+            pipe.zadd(f"agd:{tenant}:sessions", {shs: s["last"] or now for shs, s in sessions.items()})
+        pipe.zremrangebyscore(f"agd:{tenant}:sessions", 0, now - SESSION_TTL_S)
+        day_key = f"agd:{tenant}:stats:{time.strftime('%Y%m%d', time.gmtime(now))}"
+        for k, v in stats.items():
+            if v:
+                pipe.hincrby(day_key, k, v)
+        pipe.expire(day_key, STATS_TTL_S)
+        run_pipeline(pipe)
+
+
+class MemoryStore:
+    """No Redis (tests, a laptop): reads the in-memory stream stand-in."""
+
+    def __init__(self):
+        self.cursors: dict[str, int] = {}
+        self.sessions: dict[str, dict[str, dict]] = {}
+        self.index: dict[str, dict[str, float]] = {}
+        self.stats: dict[str, dict[str, int]] = {}
+
+    def lock(self, tenant, owner):
+        return True
+
+    def unlock(self, tenant, owner):
+        pass
+
+    def cursor(self, tenant):
+        c = self.cursors.get(tenant)
+        return None if c is None else str(c)
+
+    def set_cursor(self, tenant, sid):
+        self.cursors[tenant] = int(sid)
+
+    def read(self, tenant, after, count):
+        entries = stream.memory_entries(tenant)
+        start = 0 if after is None else int(after) + 1
+        return [(str(i), e) for i, e in enumerate(entries[start:start + count], start)]
+
+    def get_sessions(self, tenant, ids):
+        have = self.sessions.get(tenant, {})
+        return {i: json.loads(json.dumps(have[i])) for i in ids if i in have}
+
+    def put_sessions(self, tenant, sessions, now, stats):
+        self.sessions.setdefault(tenant, {}).update(json.loads(json.dumps(sessions)))
+        idx = self.index.setdefault(tenant, {})
+        idx.update({shs: s["last"] or now for shs, s in sessions.items()})
+        for shs in [k for k, v in idx.items() if v < now - SESSION_TTL_S]:
+            idx.pop(shs)
+        st = self.stats.setdefault(tenant, {})
+        for k, v in stats.items():
+            st[k] = st.get(k, 0) + v
+
+
+def process_tenant(store, tenant: str, now: Optional[float] = None, owner: str = "") -> dict:
+    """One cycle for one tenant. Returns counters (for logs and tests)."""
+    now = time.time() if now is None else now
+    owner = owner or f"{socket.gethostname()}:{os.getpid()}"
+    done = {"entries": 0, "sessions": 0, "clear_agent": 0, "grey": 0, "skipped": 0}
+    if not store.lock(tenant, owner):
+        done["skipped"] = 1
+        return done
+    try:
+        for _ in range(MAX_BATCHES):
+            batch = store.read(tenant, store.cursor(tenant), BATCH)
+            if not batch:
+                break
+            by_shs: dict[str, list[dict]] = {}
+            for _sid, e in batch:
+                shs = e.get("shs")
+                if isinstance(shs, str) and len(shs) == 24:
+                    by_shs.setdefault(shs, []).append(e)
+            sessions = store.get_sessions(tenant, list(by_shs))
+            changed: dict[str, dict] = {}
+            newly = {"clear_agent": 0, "grey": 0}       # sessions that entered a band this batch
+            for shs, entries in by_shs.items():
+                sess = sessions.get(shs) or scoring.new_session(shs)
+                for e in entries:
+                    scoring.add(sess, e)
+                before = (sess.get("verdict") or {}).get("band")
+                sess["verdict"] = scoring.score(sess)
+                changed[shs] = sess
+                band = sess["verdict"]["band"]
+                if band != before and band in newly:
+                    newly[band] += 1
+            stats = {"beacons": len(batch), "sessions_scored": len(changed), **newly}
+            store.put_sessions(tenant, changed, now, stats)
+            store.set_cursor(tenant, batch[-1][0])     # only after the sessions are saved
+            done["entries"] += len(batch)
+            done["sessions"] += len(changed)
+            for band, n in newly.items():
+                done[band] += n
+            if len(batch) < BATCH:
+                break
+    finally:
+        store.unlock(tenant, owner)
+    return done
+
+
+def store_for_env():
+    from storage import tenant_store
+    r = tenant_store._get_redis()
+    return RedisStore(r) if r is not None else MemoryStore()
+
+
+def run_cycle(store, tenants: Optional[Iterable[str]] = None, now: Optional[float] = None) -> dict:
+    out = {}
+    for tenant in (sitekeys.tag_tenants() if tenants is None else tenants):
+        try:
+            out[tenant] = process_tenant(store, tenant, now)
+        except Exception as exc:        # noqa: BLE001 - one tenant's failure never stops the others
+            log.warning("tenant %s cycle failed: %s", tenant, type(exc).__name__)
+            out[tenant] = {"error": type(exc).__name__}
+    return out
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
+    cycle = float(os.environ.get("SHIELD_AGENT_DETECTION_CYCLE_S", "30") or 30)
+    store = store_for_env()
+    if isinstance(store, MemoryStore):
+        log.warning("no Redis configured: the worker sees only this process's memory")
+    while True:
+        if _agd.enabled():
+            started = time.time()
+            res = run_cycle(store)
+            busy = {t: r for t, r in res.items() if r.get("entries") or r.get("error")}
+            if busy:
+                log.info("cycle %.1fs %s", time.time() - started, busy)
+        time.sleep(cycle)
+
+
+if __name__ == "__main__":
+    main()
