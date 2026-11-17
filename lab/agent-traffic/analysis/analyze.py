@@ -286,6 +286,24 @@ def main() -> None:
             "fleets": fleets,
             "review": {"model": review_model, "usage": review_usage, "decisions": review},
         },
+        "breakdown": {
+            dim: {val: {"agents": len(ks), "siem": sum(k in caught_before for k in ks),
+                        "logs": sum(flagged(k) for k in ks), "tag": sum(flagged_t(k) for k in ks)}
+                  for val in sorted({agent_meta.get(by_key[k].ip, {}).get(dim, "") for k in agents})
+                  for ks in [[k for k in agents if agent_meta.get(by_key[k].ip, {}).get(dim, "") == val]]}
+            for dim in ("observe", "sandbox")
+        },
+        "traps": {
+            # Own-code trap hits (T1 to T3) per half of the inert rotation (spec 2.4 lab finding).
+            "by_inert": {half: rate([k for k in agents if by_key[k].shs_ids
+                                     and trapcheck.traps.layout(sorted(by_key[k].shs_ids)[0])["inert"] == (half == "inert")],
+                                    lambda k: by_key[k].tripwire or bool(by_key[k].reused_codes))
+                         for half in ("inert", "not_inert")},
+            "by_observe": {mode: rate([k for k in agents if agent_meta.get(by_key[k].ip, {}).get("observe") == mode],
+                                      lambda k: by_key[k].tripwire)
+                           for mode in ("dom", "screen")},
+            "t4_only_humans": rate(humans, lambda k: set(by_key[k].trap_hits) == {"T4"}),
+        },
         "decoys": {
             "agent_sessions_touching": rate(agents, lambda k: any(h[:2] in ("D1", "D2", "D3", "D4")
                                                                  for h in by_key[k].decoy_hits)),

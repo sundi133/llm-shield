@@ -1016,6 +1016,13 @@ beacons, and tier 1 carries on unchanged.
      with the tag.
 
    Go/no-go for tasks 9 to 11.
+
+   Status: built on `feat/agent-detection-lab` in 8 steps (tag and
+   collector, traps, A7 to A10 and device linking, screenshot mode, sandbox
+   image, Web Bot Auth, decoys, three-column report), each tested with the
+   scripted plumbing plan. `run_lab_v1.sh` runs the whole measurement; the
+   first real run is waiting on the API key and human sessions, as for
+   task 0.
 1. **Sources:** log and alert connectors for Splunk, Sentinel and Elastic
    with the default summarizing queries, NDJSON push, field mapping, source
    test, cursors, credential storage.

@@ -32,7 +32,7 @@ navigation elsewhere is refused. IPs are simulated residential proxies sent as
 | `analysis/siem_rules.py` | "Before": per-IP and per-account threshold rules and an automation user-agent list |
 | `analysis/detect.py` | "After": agent checks A1 to A6 and fleet linking (two independent traits) |
 | `analysis/analyze.py` | Scores a log window against ground truth twice (logs only, and with the tag), optional investigator review, publishes indicators |
-| `analysis/report.py` | The before/after page |
+| `analysis/report.py` | The report: three columns on the same sessions (SIEM rules, Shield on logs, Shield with the tag), breakdowns by how agents see the page and where they run, checks fired, traps, decoys, declared agents, fleets, and wave 2 containment |
 
 ## Model
 
@@ -81,6 +81,14 @@ docker build -t shield-lab-sandbox:1.65.2 lab/agent-traffic/sandbox
 
 The last argument picks how agents see the page: `dom`, `screen` or `mixed`
 (half each, so trap reach and A7 are measured for both on the same run).
+
+Lab v1 (task 0b), everything on one set of sessions: a mixed shop fleet
+(page-text and screenshot agents, local and sandboxed), an explore wave for
+decoys, and declared agents (allowed, unknown operator, forged):
+
+```bash
+lab/agent-traffic/run_lab_v1.sh <python> 10 v1
+```
 
 The page lands in `lab/agent-traffic/state/reports/`. Everything under
 `state/` is local and git-ignored.
