@@ -270,7 +270,8 @@ def test_every_component_builds_with_every_overlay(tmp_path, overlay, component)
         assert "envFrom" not in c, "the public pod must not get the whole admin secret"
         refs = {e["name"]: e["valueFrom"]["secretKeyRef"] for e in c["env"] if "valueFrom" in e}
         assert refs["REDIS_URL"] == {"name": "shield-admin-secrets", "key": "REDIS_URL"}
-        assert set(refs) == {"REDIS_URL", "SHIELD_AGENT_DETECTION_HASH_SALT"}
+        assert set(refs) == {"REDIS_URL", "SHIELD_AGENT_DETECTION_HASH_SALT",
+                             "SHIELD_AGENT_DETECTION_TRAP_SECRET"}
         np = _one(docs, "NetworkPolicy", "redis-ingress")
         allowed = {p["podSelector"]["matchLabels"]["app"] for p in np["spec"]["ingress"][0]["from"]}
         assert allowed == {"shield-guardrail", "shield-admin", "shield-agd-collector"}

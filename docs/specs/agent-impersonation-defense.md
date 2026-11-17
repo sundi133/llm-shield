@@ -293,7 +293,10 @@ session B proves one controller passed it between them.
   returns the layout with `Cache-Control: no-store`, recording each code in
   `agd:{tenant}:trapcode:{code}`. The tag inserts the layout and reports
   hits in its submit beacon (`traps.hit`, with the field's value only when
-  it equals one of that session's codes). The collector checks `code_match`
+  it looks like a code, 8 hex characters; anything else is reported as T4
+  with no value). Trap inputs carry no `name`, so they are never posted to
+  the customer's server. Traps are on or off per site key in rev 8
+  (`traps`, default on). The collector checks `code_match`
   itself; the tag's own claim is never trusted. A controller that calls
   `GET /t` directly learns only its own session's codes, which is what the
   page shows anyway.
@@ -844,8 +847,8 @@ browser.
 |---|---|---|
 | `GET /shs.js?k={site_key}` | none (public) | The tag, versioned, with an SRI hash in the install snippet; cacheable |
 | `POST /b` | site key in the body, `Origin` must match the key's origins (web) | One beacon; `204`, no body; rate-limited per site key and per IP; over the size cap or invalid is dropped silently |
-| `GET /t?k={site_key}&s={_shs}` | site key, `Origin` check (rev 8) | This session's trap layout as JSON, `no-store`; empty layout when traps are off for the tenant, the key is unknown or the rate limit is hit |
-| `GET /v/{code}` | none (rev 8) | Canary hit: `204`, no body; the hit is queued like a beacon with `kind: canary` |
+| `GET /t?k={site_key}&s={_shs}` | site key, `Origin` check (or the `Referer`'s origin: a same-origin GET carries no `Origin`) (rev 8) | This session's trap layout as JSON, `no-store`; empty layout when traps are off on the site key, the key is unknown or the rate limit is hit |
+| `GET /v/{code}?k={site_key}` | none (rev 8) | Canary hit: `204`, no body; queued with `kind: canary` for the session the code was shown to, plus `cookie_shs` when a different session's `_shs` cookie came with it. The site key names the tenant whose codes to look in |
 | `GET /health` | none | Liveness |
 
 The routes work at the root or under any prefix the customer's CDN maps to

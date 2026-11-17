@@ -5,6 +5,8 @@ Rev 8 builds tag-first. This package holds:
   sitekeys   public site keys for the tag: tenant, allowed origins, consent
   beacons    beacon schema v1: validation, clamping, the request block
   stream     the per-tenant beacon stream in Redis (both client flavours)
+  traps      per-session trap layouts, codes and server-side hit checks
+  tag        the tag file, its version, SRI hash and install snippet
   collector  the public collector service (its own process, admin image)
 
 Nothing here runs on the guard path (`/guardrails/*`, `cap/mint`,

@@ -266,7 +266,7 @@ pods and reads only `REDIS_URL` from `shield-admin-secrets`. Create its secret,
 add `components/agent-detection-collector` to your overlay, and apply:
 
 ```bash
-oc create secret generic shield-agent-detection --from-literal=SHIELD_AGENT_DETECTION_HASH_SALT=$(openssl rand -hex 32)
+oc create secret generic shield-agent-detection --from-literal=SHIELD_AGENT_DETECTION_HASH_SALT=$(openssl rand -hex 32) --from-literal=SHIELD_AGENT_DETECTION_TRAP_SECRET=$(openssl rand -hex 32)
 ```
 
 Expose its Route publicly, or map your site's `/_shs/` path to it on your CDN

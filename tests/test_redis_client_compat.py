@@ -333,3 +333,33 @@ def test_tenant_and_pipeline_primitives(kind, client_env, backend):
     tx.incr(f"compat:{tenant}:a")
     res = ts.run_pipeline(tx)
     assert res[1] == 2 and r.get(f"compat:{tenant}:a") == "2"
+
+
+@live
+@pytest.mark.parametrize("kind", ["upstash", "redis-py"])
+def test_agent_detection_site_keys_stream_and_trap_codes(kind, client_env, backend):
+    """Site keys, the beacon stream (XADD differs between the two clients) and
+    trap codes (SET NX EX) on both clients (docs/specs/agent-impersonation-defense.md)."""
+    from core.agent_detection import sitekeys, stream, traps
+    raw, created = backend
+    _use(kind, client_env, raw)
+    tenant = f"compat-{kind}-{secrets.token_hex(4)}"
+    created.update({f"agd:{tenant}:*", "agd:sitekey:*", "agd:tag_tenants"})
+
+    rec = sitekeys.create(tenant, origins=["https://shop.example"])
+    assert sitekeys.get(rec["site_key"])["tenant"] == tenant
+    assert [k["site_key"] for k in sitekeys.list_for(tenant)] == [rec["site_key"]]
+    assert tenant in sitekeys.tag_tenants()
+
+    sid = stream.append(tenant, {"shs": "a" * 24, "kind": "load"})
+    assert sid and "-" in sid
+    entries = raw.execute_command("XRANGE", stream.key(tenant), "-", "+")
+    assert len(entries) == 1
+
+    traps.record(tenant, ["0a1b2c3d"], "a" * 24)
+    traps.record(tenant, ["0a1b2c3d"], "b" * 24)              # first writer wins
+    assert traps.owner_of(tenant, "0a1b2c3d") == "a" * 24
+    assert 0 < raw.execute_command("TTL", traps.code_key(tenant, "0a1b2c3d")) <= traps.CODE_TTL_S
+
+    assert sitekeys.delete(tenant, rec["site_key"]) is True
+    assert sitekeys.get(rec["site_key"]) is None and tenant not in sitekeys.tag_tenants()

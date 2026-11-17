@@ -25,6 +25,8 @@ spec:
               valueFrom: { secretKeyRef: { name: shield-admin-secrets, key: REDIS_URL } }
             - name: SHIELD_AGENT_DETECTION_HASH_SALT
               valueFrom: { secretKeyRef: { name: shield-agent-detection, key: SHIELD_AGENT_DETECTION_HASH_SALT } }
+            - name: SHIELD_AGENT_DETECTION_TRAP_SECRET
+              valueFrom: { secretKeyRef: { name: shield-agent-detection, key: SHIELD_AGENT_DETECTION_TRAP_SECRET } }
           readinessProbe:
             httpGet: { path: /health, port: 8090 }
             periodSeconds: 10

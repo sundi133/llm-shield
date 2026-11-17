@@ -30,6 +30,7 @@ class SiteKeyIn(BaseModel):
     platform: str = "web"
     consent: str = "none"
     xff_hops: int = 1
+    traps: bool = True
     label: Optional[str] = ""
 
 
@@ -79,7 +80,7 @@ def create_site_key(body: SiteKeyIn, request: Request):
     _write(request, tid, "create an agent detection site key")
     try:
         rec = sitekeys.create(tid, origins=body.origins, platform=body.platform,
-                              consent=body.consent, xff_hops=body.xff_hops,
+                              consent=body.consent, xff_hops=body.xff_hops, traps=body.traps,
                               label=body.label or "", created_by=_actor(request, tid))
     except sitekeys.SiteKeyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None

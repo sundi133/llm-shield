@@ -1,23 +1,8 @@
-/*! shs.js @version 1.0.0 | Shield AI agent detection tag | no third-party code */
-/* Spec: docs/specs/agent-impersonation-defense.md sections 2.3 and 8.
- *
- * Sends counts, timings and hashes only: never key codes, field values, page
- * text, query strings or full URLs. One beacon on load (device and automation
- * traits), one on submit or leaving the page (interaction summary and trap
- * results). The collector answers 204 with no body: nothing here ever learns
- * a verdict, and nothing here blocks rendering or a form submit.
- *
- * Install (the portal's Tag page prints the exact line with its SRI hash):
- *   <script src="https://TAG_HOST/shs-1.0.0.js" integrity="sha384-..."
- *     crossorigin="anonymous" data-site="shs_pk_..." async></script>
- *
- * Attributes:
- *   data-site       the site key (or ?k= on the script URL)
- *   data-collector  collector base URL; default "/_shs", first-party through
- *                   your CDN, so ad blockers leave it alone
- *   data-consent    "required": nothing runs, no cookie is set, until the
- *                   page calls window.shs('consent')
- */
+/*! shs.js @version 1.1.0 | Shield AI agent detection tag | no third-party code */
+/* Spec: docs/specs/agent-impersonation-defense.md 2.3, 2.4, 8. Counts, timings and
+ * hashes only; no key codes, field values, page text or query strings. Attributes:
+ * data-site (site key), data-collector (default /_shs), data-consent="required"
+ * (nothing runs until window.shs('consent')). The collector answers 204: no verdict. */
 (function () {
   'use strict';
   var d = document, w = window, n = navigator;
@@ -119,8 +104,7 @@
     function automation() {
       var cdp = false;
       try {
-        // A CDP client with the Runtime domain on serializes console arguments,
-        // which reads this getter. Measured in the lab: silent on Chrome 157.
+        // CDP Runtime reads this getter; silent on Chrome 157 (lab).
         var e = new Error();
         Object.defineProperty(e, 'stack', { configurable: false, get: function () { cdp = true; return ''; } });
         console.debug(e);
@@ -152,6 +136,7 @@
 
     function field(t) {
       if (!t || !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return null;
+      if (t.hasAttribute('data-shs')) return null;     // trap inputs are not interaction
       var f = fields.get(t);
       if (!f) { if (fields.size >= 200) return null; f = { k: 0, i: 0 }; fields.set(t, f); }
       return f;
@@ -217,8 +202,61 @@
       };
     }
 
-    // ── traps (section 2.4): layouts arrive from the collector in step R3 ──
-    var TRAPS = { shown: [], hit: [] };
+    // ── traps (2.4): layout from the collector; hidden from people, screen
+    // readers and the tab order; unnamed inputs, so nothing reaches your server.
+    var TRAPS = { shown: [], hit: [] }, LAY = null, NTRAP = 0;
+    var HIDE = 'position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden';
+    function el(tag, props, text) {
+      var e = d.createElement(tag);
+      for (var p in props) e.setAttribute(p, props[p]);
+      if (text) e.textContent = text;
+      return e;
+    }
+    function box() {
+      var b = el('div', { style: HIDE, 'aria-hidden': 'true' });
+      if (LAY.inert) b.setAttribute('inert', '');
+      return b;
+    }
+    function trapInput(b, f, kind) {
+      var id = 'shs_' + f.field + '_' + (++NTRAP);
+      b.appendChild(el('label', { 'for': id }, f.label));
+      b.appendChild(el('input', { id: id, type: 'text', tabindex: '-1', autocomplete: 'off', 'data-shs': kind }));
+    }
+    function arm(form) {
+      if (!LAY || !LAY.t1 || !form || form.__shs) return;
+      form.__shs = 1;
+      var b = box();
+      b.appendChild(el('p', {}, LAY.t1.text));
+      trapInput(b, LAY.t1, 't1');
+      if (LAY.t4) trapInput(b, LAY.t4, 't4');
+      var sub = LAY.position ? form.querySelector('[type=submit],button:not([type=button])') : null;
+      if (sub && sub.parentNode) sub.parentNode.insertBefore(b, sub); else form.insertBefore(b, form.firstChild);
+    }
+    function readTraps(form) {
+      var ins = form && form.querySelectorAll ? form.querySelectorAll('input[data-shs]') : [];
+      for (var i = 0; i < ins.length; i++) {
+        var v = String(ins[i].value || '').trim().toLowerCase();
+        if (!v) continue;
+        dirty++;
+        TRAPS.hit.push(ins[i].getAttribute('data-shs') === 't1' && /^[0-9a-f]{8}$/.test(v) ? { trap: 'T1', code: v } : { trap: 'T4' });
+      }
+    }
+    function loadTraps() {
+      if (!w.fetch) return;
+      fetch(BASE + '/t?k=' + KEY + '&s=' + SHS, { credentials: 'omit' }).then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (!j || !j.t1) return;
+          LAY = j;
+          TRAPS.shown = j.t4 ? ['T1', 'T2', 'T4'] : ['T1', 'T2'];
+          for (var i = 0; i < d.forms.length && i < 10; i++) arm(d.forms[i]);
+          if (j.t2 && d.body) {
+            var b = box();
+            b.appendChild(el('a', { href: BASE + '/v/' + j.t2.code + '?k=' + KEY, rel: 'nofollow', tabindex: '-1' }, j.t2.text));
+            d.body.appendChild(b);
+          }
+        })['catch'](function () { /* no traps this time */ });
+    }
+    d.addEventListener('focusin', function (e) { if (LAY && e.target && e.target.form) arm(e.target.form); }, true);
 
     // ── beacons ─────────────────────────────────────────────────────────────
     function send(kind, extra) {
@@ -236,10 +274,13 @@
       if (dirty === sentAt) return;
       sentAt = dirty;
       send(kind, { interaction: interaction(), traps: { shown: TRAPS.shown.slice(0, 8), hit: TRAPS.hit.slice(0, 8) } });
+      TRAPS.hit = [];
     }
-    function onLoad() { setTimeout(function () { send('load', { device: device(), automation: automation() }); }, 0); }
+    function onLoad() {
+      setTimeout(function () { send('load', { device: device(), automation: automation() }); loadTraps(); }, 0);
+    }
     if (d.readyState === 'complete') onLoad(); else w.addEventListener('load', onLoad);
-    d.addEventListener('submit', function () { flush('submit'); }, true);
+    d.addEventListener('submit', function (e) { readTraps(e.target); flush('submit'); }, true);
     w.addEventListener('pagehide', function () { flush('leave'); });
     d.addEventListener('visibilitychange', function () { if (d.visibilityState === 'hidden') flush('leave'); });
   }

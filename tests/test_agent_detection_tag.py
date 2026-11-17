@@ -31,6 +31,7 @@ SHS = "0123456789abcdef01234567"
 @pytest.fixture
 def env(monkeypatch):
     monkeypatch.setenv("SHIELD_AGENT_DETECTION_HASH_SALT", "test-salt")
+    monkeypatch.setenv("SHIELD_AGENT_DETECTION_TRAP_SECRET", "test-trap-secret")
     for name in ("SHIELD_AGENT_DETECTION", "SHIELD_AGENT_DETECTION_COLLECTOR"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(ts, "_get_redis", lambda: None)
@@ -62,8 +63,10 @@ def test_the_tag_is_small_versioned_and_self_contained():
 
 def test_the_tag_never_reads_what_people_type():
     code = re.sub(r"/\*.*?\*/", "", tag.source().decode(), flags=re.S)
-    assert ".value" not in code and "e.key ===" in code            # only Backspace/Delete are compared
-    assert "e.key)" not in code and "keyCode" not in code and ".code" not in code
+    assert code.count(".value") == 1 and "ins[i].value" in code   # only the tag's own trap inputs
+    assert "querySelectorAll('input[data-shs]')" in code
+    assert "e.key ===" in code                                     # only Backspace/Delete are compared
+    assert "e.key)" not in code and "keyCode" not in code and "e.code" not in code
     assert code.count("location.href") == 1 and "new URL(me.src, location.href)" in code  # its own src only
     assert "location.search" not in code and "document.title" not in code
 

@@ -4,6 +4,8 @@
 
     GET  /shs.js           the tag (also /shs-{version}.js, immutable)
     POST /b                one beacon; always 204, no body
+    GET  /t?k=&s=          this session's trap layout (JSON, no-store)
+    GET  /v/{code}?k=      a canary link (trap T2); always 204, no body
     GET  /health           liveness
 
 Every route also answers under `/_shs/`, the first-party path customers map
@@ -28,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 import time
 from typing import Optional
@@ -36,11 +39,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
 from core import agent_detection as _agd
-from core.agent_detection import beacons, sitekeys, stream, tag
+from core.agent_detection import beacons, sitekeys, stream, tag, traps
 
 log = logging.getLogger("shield.agent_detection.collector")
 
 RATE_PER_IP_MIN = 240
+RATE_LAYOUT_PER_IP_MIN = 120
 RATE_PER_KEY_MIN = 6000          # per replica
 SITEKEY_CACHE_S = 30.0
 _TRUTHY = ("1", "true", "yes", "on")
@@ -113,12 +117,44 @@ def _no_content() -> Response:
     return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
 
+def request_origin(request: Request) -> str:
+    """Origin, or the origin of the Referer: a same-origin GET (the tag's
+    `/t` through the customer's /_shs/ route) carries no Origin header."""
+    o = (request.headers.get("origin") or "").strip().lower()
+    if o and o != "null":
+        return o
+    ref = request.headers.get("referer") or ""
+    m = re.match(r"^(https?://[^/?#]+)", ref.strip(), re.I)
+    return m.group(1).lower() if m else ""
+
+
+class _Issued:
+    """Sessions whose codes were recorded recently, so a page view doesn't
+    rewrite them. Bounded; cleared when full."""
+
+    def __init__(self, cap: int = 50_000):
+        self.cap, self.seen, self.lock = cap, set(), threading.Lock()
+
+    def first(self, k: str) -> bool:
+        with self.lock:
+            if k in self.seen:
+                return False
+            if len(self.seen) >= self.cap:
+                self.seen.clear()
+            self.seen.add(k)
+            return True
+
+
 def create_app() -> FastAPI:
-    if _agd.collector_enabled() and not _agd.hash_salt():
-        raise RuntimeError("SHIELD_AGENT_DETECTION_HASH_SALT is required when the collector is on "
-                           "(or set SHIELD_AGENT_DETECTION_COLLECTOR=off)")
+    if _agd.collector_enabled():
+        for name, value in (("SHIELD_AGENT_DETECTION_HASH_SALT", _agd.hash_salt()),
+                            ("SHIELD_AGENT_DETECTION_TRAP_SECRET", traps.secret())):
+            if not value:
+                raise RuntimeError(f"{name} is required when the collector is on "
+                                   "(or set SHIELD_AGENT_DETECTION_COLLECTOR=off)")
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     per_ip, per_key, cache = _Window(RATE_PER_IP_MIN), _Window(RATE_PER_KEY_MIN), _KeyCache(SITEKEY_CACHE_S)
+    per_ip_layout, issued = _Window(RATE_LAYOUT_PER_IP_MIN), _Issued()
     app.state.limits = (per_ip, per_key)
     app.state.sitekey_cache = cache
 
@@ -142,9 +178,58 @@ def create_app() -> FastAPI:
             return _no_content()
         entry = {**b, "req": beacons.request_block(request.headers, ip, _agd.hash_salt())}
         try:
+            if b.get("traps", {}).get("hit"):
+                tenant = site["tenant"]
+                entry["traps"] = {"shown": b["traps"].get("shown", []),
+                                  "hit": traps.check_hits(tenant, b["shs"], b["traps"]["hit"],
+                                                          lambda c: traps.owner_of(tenant, c))}
             stream.append(site["tenant"], entry)
         except Exception as exc:          # noqa: BLE001 - fire and forget; the page is never affected
             log.warning("beacon not queued: %s", type(exc).__name__)
+        return _no_content()
+
+    _EMPTY = {"v": 1, "t1": None, "t2": None, "t4": None}
+
+    def layout(request: Request, k: str = "", s: str = ""):
+        origin = request_origin(request)
+        out, headers = _EMPTY, {"Cache-Control": "no-store", "Vary": "Origin, Referer"}
+        site = cache.get(k) if _agd.collector_enabled() and sitekeys.looks_like_key(k) else None
+        if site and origin in site.get("origins", []):
+            headers["Access-Control-Allow-Origin"] = origin
+            ip = client_ip(request, int(site.get("xff_hops") or 1))
+            if site.get("traps", True) and re.fullmatch(r"[0-9a-f]{24}", s or "") \
+                    and per_ip_layout.allow(ip):
+                tenant = site["tenant"]
+                out = traps.layout(tenant, s)
+                if issued.first(f"{tenant}|{s}|{traps.day()}"):
+                    try:
+                        traps.record(tenant, traps.issued_codes(tenant, s), s)
+                    except Exception as exc:  # noqa: BLE001 - the layout still works for T1
+                        log.warning("trap codes not recorded: %s", type(exc).__name__)
+        return JSONResponse(out, headers=headers)
+
+    def canary(request: Request, code: str, k: str = ""):
+        if not _agd.collector_enabled() or not traps.CODE_RE.match(code or ""):
+            return _no_content()
+        site = cache.get(k) if sitekeys.looks_like_key(k) else None
+        if not site:
+            return _no_content()
+        ip = client_ip(request, int(site.get("xff_hops") or 1))
+        if not per_ip.allow(ip):
+            return _no_content()
+        tenant = site["tenant"]
+        try:
+            owner = traps.owner_of(tenant, code)
+            if owner:
+                entry = {"v": 1, "site_key": k, "shs": owner, "kind": "canary",
+                         "traps": {"shown": [], "hit": [{"trap": "T2", "code_match": True}]},
+                         "req": beacons.request_block(request.headers, ip, _agd.hash_salt())}
+                cookie = (request.cookies.get("_shs") or "").strip()
+                if re.fullmatch(r"[0-9a-f]{24}", cookie) and cookie != owner:
+                    entry["traps"]["hit"][0]["cookie_shs"] = cookie   # another session followed it
+                stream.append(tenant, entry)
+        except Exception as exc:            # noqa: BLE001 - fire and forget
+            log.warning("canary not queued: %s", type(exc).__name__)
         return _no_content()
 
     js, js_name, js_sri = tag.source(), tag.filename(), tag.sri()
@@ -169,6 +254,8 @@ def create_app() -> FastAPI:
         app.add_api_route(f"{prefix}/shs.js", tag_latest, methods=["GET"], include_in_schema=False)
         app.add_api_route(f"{prefix}/{js_name}", tag_versioned, methods=["GET"], include_in_schema=False)
         app.add_api_route(f"{prefix}/b", beacon, methods=["POST"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/t", layout, methods=["GET"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/v/{{code}}", canary, methods=["GET"], include_in_schema=False)
         app.add_api_route(f"{prefix}/health", health, methods=["GET"], include_in_schema=False)
     return app
 

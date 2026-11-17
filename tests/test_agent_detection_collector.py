@@ -29,6 +29,7 @@ def env(monkeypatch):
     monkeypatch.setenv("SHIELD_ADMIN_KEY", ROOT)
     monkeypatch.setenv("SHIELD_CONFIG_WRITE_SCOPE", "enforce")
     monkeypatch.setenv("SHIELD_AGENT_DETECTION_HASH_SALT", "test-salt")
+    monkeypatch.setenv("SHIELD_AGENT_DETECTION_TRAP_SECRET", "test-trap-secret")
     for name in ("SHIELD_AGENT_DETECTION", "SHIELD_AGENT_DETECTION_COLLECTOR",
                  "SHIELD_TRUST_PROXY_HEADERS"):
         monkeypatch.delenv(name, raising=False)
