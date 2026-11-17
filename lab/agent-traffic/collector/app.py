@@ -36,7 +36,8 @@ TAG = HERE.parent / "tag" / "shs.js"
 MAX_BYTES = 16 * 1024
 RATE_PER_MIN = 240
 SITE_KEYS = {
-    "lab-site": {"origins": {"http://localhost:8180", "http://127.0.0.1:8180"}},
+    "lab-site": {"origins": {"http://localhost:8180", "http://127.0.0.1:8180",
+                          "http://host.docker.internal:8180"}},  # the last one: sandboxed agents
 }
 
 # Schema v1. ("str", max_len) | ("int", lo, hi) | ("float", lo, hi) | ("bool",) | nested dict

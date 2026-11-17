@@ -14,6 +14,13 @@ Usage:
     screen    every agent sees screenshots only (computer use)
     mixed     alternate: even agents dom, odd agents screen
 
+--sandbox
+    local     every agent's browser is Chrome on this machine (default)
+    docker    every agent gets its own container from one sandbox image
+              (lab/agent-traffic/sandbox, build it first); the controller
+              stays here and drives each browser over Playwright's server
+    mixed     pairs alternate: agents 0-1 local, 2-3 docker, 4-5 local, ...
+
 --ua-mode
     spoofed   every agent claims Chrome on Windows while the real browser runs
               on this Mac (a common, slightly sloppy fleet setup)
@@ -30,6 +37,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import random
 import sys
 import time
@@ -38,7 +46,7 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from browser_agent import Persona, run_agent  # noqa: E402
+from browser_agent import SHOP, Persona, run_agent  # noqa: E402
 from llm import LLM  # noqa: E402
 
 LAB = Path(__file__).resolve().parent.parent
@@ -53,6 +61,9 @@ CITIES = [("Austin", "78701"), ("Denver", "80202"), ("Columbus", "43215"), ("Por
           ("Raleigh", "27601"), ("Phoenix", "85004"), ("Madison", "53703"), ("Tampa", "33602")]
 # First octets seen in US residential ISP space; every agent gets its own /24.
 ISP_OCTETS = [24, 50, 67, 68, 69, 71, 72, 73, 75, 76, 97, 98, 99, 107, 108, 174]
+
+SANDBOX_IMAGE = os.environ.get("LAB_SANDBOX_IMAGE", "shield-lab-sandbox:1.65.2")
+SANDBOX_SHOP = os.environ.get("LAB_SANDBOX_SHOP_URL", "http://host.docker.internal:8180")
 
 SPOOFED_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
               "Chrome/131.0.0.0 Safari/537.36")
@@ -87,6 +98,7 @@ async def main() -> None:
     ap.add_argument("--max-steps", type=int, default=25)
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--observe", choices=["dom", "screen", "mixed"], default="dom")
+    ap.add_argument("--sandbox", choices=["local", "docker", "mixed"], default="local")
     args = ap.parse_args()
 
     llm = LLM.from_env()
@@ -104,22 +116,39 @@ async def main() -> None:
 
         async def one(i: int):
             await asyncio.sleep(rng.uniform(0, args.stagger))
+            persona = _persona(i, args.label, rng)
             async with sem:
-                res = await run_agent(browser, llm, agent_id=f"{args.label}-{i:02d}", ip=ips[i],
-                                      user_agent=ua, locale="en-US", timezone="America/Chicago",
-                                      persona=_persona(i, args.label, rng), task=TASK, max_steps=args.max_steps,
-                                      observe=_mode(args.observe, i))
-                print(f"  {res.agent_id} {res.observe:<6} {res.ip:<16} {res.outcome:<10} steps={res.steps:<3} "
+                kind = _sandbox_kind(args.sandbox, i)
+                box = Sandbox(f"shield-lab-sbx-{args.label}-{i:02d}") if kind == "docker" else None
+                try:
+                    b = await box.start(pw) if box else browser
+                    agent_ua = ua if args.ua_mode == "spoofed" or not box else \
+                        (await _native_ua(b)).replace("HeadlessChrome", "Chrome")
+                    res = await run_agent(b, llm, agent_id=f"{args.label}-{i:02d}", ip=ips[i],
+                                          user_agent=agent_ua, locale="en-US", timezone="America/Chicago",
+                                          persona=persona, task=TASK, max_steps=args.max_steps,
+                                          observe=_mode(args.observe, i), shop=SANDBOX_SHOP if box else SHOP)
+                except Exception as exc:          # a sandbox that won't start is one failed agent
+                    from browser_agent import AgentResult
+                    res = AgentResult(agent_id=f"{args.label}-{i:02d}", ip=ips[i], outcome="error",
+                                      summary=f"sandbox: {type(exc).__name__}: {str(exc)[:80]}", ended=time.time())
+                finally:
+                    if box:
+                        await box.stop()
+                res.sandbox = kind
+                print(f"  {res.agent_id} {res.observe:<6} {res.sandbox:<6} {res.ip:<16} {res.outcome:<10} steps={res.steps:<3} "
                       f"{res.ended - res.started:5.0f}s  {res.summary[:70]}", flush=True)
                 return res
 
-        print(f"fleet {args.label}: {args.n} agents, model {llm.describe()}, ua-mode {args.ua_mode}", flush=True)
+        print(f"fleet {args.label}: {args.n} agents, model {llm.describe()}, ua-mode {args.ua_mode}, "
+              f"observe {args.observe}, sandbox {args.sandbox}", flush=True)
         results = await asyncio.gather(*(one(i) for i in range(args.n)))
         await browser.close()
 
     manifest = {
         "label": args.label, "kind": "agent_fleet", "model": llm.describe(), "effort": llm.effort,
-        "ua_mode": args.ua_mode, "observe": args.observe, "user_agent": ua, "task": TASK, "started": started, "ended": time.time(),
+        "ua_mode": args.ua_mode, "observe": args.observe, "sandbox": args.sandbox,
+        "sandbox_image": SANDBOX_IMAGE if args.sandbox != "local" else None, "user_agent": ua, "task": TASK, "started": started, "ended": time.time(),
         "usage": llm.usage.__dict__,
         "agents": [{k: v for k, v in r.__dict__.items() if k != "transcript"} for r in results],
     }
@@ -134,6 +163,58 @@ async def main() -> None:
     print(f"done in {time.time() - started:.0f}s; outcomes {outcomes}; model calls {llm.usage.calls}, "
           f"input tokens {llm.usage.input_tokens}, output tokens {llm.usage.output_tokens}, "
           f"cache reads {llm.usage.cache_read_tokens}", flush=True)
+
+
+def _sandbox_kind(sandbox: str, i: int) -> str:
+    return sandbox if sandbox != "mixed" else ("local" if (i // 2) % 2 == 0 else "docker")
+
+
+class Sandbox:
+    """One container from the sandbox image; its browser is driven from here over Playwright's server."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.browser = None
+
+    async def _docker(self, *args: str) -> str:
+        proc = await asyncio.create_subprocess_exec("docker", *args, stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.PIPE)
+        out, err = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(err.decode().strip()[:200])
+        return out.decode().strip()
+
+    async def start(self, pw):
+        await self._docker("run", "-d", "--rm", "--name", self.name, "-p", "127.0.0.1::3000",
+                           "--add-host", "host.docker.internal:host-gateway", "--shm-size", "1g", SANDBOX_IMAGE)
+        port = ""
+        for _ in range(20):                         # the mapping can lag the container start
+            out = (await self._docker("port", self.name, "3000")).splitlines()
+            if out:
+                port = out[0].rsplit(":", 1)[1]
+                break
+            await asyncio.sleep(0.25)
+        if not port:
+            raise RuntimeError("sandbox port never mapped")
+        last = None
+        for _ in range(60):
+            try:
+                self.browser = await pw.chromium.connect(f"ws://127.0.0.1:{port}/", timeout=3000)
+                return self.browser
+            except Exception as exc:              # server still starting
+                last = exc
+                await asyncio.sleep(0.5)
+        raise RuntimeError(f"sandbox browser never came up: {last}")
+
+    async def stop(self):
+        try:
+            if self.browser:
+                await self.browser.close()
+        finally:
+            try:
+                await self._docker("rm", "-f", self.name)
+            except RuntimeError:
+                pass
 
 
 def _mode(observe: str, i: int) -> str:

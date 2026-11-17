@@ -157,6 +157,8 @@ def main() -> None:
 
     manifests = [json.loads((LAB / "state" / "runs" / r / "manifest.json").read_text()) for r in args.runs]
     agent_ips = {a["ip"] for m in manifests for a in m["agents"]}
+    agent_meta = {a["ip"]: {"observe": a.get("observe", "dom"), "sandbox": a.get("sandbox", "local")}
+                  for m in manifests for a in m["agents"]}
     since = _ts(args.since) if args.since else (min(m["started"] for m in manifests) - 5 if manifests else 0)
     until = _ts(args.until) if args.until else (max(m["ended"] for m in manifests) + 5 if manifests else time.time())
 
@@ -267,7 +269,7 @@ def main() -> None:
             "orders_by_agents": sum(by_key[k].orders for k in agents),
         },
         "per_session": [
-            {**by_key[k].summary(), "truth": truth[k], "score": verdicts[k].score, "band": verdicts[k].band,
+            {**by_key[k].summary(), "truth": truth[k], **agent_meta.get(by_key[k].ip, {}), "score": verdicts[k].score, "band": verdicts[k].band,
              "reasons": verdicts[k].reasons, "fleet": fleet_of.get(k), "siem_alerted": k in caught_before,
              "review": review.get(k),
              "tag": {"join": tags[k].join, "graphics": tags[k].device.get("renderer_class"),

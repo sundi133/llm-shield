@@ -19,7 +19,8 @@ navigation elsewhere is refused. IPs are simulated residential proxies sent as
 | `shop/nginx.conf` | The edge: writes the JSON access log a SIEM would hold, and enforces Shield's indicator maps |
 | `agents/llm.py` | Model adapter: Claude (Anthropic SDK) or any OpenAI-compatible endpoint (OpenRouter, Azure OpenAI, vLLM, Ollama) |
 | `agents/browser_agent.py` | The agent, two modes: `dom` reads page text plus numbered controls and acts through Playwright locators; `screen` sees screenshots only and answers with pixel coordinates (computer use), so hidden traps never reach it |
-| `agents/fleet.py` | One controller running N agents, each with its own persona and IP; `--observe dom\|screen\|mixed` |
+| `agents/fleet.py` | One controller running N agents, each with its own persona and IP; `--observe dom\|screen\|mixed`, `--sandbox local\|docker\|mixed` |
+| `sandbox/Dockerfile` | One sandbox image (Playwright 1.65.2 browsers plus its server); `--sandbox docker` gives every agent its own container from it, so they share one device fingerprint (spec 3.4) |
 | `tag/shs.js` | Tier 2 tag prototype (spec 2.3): device, automation and interaction signals as counts, timings and hashes; sets the `_shs` cookie |
 | `collector/app.py` | Tier 2 collector prototype on `/_shs/` (port 8201 behind Nginx): serves the tag, validates beacons (schema v1, 16 KB, origin, rate limit), always `204`; writes `state/logs/beacons.jsonl` |
 | `analysis/trapcheck.py` | Resolves canary hits (`/_shs/v/{code}`) to their session; another session's code is controller evidence |
@@ -65,6 +66,14 @@ Python with Playwright and the repo's dependencies, and Docker for Nginx:
 ```bash
 lab/agent-traffic/shop/run_shop.sh <python>
 lab/agent-traffic/run_demo.sh <python> 10 spoofed demo mixed
+```
+
+Sandboxes (optional): build the image once, then pass `--sandbox docker` or
+`mixed` to `fleet.py`. Containers reach the shop at `host.docker.internal`
+and are removed when their agent finishes.
+
+```bash
+docker build -t shield-lab-sandbox:1.65.2 lab/agent-traffic/sandbox
 ```
 
 The last argument picks how agents see the page: `dom`, `screen` or `mixed`

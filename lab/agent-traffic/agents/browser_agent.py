@@ -150,17 +150,19 @@ class AgentResult:
     challenged: bool = False
     transcript: list = field(default_factory=list)
     observe: str = "dom"
+    sandbox: str = "local"
 
 
-def _same_site(url: str) -> bool:
-    shop = urlparse(SHOP)
-    target = urlparse(urljoin(SHOP, url))
+def _same_site(url: str, base: str = SHOP) -> bool:
+    shop = urlparse(base)
+    target = urlparse(urljoin(base, url))
     return (target.scheme, target.netloc) == (shop.scheme, shop.netloc)
 
 
 async def run_agent(browser: Browser, llm: LLM, *, agent_id: str, ip: str, user_agent: str,
                     locale: str, timezone: str, persona: Persona, task: str,
-                    max_steps: int = 25, observe: str = "dom") -> AgentResult:
+                    max_steps: int = 25, observe: str = "dom", shop: str = SHOP) -> AgentResult:
+    """`shop` is the lab shop as this agent's browser reaches it (host.docker.internal from a sandbox)."""
     result = AgentResult(agent_id=agent_id, ip=ip, observe=observe)
     context = await browser.new_context(
         user_agent=user_agent, locale=locale, timezone_id=timezone,
@@ -170,10 +172,10 @@ async def run_agent(browser: Browser, llm: LLM, *, agent_id: str, ip: str, user_
     page: Page = await context.new_page()
     last_note = ""
     try:
-        await page.goto(SHOP + "/", wait_until="domcontentloaded")
+        await page.goto(shop + "/", wait_until="domcontentloaded")
         if observe == "screen":
             try:
-                await _run_screen(page, llm, result, persona, task, max_steps)
+                await _run_screen(page, llm, result, persona, task, max_steps, shop)
             except Exception as exc:              # one broken agent never stops the fleet
                 result.outcome, result.summary = "error", f"harness error: {type(exc).__name__}"
             return result
@@ -198,7 +200,7 @@ async def run_agent(browser: Browser, llm: LLM, *, agent_id: str, ip: str, user_
             if kind in ("done", "fail"):
                 result.outcome, result.summary = kind, act.get("text", "")
                 break
-            last_note = await _act(page, act)
+            last_note = await _act(page, act, shop)
         else:
             result.outcome, result.summary = "max_steps", "ran out of steps"
     finally:
@@ -207,7 +209,8 @@ async def run_agent(browser: Browser, llm: LLM, *, agent_id: str, ip: str, user_
     return result
 
 
-async def _run_screen(page: Page, llm: LLM, result: AgentResult, persona: Persona, task: str, max_steps: int) -> None:
+async def _run_screen(page: Page, llm: LLM, result: AgentResult, persona: Persona, task: str, max_steps: int,
+                      shop: str = SHOP) -> None:
     """Screenshot-only loop: the model sees pixels and answers with coordinates."""
     last_note = ""
     for step in range(1, max_steps + 1):
@@ -249,17 +252,17 @@ async def _run_screen(page: Page, llm: LLM, result: AgentResult, persona: Person
         if act.get("action") in ("done", "fail"):
             result.outcome, result.summary = act["action"], act.get("text", "")
             return
-        last_note = await _act_screen(page, act)
+        last_note = await _act_screen(page, act, shop)
     result.outcome, result.summary = "max_steps", "ran out of steps"
 
 
-async def _act_screen(page: Page, act: dict) -> str:
+async def _act_screen(page: Page, act: dict, shop: str = SHOP) -> str:
     kind, x, y, text = act.get("action"), act.get("x", -1), act.get("y", -1), act.get("text", "")
     try:
         if kind == "goto":
-            if not _same_site(act.get("url", "")):
+            if not _same_site(act.get("url", ""), shop):
                 return "refused: that address is outside this site"
-            await page.goto(urljoin(SHOP, act["url"]), wait_until="domcontentloaded")
+            await page.goto(urljoin(shop, act["url"]), wait_until="domcontentloaded")
             return f"opened {act['url']}"
         if kind in ("click", "click_type", "click_select"):
             if not (0 <= x < SCREEN_VIEWPORT["width"] and 0 <= y < SCREEN_VIEWPORT["height"]):
@@ -288,13 +291,13 @@ async def _act_screen(page: Page, act: dict) -> str:
     return "unknown action"
 
 
-async def _act(page: Page, act: dict) -> str:
+async def _act(page: Page, act: dict, shop: str = SHOP) -> str:
     kind, idx = act.get("action"), act.get("index", -1)
     try:
         if kind == "goto":
-            if not _same_site(act.get("url", "")):
+            if not _same_site(act.get("url", ""), shop):
                 return "refused: that address is outside this site"
-            await page.goto(urljoin(SHOP, act["url"]), wait_until="domcontentloaded")
+            await page.goto(urljoin(shop, act["url"]), wait_until="domcontentloaded")
             return f"opened {act['url']}"
         loc = page.locator(f'[data-agent-idx="{idx}"]')
         if await loc.count() == 0:
