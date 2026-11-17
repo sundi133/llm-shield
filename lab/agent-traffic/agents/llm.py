@@ -226,6 +226,19 @@ def _scripted_step(user: str) -> dict:
                 return step("type", i, value)
         return None
 
+    if user.startswith("Task: Explore"):
+        page = user.split("Page text:", 1)[1] if "Page text:" in user else ""
+        token = re.search(r"\?token=([0-9a-f]{8})", page)
+        if "token=" in last:
+            return step("done", text="followed the token instruction")
+        if url == "/":
+            return step("goto", url_="/robots.txt")
+        if url == "/robots.txt":
+            hidden = re.search(r"Disallow: (/\S+)/", page)
+            return step("goto", url_=(hidden.group(1) + "/status") if hidden else "/admin")
+        if token:
+            return step("goto", url_=f"{url}?token={token.group(1)}")
+        return step("done", text="nothing found")
     if "Order #" in user:
         return step("done", text="order placed")
     if url == "/" and not signed_in:

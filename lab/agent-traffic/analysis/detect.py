@@ -121,6 +121,36 @@ def _forged_identity(s: Session):
     return 0.0, None
 
 
+SCANNER_ALLOW_UA = ("lab-scanner/",)     # the customer's own scanners, excluded from A12 (spec 2.6)
+DECOY_RE = __import__("re").compile(r"^D[1-4]$")
+
+
+def _decoys(s: Session):
+    """A12 (spec 2.6): touched a decoy nobody legitimate needs.
+
+    Following the instruction inside it (the session's code came back), or
+    presenting the fake key, is a clear agent. A bare hit is medium and counts
+    only alongside other activity on the site: the public web is full of
+    scanners requesting /.env, and WAFs already handle those.
+    """
+    if not s.decoy_hits or s.ua.startswith(SCANNER_ALLOW_UA):
+        return 0.0, None
+    hits = set(s.decoy_hits)
+    kinds = sorted(h for h in hits if DECOY_RE.match(h))
+    followed = sorted(h[:2] for h in hits if h.endswith("f") and DECOY_RE.match(h[:2]))
+    if "D3k" in hits:
+        return 1.0, "presented the fake API key from the page code (D3)"
+    if followed:
+        return 1.0, f"followed the instruction inside a decoy with this session's code ({', '.join(followed)})"
+    if any("x:" in h for h in hits):
+        return 1.0, "brought back a decoy code shown to another visitor: one controller"
+    # Probing paths that don't exist (404s) is scanner behavior, not using the site.
+    other_pages = sum(1 for e in s.events if not e.get("decoy") and e.get("status", 200) < 400)
+    if other_pages >= 2:
+        return 0.5, f"opened decoys ({', '.join(kinds)}) while also using the site"
+    return 0.0, None
+
+
 def declared(s: Session, allow: set) -> str:
     """'declared' (valid signature, allowed operator), 'declared_unknown' (valid or
     unverifiable, operator not allowed), or '' (not a declared agent).
@@ -137,7 +167,7 @@ def declared(s: Session, allow: set) -> str:
 DETECTORS = [  # id, function, weight
     ("A1", _rhythm, 0.45), ("A2", _fill_timing, 0.35), ("A3", _error_recovery, 0.25),
     ("A4", _goal_directed, 0.30), ("A5", _tripwire, 0.95), ("A6", _client_traits, 0.60),
-    ("A11", _forged_identity, 0.90),
+    ("A11", _forged_identity, 0.90), ("A12", _decoys, 0.90),
 ]
 
 

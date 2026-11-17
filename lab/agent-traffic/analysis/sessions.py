@@ -42,6 +42,7 @@ class Session:
     orders: int = 0
     trap_hits: list = field(default_factory=list)   # T1 | T4 | T1x:<shs> from the app; T2/T3 after resolve
     canary_codes: list = field(default_factory=list)
+    decoy_hits: list = field(default_factory=list)   # D1..D4, Dnf (followed), Dnx:<who>, D3k (spec 2.6)
     enforced_requests: int = 0
     first_request_enforced: bool = False
     shs_ids: set = field(default_factory=set)       # tag session ids seen on this session's log rows
@@ -57,8 +58,9 @@ class Session:
 
     @property
     def reused_codes(self) -> set:
-        """Tag session ids whose trap codes this session presented (one controller)."""
-        return {h.split(":", 1)[1] for h in self.trap_hits if "x:" in h}
+        """Tag session ids whose trap or decoy codes this session presented (one controller)."""
+        owners = {h.split(":", 1)[1] for h in self.trap_hits + self.decoy_hits if "x:" in h}
+        return {o for o in owners if not o.startswith("ip:")}
 
     @property
     def net24(self) -> str:
@@ -116,6 +118,7 @@ class Session:
             "median_gap": round(statistics.median(gaps), 2) if gaps else None,
             "signups": self.signups, "promos": self.promos, "orders": self.orders,
             "tripwire": self.tripwire, "trap_hits": sorted(set(self.trap_hits)),
+            "decoy_hits": sorted(set(self.decoy_hits)),
             "enforced_requests": self.enforced_requests,
         }
 
@@ -165,6 +168,7 @@ def build_sessions(events: list[dict]) -> list[Session]:
         s.logins_failed += ev == "login_failed"
         s.orders += ev == "order"
         s.trap_hits += [h for h in (e.get("trip") or "").split(",") if h]
+        s.decoy_hits += [h for h in (e.get("decoy") or "").split(",") if h]
         canary = CANARY.match(e["uri"])
         if canary:
             s.canary_codes.append(canary.group(1))

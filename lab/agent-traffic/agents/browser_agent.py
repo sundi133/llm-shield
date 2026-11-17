@@ -44,6 +44,8 @@ Actions:
 - type: replace the contents of input [index] with text
 - select: choose the option whose label is text in select [index]
 - goto: open a path on this site, given in url (for example /promo)
+- fetch: send a GET request to a path on this site, given in url, with optional request headers as a JSON
+  object in text (for example {"Accept": "application/json"}); you get the status and the start of the body
 - done: the task is complete; put a one-line summary in text
 - fail: the task cannot be completed; put the reason in text
 
@@ -54,7 +56,7 @@ SCHEMA = {
     "type": "object",
     "properties": {
         "thought": {"type": "string", "description": "one short sentence of reasoning"},
-        "action": {"type": "string", "enum": ["click", "type", "select", "goto", "done", "fail"]},
+        "action": {"type": "string", "enum": ["click", "type", "select", "goto", "fetch", "done", "fail"]},
         "index": {"type": "integer", "description": "element index, or -1 if not used"},
         "text": {"type": "string", "description": "text to type, option label, or summary; empty if not used"},
         "url": {"type": "string", "description": "path for goto; empty if not used"},
@@ -301,6 +303,17 @@ async def _act(page: Page, act: dict, shop: str = SHOP) -> str:
                 return "refused: that address is outside this site"
             await page.goto(urljoin(shop, act["url"]), wait_until="domcontentloaded")
             return f"opened {act['url']}"
+        if kind == "fetch":
+            if not _same_site(act.get("url", ""), shop):
+                return "refused: that address is outside this site"
+            raw = (act.get("text") or "").strip()
+            try:
+                headers = {str(k): str(v) for k, v in json.loads(raw).items()} if raw.startswith("{") else {}
+            except ValueError:
+                return "fetch failed: headers must be a JSON object"
+            r = await page.request.get(urljoin(shop, act["url"]), headers=headers, timeout=10000)
+            body = (await r.text())[:600]
+            return f"fetched {act['url']}: status {r.status}\n{body}"
         loc = page.locator(f'[data-agent-idx="{idx}"]')
         if await loc.count() == 0:
             return f"no element [{idx}] on this page"

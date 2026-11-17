@@ -24,6 +24,12 @@ pkill -f "uvicorn verifier:app --port 8203" 2>/dev/null || true
 ( cd "$LAB/edge" && LAB_STATE_DIR="$STATE" nohup "$PY" -m uvicorn verifier:app --port 8203 --log-level warning \
     > "$STATE/logs/verifier.out" 2>&1 & )
 
+# Decoys (spec 2.6): generated per deployment from state/decoy_seed; Nginx routes their paths here.
+pkill -f "uvicorn decoys:app --port 8204" 2>/dev/null || true
+( cd "$LAB/edge" && LAB_STATE_DIR="$STATE" "$PY" decoys.py --write-nginx "$STATE/shield/decoys.conf" )
+( cd "$LAB/edge" && LAB_STATE_DIR="$STATE" nohup "$PY" -m uvicorn decoys:app --port 8204 --log-level warning \
+    > "$STATE/logs/decoys.out" 2>&1 & )
+
 # Nginx (the "edge").
 docker rm -f shield-lab-nginx >/dev/null 2>&1 || true
 docker run -d --name shield-lab-nginx -p 8180:8180 \

@@ -43,6 +43,7 @@ from sessions import build_sessions, load_events  # noqa: E402
 HUMAN_PREFIXES = ("192.168.65.", "172.17.", "172.18.", "127.")
 TOOLING_UA = ("curl/", "python-requests", "Wget")
 PREVALENCE_MAX = 0.001
+DETECTOR_IDS = ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11", "A12")
 
 
 def _ts(value: str) -> float:
@@ -262,6 +263,10 @@ def main() -> None:
                             for op in sorted({by_key[k].wba_agent for k, d in declared_of.items() if d})},
             "declared_in_any_fleet_or_indicator": sum(1 for k in exempt if k in fleet_of or k in fleet_of_t
                                                       or k in ind["sessions"]),
+            # Signed agents that touch decoys are reported by operator: being signed doesn't excuse it (spec 2.6).
+            "decoy_touches_by_operator": {op: sum(1 for k, d in declared_of.items()
+                                                  if d and by_key[k].wba_agent == op and by_key[k].decoy_hits)
+                                          for op in sorted({by_key[k].wba_agent for k, d in declared_of.items() if d})},
         },
         "before": {
             "alerts": alerts,
@@ -281,6 +286,14 @@ def main() -> None:
             "fleets": fleets,
             "review": {"model": review_model, "usage": review_usage, "decisions": review},
         },
+        "decoys": {
+            "agent_sessions_touching": rate(agents, lambda k: any(h[:2] in ("D1", "D2", "D3", "D4")
+                                                                 for h in by_key[k].decoy_hits)),
+            "agent_sessions_following": rate(agents, lambda k: any(h.endswith("f") or h == "D3k" or "x:" in h
+                                                                  for h in by_key[k].decoy_hits)),
+            "human_sessions_touching": rate(humans, lambda k: bool(by_key[k].decoy_hits)),
+            "by_decoy": {d: sum(1 for k in agents if d in by_key[k].decoy_hits) for d in ("D1", "D2", "D4")},
+        },
         "after_tag": {
             "tag_joined": rate(agents + humans, lambda k: tags[k].join == "shs"),
             "tag_fallback_join": rate(agents + humans, lambda k: tags[k].join == "fallback"),
@@ -291,9 +304,9 @@ def main() -> None:
             "human_sessions_flagged": rate(humans, flagged_t),
             "human_sessions_grey": rate(humans, lambda k: verdicts_t[k].band == "grey"),
             "detector_hits_on_agents": {d: sum(1 for k in agents if verdicts_t[k].signals.get(d))
-                                        for d in ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10")},
+                                        for d in DETECTOR_IDS},
             "detector_hits_on_humans": {d: sum(1 for k in humans if verdicts_t[k].signals.get(d))
-                                        for d in ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10")},
+                                        for d in DETECTOR_IDS},
             "fleets": fleets_t,
             "review": {"usage": review_t_usage, "decisions": review_t},
             "baseline_sessions": baseline.sessions,
