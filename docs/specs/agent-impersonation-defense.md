@@ -1,7 +1,8 @@
 # Spec: AI agent and fleet detection from SIEM logs
 
-Status: **draft rev 7, 2026-11-16, awaiting approval.** Branch `spec/agent-impersonation-defense`
-(lab work on `feat/agent-detection-lab`). Architecture: `artifacts/agent-detection-architecture-v1.svg`.
+Status: **rev 7 approved 2026-11-16; task 0b in progress.** Branch `spec/agent-impersonation-defense`
+(lab work on `feat/agent-detection-lab`). Architecture: `artifacts/agent-detection-architecture-v5.svg`
+(partner version: `-v4.svg`).
 
 - Rev 2 moved detection to SIEM logs with no front-end SDK.
 - Rev 3 narrows the scope to the two things a SIEM can't already do:
@@ -727,9 +728,12 @@ Prefix `agd:` (agent detection). All keys are tenant-scoped.
 (load, leave, submit), device {renderer, renderer_class, cores, memory,
 screen, dpr, tz, langs, touch, canvas_hash, fonts_hash}, automation
 {webdriver, cdp, headless_shape, hints_mismatch}, interaction {keys, inputs,
-inputs_without_keys, clicks, click_centre_offset_px, pointer_moves,
+inputs_without_keys, fields_touched, corrections, clicks, centre_clicks,
+clicks_without_move, click_centre_offset_px, pointer_moves,
 pointer_straightness, untrusted_events, key_gap_mean_ms, key_gap_cv,
-first_input_ms}, traps {shown, hit: [{trap, code_match}]}}`. Unknown fields
+first_input_ms}, traps {shown, hit: [{trap, code_match}]}}`.
+`corrections` counts Backspace and Delete presses only (a count, never which
+characters). Unknown fields
 are dropped; out-of-range numbers are clamped.
 
 ## 9. API / interface (admin plane)

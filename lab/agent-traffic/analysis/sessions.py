@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 STATIC = re.compile(r"^/(static/|favicon)")
+TAG = re.compile(r"^/_shs/")       # the tier 2 tag and its beacons: never page actions
 FORM_FIELDS = {"/signup": 4, "/checkout": 3, "/promo": 1, "/login": 2}
 BROWSE = re.compile(r"^/(product/\d+|help|about)$")
 
@@ -41,6 +42,8 @@ class Session:
     tripwire: bool = False
     enforced_requests: int = 0
     first_request_enforced: bool = False
+    shs_ids: set = field(default_factory=set)       # tag session ids seen on this session's log rows
+    tag_requests: int = 0
 
     # derived
     @property
@@ -134,6 +137,8 @@ def build_sessions(events: list[dict]) -> list[Session]:
             s.enforced_requests += 1
         if e.get("acct"):
             s.account = e["acct"]
+        if e.get("shs"):
+            s.shs_ids.add(e["shs"])
         ev = e.get("event", "")
         s.signups += ev == "signup"
         s.signup_failed += ev == "signup_failed"
@@ -142,7 +147,9 @@ def build_sessions(events: list[dict]) -> list[Session]:
         s.logins_failed += ev == "login_failed"
         s.orders += ev == "order"
         s.tripwire |= e.get("trip") == "1" or e["uri"].startswith("/partners/verify")
-        if STATIC.match(e["uri"]):
+        if TAG.match(e["uri"]):
+            s.tag_requests += 1
+        elif STATIC.match(e["uri"]):
             s.assets += 1
         else:
             s.events.append(e)

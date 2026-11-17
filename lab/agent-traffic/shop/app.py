@@ -93,6 +93,7 @@ def _page(request: Request, title: str, content: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)} | Acme Outfitters</title>
 <link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script>
+<script src="/_shs/shs.js?k=lab-site" async></script>
 <link rel="icon" href="/static/logo.svg"></head><body>
 <header><a href="/" class="brand"><img src="/static/logo.svg" alt="" width="28" height="28"> Acme Outfitters</a>
 <nav><a href="/">Shop</a> <a href="/promo">Promotions</a> <a href="/help">Help</a> <a href="/about">About</a>

@@ -14,6 +14,11 @@ pkill -f "uvicorn app:app --port 8200" 2>/dev/null || true
 ( cd "$HERE" && LAB_STATE_DIR="$STATE" nohup "$PY" -m uvicorn app:app --port 8200 --log-level warning \
     > "$STATE/logs/app.out" 2>&1 & )
 
+# Tier 2 collector: the tag and its beacons, routed by Nginx at /_shs/.
+pkill -f "uvicorn app:app --port 8201" 2>/dev/null || true
+( cd "$LAB/collector" && LAB_STATE_DIR="$STATE" nohup "$PY" -m uvicorn app:app --port 8201 --log-level warning \
+    > "$STATE/logs/collector.out" 2>&1 & )
+
 # Nginx (the "edge").
 docker rm -f shield-lab-nginx >/dev/null 2>&1 || true
 docker run -d --name shield-lab-nginx -p 8180:8180 \
