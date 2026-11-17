@@ -34,6 +34,31 @@ navigation elsewhere is refused. IPs are simulated residential proxies sent as
 | `analysis/analyze.py` | Scores a log window against ground truth twice (logs only, and with the tag), optional investigator review, publishes indicators |
 | `analysis/report.py` | The report: three columns on the same sessions (SIEM rules, Shield on logs, Shield with the tag), breakdowns by how agents see the page and where they run, checks fired, traps, decoys, declared agents, fleets, and wave 2 containment |
 
+## Setup (once)
+
+Needs Python 3.11+, Docker Desktop (Nginx edge, optional sandboxes) and `jq`
+(the live evidence feed). The lab needs only five packages, so it gets its
+own venv:
+
+```bash
+python3 -m venv ~/.venvs/shield-lab
+```
+
+```bash
+~/.venvs/shield-lab/bin/pip install fastapi uvicorn httpx cryptography playwright==1.65.2
+```
+
+```bash
+~/.venvs/shield-lab/bin/python -m playwright install chromium
+```
+
+Then `PY=~/.venvs/shield-lab/bin/python` is the `<python>` every script below
+takes. Optional, for sandboxed agents:
+
+```bash
+docker build -t shield-lab-sandbox:1.65.2 lab/agent-traffic/sandbox
+```
+
 ## Customer demo
 
 [DEMO.md](DEMO.md) is a 15-minute runbook: hidden traps, decoys and a fleet

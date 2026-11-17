@@ -12,7 +12,8 @@ system is touched.
 1. Docker Desktop running. The sandbox image built once
    (`docker build -t shield-lab-sandbox:1.65.2 lab/agent-traffic/sandbox`); without
    it the fleet runs local browsers only.
-2. Set `PY` to the lab Python (Playwright and the repo's requirements), then reset:
+2. Set `PY` to the lab Python (one-time setup in [README.md](README.md#setup-once),
+   e.g. `PY=~/.venvs/shield-lab/bin/python`), then reset:
    ```bash
    cd lab/agent-traffic && ./demo_reset.sh "$PY"
    ```
