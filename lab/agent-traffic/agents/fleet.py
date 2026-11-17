@@ -109,6 +109,9 @@ async def main() -> None:
     ap.add_argument("--label", required=True)
     ap.add_argument("--ua-mode", choices=["spoofed", "careful"], default="spoofed")
     ap.add_argument("--max-steps", type=int, default=25)
+    ap.add_argument("--headed", action="store_true",
+                    help="show the local browser on screen (for a live demo); sandboxes stay headless")
+    ap.add_argument("--slow-mo", type=int, default=0, help="ms pause before each browser action, so people can follow")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--observe", choices=["dom", "screen", "mixed"], default="dom")
     ap.add_argument("--sandbox", choices=["local", "docker", "mixed"], default="local")
@@ -126,7 +129,7 @@ async def main() -> None:
     started = time.time()
 
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(channel="chrome", headless=True)
+        browser = await pw.chromium.launch(channel="chrome", headless=not args.headed, slow_mo=args.slow_mo)
         native_ua = await _native_ua(browser)
         ua = SPOOFED_UA if args.ua_mode == "spoofed" else native_ua.replace("HeadlessChrome", "Chrome")
 

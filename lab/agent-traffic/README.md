@@ -34,6 +34,12 @@ navigation elsewhere is refused. IPs are simulated residential proxies sent as
 | `analysis/analyze.py` | Scores a log window against ground truth twice (logs only, and with the tag), optional investigator review, publishes indicators |
 | `analysis/report.py` | The report: three columns on the same sessions (SIEM rules, Shield on logs, Shield with the tag), breakdowns by how agents see the page and where they run, checks fired, traps, decoys, declared agents, fleets, and wave 2 containment |
 
+## Customer demo
+
+[DEMO.md](DEMO.md) is a 15-minute runbook: hidden traps, decoys and a fleet
+stopped at the edge, with `demo_reset.sh`, `watch_evidence.sh` (a live evidence
+feed) and `demo_fleet.sh` (the fleet act in one command).
+
 ## Model
 
 Set once, outside chat, in a private file the scripts read:
