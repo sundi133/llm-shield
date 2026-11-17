@@ -119,7 +119,8 @@ DETECTORS = [  # id, function, weight
 ]
 
 
-def score_session(s: Session) -> Verdict:
+def score_session(s: Session, tag=None, *, include_a8: bool = True) -> Verdict:
+    """Tier 1 from the log alone; with `tag` (a beacons.TagData), tier 2 detectors A7 to A10 too."""
     keep = 1.0
     reasons, signals = [], {}
     for did, fn, weight in DETECTORS:
@@ -128,6 +129,16 @@ def score_session(s: Session) -> Verdict:
         if value:
             keep *= 1 - weight * value
             reasons.append(f"{did}: {why}")
+    if tag is not None:
+        import tier2
+        for did, fn, weight in tier2.DETECTORS:
+            if did == "A8" and not include_a8:
+                continue
+            value, why = fn(s, tag, signals)
+            signals[did] = value
+            if value:
+                keep *= 1 - weight * value
+                reasons.append(f"{did}: {why}")
     score = round(1 - keep, 3)
     band = "clear_agent" if score >= CLEAR_AGENT else "grey" if score >= GREY_LOW else "human_like"
     return Verdict(s.key, score, band, reasons, signals)
@@ -146,27 +157,47 @@ def _timing_profile(s: Session):
     return round(statistics.median(g) / 2)   # 2-second buckets
 
 
-def link_traits(a: Session, b: Session, sh: dict) -> set[str]:
+def _interaction_profile(tag):
+    """A7 features bucketed (spec 3.2, tier 2), or None without enough interaction."""
+    if not tag or not tag.joined:
+        return None
+    it = tag.interaction()
+    if it["clicks"] < 2 and it["inputs"] < 2:
+        return None
+    ratio = lambda n, d: round(n / d, 1) if d else -1  # noqa: E731
+    return (min(it["inputs_without_keys"], 5), ratio(it["centre_clicks"], it["clicks"]),
+            ratio(it["clicks_without_move"], it["clicks"]), it["keys"] > 0)
+
+
+def link_traits(a: Session, b: Session, sh: dict, tags: dict | None = None, rare_device=None) -> set[str]:
+    """Trait groups two sessions share (spec 3.2). Tier 2 adds interaction, device and controller."""
     groups = set()
+    ta_, tb_ = (tags or {}).get(a.key), (tags or {}).get(b.key)
     jacc = len(sh[a.key] & sh[b.key]) / max(1, len(sh[a.key] | sh[b.key]))
     ta, tb = _timing_profile(a), _timing_profile(b)
-    if jacc >= 0.6 and ta is not None and ta == tb:
+    ia, ib = _interaction_profile(ta_), _interaction_profile(tb_)
+    if jacc >= 0.6 and ((ta is not None and ta == tb) or (ia is not None and ia == ib)):
         groups.add("behavior")
-    if abs(a.start - b.start) <= 30:
+    if abs(a.start - b.start) <= 30 or abs(a.end - b.end) <= 30:
         groups.add("time")
-    if a.fingerprint == b.fingerprint:
-        groups.add("client")
+    da, db = (ta_.device_hash if ta_ else ""), (tb_.device_hash if tb_ else "")
+    if a.fingerprint == b.fingerprint or (da and da == db and rare_device and rare_device(da)):
+        groups.add("environment")
     if a.net24 == b.net24:
         groups.add("network")
+    if (b.shs_ids & a.reused_codes) or (a.shs_ids & b.reused_codes):
+        groups.add("controller")
     return groups
 
 
-def find_fleets(sessions: list[Session], *, min_size: int = 10, min_networks: int = 3) -> list[dict]:
+def find_fleets(sessions: list[Session], *, min_size: int = 10, min_networks: int = 3,
+                tags: dict | None = None, rare_device=None) -> list[dict]:
     """Union-find over pairs that share at least two independent trait groups.
 
     A shared network alone, or a shared path alone, never links two sessions.
     Behavior is required, so people who merely share an office IP and a
-    browser build don't form a fleet.
+    browser build don't form a fleet. Trap code reuse (controller) links on
+    its own: people never see the codes.
     """
     parent = {s.key: s.key for s in sessions}
 
@@ -179,8 +210,8 @@ def find_fleets(sessions: list[Session], *, min_size: int = 10, min_networks: in
     sh = {s.key: _shingles(s.path_sequence()) for s in sessions}
     link_groups: dict[tuple, set] = {}
     for a, b in combinations(sessions, 2):
-        g = link_traits(a, b, sh)
-        if len(g) >= 2 and "behavior" in g:
+        g = link_traits(a, b, sh, tags, rare_device)
+        if (len(g) >= 2 and "behavior" in g) or "controller" in g:
             parent[root(a.key)] = root(b.key)
             link_groups[(a.key, b.key)] = g
     groups: dict[str, list[Session]] = {}

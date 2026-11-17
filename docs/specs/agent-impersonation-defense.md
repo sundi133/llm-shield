@@ -216,6 +216,18 @@ as weaker.
   whether fraud prevention needs consent is the customer's legal call, and the
   docs say so.
 
+**Lab findings so far (task 0b, 2026-11-16, Chrome 157, Playwright):**
+- A programmatic fill shows plainly: every field changes with no key events,
+  clicks land within 2 px of the centre with no pointer path, and
+  `select_option` dispatches untrusted events.
+- Beacons sent while a page unloads skip Playwright's per-context user agent
+  override, so a spoofed user agent leaks as a second client in the same
+  session (A10).
+- The `console.debug` getter check for an attached CDP client no longer
+  fires on Chrome 157; kept in the tag as measured, not relied on.
+- Embedded webviews report a zero outer window size, the same as headless
+  (`headless_shape`), so that trait stays supporting only.
+
 **Trusting the tag.** Beacons are attacker-controlled; a careful controller
 can send fake values. So tag signals are evidence, never proof: they only add
 to the score, A9 never acts alone, and a beacon that contradicts the request

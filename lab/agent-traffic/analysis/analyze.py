@@ -11,6 +11,10 @@ without X-Forwarded-For (the Docker gateway address) and count as humans.
            raise a grey-zone session but never clear a statistical verdict.
 --publish  write the enforcement maps for Nginx and the suspended-accounts
            list (the lab's stand-in for a SOAR playbook), then reload Nginx.
+
+Every session is scored twice: from the log alone ("after") and with the
+tier 2 tag's beacons ("after_tag"), so the tag's gain is measured on the same
+sessions. Indicators are published from the tag column when beacons exist.
 """
 
 from __future__ import annotations
@@ -29,7 +33,9 @@ LAB = HERE.parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(LAB / "agents"))
 
+import beacons  # noqa: E402
 import detect  # noqa: E402
+import tier2  # noqa: E402
 import siem_rules  # noqa: E402
 import trapcheck  # noqa: E402
 from sessions import build_sessions, load_events  # noqa: E402
@@ -111,7 +117,7 @@ REVIEW_SCHEMA = {
 }
 
 
-async def review_grey(grey, by_key, fleets_of):
+async def review_grey(grey, by_key, fleets_of, tags=None):
     from llm import LLM
     llm = LLM.from_env()
     decisions = {}
@@ -127,6 +133,10 @@ async def review_grey(grey, by_key, fleets_of):
             "in_fleet": fleets_of.get(v.key) is not None,
             "client_hint_mismatch": bool(v.signals.get("A6")),
         }
+        if tags is not None:
+            t = tags[v.key]
+            features |= {"tag_joined": t.joined, "graphics_class": t.device.get("renderer_class"),
+                         "interaction": t.interaction() if t.joined else None}
         out = await llm.json_call(REVIEW_SYSTEM, json.dumps(features), REVIEW_SCHEMA, max_tokens=2000)
         decisions[v.key] = out
     return decisions, llm.usage.__dict__, llm.describe()
@@ -141,6 +151,8 @@ def main() -> None:
     ap.add_argument("--min-size", type=int, default=10)
     ap.add_argument("--review", action="store_true")
     ap.add_argument("--publish", action="store_true")
+    ap.add_argument("--no-baseline-update", action="store_true",
+                    help="don't add this window's unflagged devices to the prevalence baseline")
     args = ap.parse_args()
 
     manifests = [json.loads((LAB / "state" / "runs" / r / "manifest.json").read_text()) for r in args.runs]
@@ -161,20 +173,37 @@ def main() -> None:
     alerted_accts = {a["entity"] for a in alerts if a["entity_type"] == "acct"}
     caught_before = {s.key for s in sessions if s.ip in alerted_ips or (s.account and s.account in alerted_accts)}
 
-    # After: Shield.
+    # After: Shield on logs only.
     verdicts = {s.key: detect.score_session(s) for s in sessions}
     fleets = detect.find_fleets(sessions, min_size=args.min_size)
     fleet_of = {k: f["id"] for f in fleets for k in f["members"]}
 
+    # After, with the tag: the same sessions plus their beacons.
+    tags = beacons.attach(sessions, beacons.load_beacons(LAB / "state" / "logs" / "beacons.jsonl", since, until + 120))
+    baseline = tier2.DeviceBaseline(LAB / "state" / "baseline_devices.json")
+    verdicts_t = {s.key: detect.score_session(s, tags[s.key]) for s in sessions}
+    verdicts_t_no_a8 = {s.key: detect.score_session(s, tags[s.key], include_a8=False) for s in sessions}
+    fleets_t = detect.find_fleets(sessions, min_size=args.min_size, tags=tags, rare_device=baseline.rare)
+    fleet_of_t = {k: f["id"] for f in fleets_t for k in f["members"]}
+    has_tag = any(t.joined for t in tags.values())
+
     review, review_usage, review_model = {}, None, None
+    review_t, review_t_usage = {}, None
     if args.review:
         grey = [v for v in verdicts.values() if v.band == "grey"]
         if grey:
             review, review_usage, review_model = asyncio.run(review_grey(grey, by_key, fleet_of))
+        grey_t = [v for v in verdicts_t.values() if v.band == "grey"]
+        if grey_t and has_tag:
+            review_t, review_t_usage, _ = asyncio.run(review_grey(grey_t, by_key, fleet_of_t, tags))
 
     def flagged(k):
         v = verdicts[k]
         return v.band == "clear_agent" or k in fleet_of or (review.get(k, {}).get("decision") == "raise")
+
+    def flagged_t(k, vs=None):
+        v = (vs or verdicts_t)[k]
+        return v.band == "clear_agent" or k in fleet_of_t or (review_t.get(k, {}).get("decision") == "raise")
 
     def rate(keys, pred):
         keys = list(keys)
@@ -182,7 +211,12 @@ def main() -> None:
 
     agents = [s.key for s in sessions if truth[s.key] == "agent"]
     humans = [s.key for s in sessions if truth[s.key] == "human"]
-    ind = indicators(fleets, verdicts, sessions)
+    ind = indicators(fleets_t, verdicts_t, sessions) if has_tag else indicators(fleets, verdicts, sessions)
+    if not args.no_baseline_update:
+        # Production counterpart: hourly prevalence counters of non-fleet sessions (spec 3.4, 8).
+        baseline.add(tags[k].device_hash for k in by_key
+                     if k in verdicts_t and not flagged_t(k) and truth[k] != "tooling")
+        baseline.save()
     if args.publish:
         publish(ind)
 
@@ -207,6 +241,23 @@ def main() -> None:
             "fleets": fleets,
             "review": {"model": review_model, "usage": review_usage, "decisions": review},
         },
+        "after_tag": {
+            "tag_joined": rate(agents + humans, lambda k: tags[k].join == "shs"),
+            "tag_fallback_join": rate(agents + humans, lambda k: tags[k].join == "fallback"),
+            "agent_sessions_flagged": rate(agents, flagged_t),
+            "agent_sessions_flagged_without_a8": rate(agents, lambda k: flagged_t(k, verdicts_t_no_a8)),
+            "agent_sessions_clear": rate(agents, lambda k: verdicts_t[k].band == "clear_agent"),
+            "agent_sessions_in_fleet": rate(agents, lambda k: k in fleet_of_t),
+            "human_sessions_flagged": rate(humans, flagged_t),
+            "human_sessions_grey": rate(humans, lambda k: verdicts_t[k].band == "grey"),
+            "detector_hits_on_agents": {d: sum(1 for k in agents if verdicts_t[k].signals.get(d))
+                                        for d in ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10")},
+            "detector_hits_on_humans": {d: sum(1 for k in humans if verdicts_t[k].signals.get(d))
+                                        for d in ("A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10")},
+            "fleets": fleets_t,
+            "review": {"usage": review_t_usage, "decisions": review_t},
+            "baseline_sessions": baseline.sessions,
+        },
         "indicators": ind, "published": args.publish,
         "containment": {
             "agent_sessions_challenged_at_first_request": rate(agents, lambda k: by_key[k].first_request_enforced),
@@ -218,7 +269,11 @@ def main() -> None:
         "per_session": [
             {**by_key[k].summary(), "truth": truth[k], "score": verdicts[k].score, "band": verdicts[k].band,
              "reasons": verdicts[k].reasons, "fleet": fleet_of.get(k), "siem_alerted": k in caught_before,
-             "review": review.get(k)}
+             "review": review.get(k),
+             "tag": {"join": tags[k].join, "graphics": tags[k].device.get("renderer_class"),
+                     "device_hash": tags[k].device_hash, "interaction": tags[k].interaction() if tags[k].joined else None,
+                     "score": verdicts_t[k].score, "band": verdicts_t[k].band, "reasons": verdicts_t[k].reasons,
+                     "fleet": fleet_of_t.get(k), "review": review_t.get(k)}}
             for k in sorted(verdicts, key=lambda k: by_key[k].start)
         ],
         "run_manifests": [{k: v for k, v in m.items() if k != "agents"} | {"agents": m["agents"]} for m in manifests],
@@ -234,6 +289,11 @@ def main() -> None:
     print(f"  after (Shield):      agent sessions flagged {a['agent_sessions_flagged']['count']}/{len(agents)} "
           f"(clear {a['agent_sessions_clear']['count']}, in fleet {a['agent_sessions_in_fleet']['count']}); "
           f"humans flagged {a['human_sessions_flagged']['count']}/{len(humans)}; fleets {len(fleets)}")
+    t = result["after_tag"]
+    print(f"  with the tag:        agent sessions flagged {t['agent_sessions_flagged']['count']}/{len(agents)} "
+          f"(without A8 {t['agent_sessions_flagged_without_a8']['count']}, in fleet {t['agent_sessions_in_fleet']['count']}); "
+          f"humans flagged {t['human_sessions_flagged']['count']}/{len(humans)}; tag joined {t['tag_joined']['count']}"
+          f"/{t['tag_joined']['of']}")
     print(f"  indicators: {len(ind['sessions'])} sessions, {len(ind['accounts'])} accounts, "
           f"{len(ind['fingerprints'])} fingerprints, {len(ind['networks'])} networks, "
           f"{len(ind['withheld'])} withheld; published={args.publish}")

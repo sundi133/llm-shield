@@ -24,9 +24,10 @@ navigation elsewhere is refused. IPs are simulated residential proxies sent as
 | `collector/app.py` | Tier 2 collector prototype on `/_shs/` (port 8201 behind Nginx): serves the tag, validates beacons (schema v1, 16 KB, origin, rate limit), always `204`; writes `state/logs/beacons.jsonl` |
 | `analysis/trapcheck.py` | Resolves canary hits (`/_shs/v/{code}`) to their session; another session's code is controller evidence |
 | `analysis/beacons.py` | Joins beacons to log sessions by `_shs` (fallback: IP, user agent, time; marked weak) |
+| `analysis/tier2.py` | Tier 2 detectors A7 to A10 (A9 supporting only) and the device prevalence baseline (`state/baseline_devices.json`) |
 | `analysis/siem_rules.py` | "Before": per-IP and per-account threshold rules and an automation user-agent list |
 | `analysis/detect.py` | "After": agent checks A1 to A6 and fleet linking (two independent traits) |
-| `analysis/analyze.py` | Scores a log window against ground truth, optional investigator review, publishes indicators |
+| `analysis/analyze.py` | Scores a log window against ground truth twice (logs only, and with the tag), optional investigator review, publishes indicators |
 | `analysis/report.py` | The before/after page |
 
 ## Model
