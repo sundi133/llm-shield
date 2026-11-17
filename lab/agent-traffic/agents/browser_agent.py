@@ -151,6 +151,7 @@ class AgentResult:
     transcript: list = field(default_factory=list)
     observe: str = "dom"
     sandbox: str = "local"
+    declare: str = "none"
 
 
 def _same_site(url: str, base: str = SHOP) -> bool:
@@ -161,13 +162,14 @@ def _same_site(url: str, base: str = SHOP) -> bool:
 
 async def run_agent(browser: Browser, llm: LLM, *, agent_id: str, ip: str, user_agent: str,
                     locale: str, timezone: str, persona: Persona, task: str,
-                    max_steps: int = 25, observe: str = "dom", shop: str = SHOP) -> AgentResult:
+                    max_steps: int = 25, observe: str = "dom", shop: str = SHOP,
+                    extra_headers: dict | None = None) -> AgentResult:
     """`shop` is the lab shop as this agent's browser reaches it (host.docker.internal from a sandbox)."""
     result = AgentResult(agent_id=agent_id, ip=ip, observe=observe)
     context = await browser.new_context(
         user_agent=user_agent, locale=locale, timezone_id=timezone,
         viewport=SCREEN_VIEWPORT if observe == "screen" else {"width": 1366, "height": 860},
-        extra_http_headers={"X-Forwarded-For": ip},
+        extra_http_headers={"X-Forwarded-For": ip, **(extra_headers or {})},
     )
     page: Page = await context.new_page()
     last_note = ""

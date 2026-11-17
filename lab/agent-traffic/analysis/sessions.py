@@ -45,6 +45,8 @@ class Session:
     enforced_requests: int = 0
     first_request_enforced: bool = False
     shs_ids: set = field(default_factory=set)       # tag session ids seen on this session's log rows
+    wba: set = field(default_factory=set)            # edge Web Bot Auth labels seen (spec 2.5)
+    wba_agent: str = ""                              # key directory named by Signature-Agent
     tag_requests: int = 0
 
     # derived
@@ -152,6 +154,9 @@ def build_sessions(events: list[dict]) -> list[Session]:
             s.account = e["acct"]
         if e.get("shs"):
             s.shs_ids.add(e["shs"])
+        if e.get("wba"):
+            s.wba.add(e["wba"])
+            s.wba_agent = s.wba_agent or e.get("wba_agent", "")
         ev = e.get("event", "")
         s.signups += ev == "signup"
         s.signup_failed += ev == "signup_failed"

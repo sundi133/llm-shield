@@ -113,9 +113,31 @@ def _client_traits(s: Session):
     return (1.0, "; ".join(reasons)) if reasons else (0.0, None)
 
 
+def _forged_identity(s: Session):
+    """A11 (spec 2.5): the edge says the Web Bot Auth signature is invalid, or a known
+    operator was named with no valid signature. Someone is posing as a trusted agent."""
+    if "invalid" in s.wba:
+        return 1.0, f"claims to be the agent operator at {s.wba_agent or 'an unnamed directory'}, but the signature fails"
+    return 0.0, None
+
+
+def declared(s: Session, allow: set) -> str:
+    """'declared' (valid signature, allowed operator), 'declared_unknown' (valid or
+    unverifiable, operator not allowed), or '' (not a declared agent).
+
+    No signature is not evidence of anything; an invalid one is A11, never declared.
+    """
+    if not s.wba or "invalid" in s.wba or s.wba <= {"none"}:
+        return ""
+    if s.wba - {"none"} == {"valid"} and s.wba_agent in allow:
+        return "declared"
+    return "declared_unknown"
+
+
 DETECTORS = [  # id, function, weight
     ("A1", _rhythm, 0.45), ("A2", _fill_timing, 0.35), ("A3", _error_recovery, 0.25),
     ("A4", _goal_directed, 0.30), ("A5", _tripwire, 0.95), ("A6", _client_traits, 0.60),
+    ("A11", _forged_identity, 0.90),
 ]
 
 
@@ -191,14 +213,17 @@ def link_traits(a: Session, b: Session, sh: dict, tags: dict | None = None, rare
 
 
 def find_fleets(sessions: list[Session], *, min_size: int = 10, min_networks: int = 3,
-                tags: dict | None = None, rare_device=None) -> list[dict]:
+                tags: dict | None = None, rare_device=None, exclude: set | None = None) -> list[dict]:
     """Union-find over pairs that share at least two independent trait groups.
 
     A shared network alone, or a shared path alone, never links two sessions.
     Behavior is required, so people who merely share an office IP and a
     browser build don't form a fleet. Trap code reuse (controller) links on
-    its own: people never see the codes.
+    its own: people never see the codes. `exclude` holds declared agents from
+    allowed operators, which are never fleet members (spec 2.5).
     """
+    if exclude:
+        sessions = [s for s in sessions if s.key not in exclude]
     parent = {s.key: s.key for s in sessions}
 
     def root(k):

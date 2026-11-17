@@ -19,6 +19,11 @@ pkill -f "uvicorn app:app --port 8201" 2>/dev/null || true
 ( cd "$LAB/collector" && LAB_STATE_DIR="$STATE" nohup "$PY" -m uvicorn app:app --port 8201 --log-level warning \
     > "$STATE/logs/collector.out" 2>&1 & )
 
+# Reference Web Bot Auth verifier (spec 2.5), called by Nginx for every request.
+pkill -f "uvicorn verifier:app --port 8203" 2>/dev/null || true
+( cd "$LAB/edge" && LAB_STATE_DIR="$STATE" nohup "$PY" -m uvicorn verifier:app --port 8203 --log-level warning \
+    > "$STATE/logs/verifier.out" 2>&1 & )
+
 # Nginx (the "edge").
 docker rm -f shield-lab-nginx >/dev/null 2>&1 || true
 docker run -d --name shield-lab-nginx -p 8180:8180 \

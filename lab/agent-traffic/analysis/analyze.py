@@ -52,7 +52,9 @@ def _ts(value: str) -> float:
         return datetime.fromisoformat(value).timestamp()
 
 
-def truth_for(s, agent_ips: set) -> str:
+def truth_for(s, agent_ips: set, declared_ips: set = frozenset()) -> str:
+    if s.ip in declared_ips:
+        return "declared_agent"
     if s.ip in agent_ips:
         return "agent"
     if any(s.ua.startswith(t) for t in TOOLING_UA):
@@ -62,14 +64,18 @@ def truth_for(s, agent_ips: set) -> str:
     return "unknown"
 
 
-def indicators(fleets, verdicts, sessions, enforce_clear_agents=True):
-    """Spec section 5: only confirmed fleets and clear agents; prevalence check on fingerprints and networks."""
+def indicators(fleets, verdicts, sessions, enforce_clear_agents=True, exclude=frozenset()):
+    """Spec section 5: only confirmed fleets and clear agents; prevalence check on fingerprints and networks.
+
+    `exclude`: declared agents from allowed operators, never indicators (spec 2.5).
+    """
     by_key = {s.key: s for s in sessions}
     flagged = set()
     for f in fleets:
         flagged |= set(f["members"])
     if enforce_clear_agents:
         flagged |= {k for k, v in verdicts.items() if v.band == "clear_agent"}
+    flagged -= set(exclude)
     others = [s for s in sessions if s.key not in flagged]
     out = {"sessions": sorted(flagged), "accounts": sorted({by_key[k].account for k in flagged if by_key[k].account}),
            "fingerprints": [], "networks": [], "withheld": []}
@@ -151,14 +157,18 @@ def main() -> None:
     ap.add_argument("--min-size", type=int, default=10)
     ap.add_argument("--review", action="store_true")
     ap.add_argument("--publish", action="store_true")
+    ap.add_argument("--declared-allow", nargs="*", default=["https://operator-a.agents.example"],
+                    help="key directory URLs of agent operators this tenant allows (spec 2.5)")
     ap.add_argument("--no-baseline-update", action="store_true",
                     help="don't add this window's unflagged devices to the prevalence baseline")
     args = ap.parse_args()
 
     manifests = [json.loads((LAB / "state" / "runs" / r / "manifest.json").read_text()) for r in args.runs]
     agent_ips = {a["ip"] for m in manifests for a in m["agents"]}
-    agent_meta = {a["ip"]: {"observe": a.get("observe", "dom"), "sandbox": a.get("sandbox", "local")}
+    agent_meta = {a["ip"]: {"observe": a.get("observe", "dom"), "sandbox": a.get("sandbox", "local"),
+                            "declare": a.get("declare", "none")}
                   for m in manifests for a in m["agents"]}
+    declared_ips = {ip for ip, meta in agent_meta.items() if meta["declare"] in ("allowed", "unknown")}
     since = _ts(args.since) if args.since else (min(m["started"] for m in manifests) - 5 if manifests else 0)
     until = _ts(args.until) if args.until else (max(m["ended"] for m in manifests) + 5 if manifests else time.time())
 
@@ -166,7 +176,7 @@ def main() -> None:
     sessions = build_sessions(events)
     trapcheck.resolve(sessions, trapcheck.traps.secret(LAB / "state"))
     by_key = {s.key: s for s in sessions}
-    truth = {s.key: truth_for(s, agent_ips) for s in sessions}
+    truth = {s.key: truth_for(s, agent_ips, declared_ips) for s in sessions}
     sessions = [s for s in sessions if truth[s.key] != "tooling"]
 
     # Before: SIEM rules.
@@ -175,9 +185,16 @@ def main() -> None:
     alerted_accts = {a["entity"] for a in alerts if a["entity_type"] == "acct"}
     caught_before = {s.key for s in sessions if s.ip in alerted_ips or (s.account and s.account in alerted_accts)}
 
+    # Declared agents (spec 2.5): labeled from the edge's Web Bot Auth fields, kept out of fleets and indicators.
+    allow = set(args.declared_allow)
+    declared_of = {s.key: detect.declared(s, allow) for s in sessions}
+    # Both labels are exempt from impersonation fleets and indicators: a valid signature says who it is.
+    # Unknown operators are reported for the customer to allow or limit.
+    exempt = {k for k, d in declared_of.items() if d}
+
     # After: Shield on logs only.
     verdicts = {s.key: detect.score_session(s) for s in sessions}
-    fleets = detect.find_fleets(sessions, min_size=args.min_size)
+    fleets = detect.find_fleets(sessions, min_size=args.min_size, exclude=exempt)
     fleet_of = {k: f["id"] for f in fleets for k in f["members"]}
 
     # After, with the tag: the same sessions plus their beacons.
@@ -185,7 +202,8 @@ def main() -> None:
     baseline = tier2.DeviceBaseline(LAB / "state" / "baseline_devices.json")
     verdicts_t = {s.key: detect.score_session(s, tags[s.key]) for s in sessions}
     verdicts_t_no_a8 = {s.key: detect.score_session(s, tags[s.key], include_a8=False) for s in sessions}
-    fleets_t = detect.find_fleets(sessions, min_size=args.min_size, tags=tags, rare_device=baseline.rare)
+    fleets_t = detect.find_fleets(sessions, min_size=args.min_size, tags=tags, rare_device=baseline.rare,
+                                  exclude=exempt)
     fleet_of_t = {k: f["id"] for f in fleets_t for k in f["members"]}
     has_tag = any(t.joined for t in tags.values())
 
@@ -201,10 +219,14 @@ def main() -> None:
 
     def flagged(k):
         v = verdicts[k]
+        if k in exempt:
+            return False
         return v.band == "clear_agent" or k in fleet_of or (review.get(k, {}).get("decision") == "raise")
 
     def flagged_t(k, vs=None):
         v = (vs or verdicts_t)[k]
+        if k in exempt:
+            return False
         return v.band == "clear_agent" or k in fleet_of_t or (review_t.get(k, {}).get("decision") == "raise")
 
     def rate(keys, pred):
@@ -213,7 +235,8 @@ def main() -> None:
 
     agents = [s.key for s in sessions if truth[s.key] == "agent"]
     humans = [s.key for s in sessions if truth[s.key] == "human"]
-    ind = indicators(fleets_t, verdicts_t, sessions) if has_tag else indicators(fleets, verdicts, sessions)
+    ind = (indicators(fleets_t, verdicts_t, sessions, exclude=exempt) if has_tag
+           else indicators(fleets, verdicts, sessions, exclude=exempt))
     if not args.no_baseline_update:
         # Production counterpart: hourly prevalence counters of non-fleet sessions (spec 3.4, 8).
         baseline.add(tags[k].device_hash for k in by_key
@@ -225,6 +248,21 @@ def main() -> None:
     result = {
         "name": args.name, "runs": args.runs, "window": [since, until], "analyzed_at": time.time(),
         "sessions": len(sessions), "agents": len(agents), "humans": len(humans),
+        "declared": {
+            "allow_list": sorted(allow),
+            "declared_agents_labeled": rate([k for k in by_key if truth.get(k) == "declared_agent"
+                                             and agent_meta.get(by_key[k].ip, {}).get("declare") == "allowed"],
+                                            lambda k: declared_of[k] == "declared"),
+            "unknown_operator_reported": rate([k for k in by_key if truth.get(k) == "declared_agent"
+                                               and agent_meta.get(by_key[k].ip, {}).get("declare") == "unknown"],
+                                              lambda k: declared_of[k] == "declared_unknown"),
+            "forged_caught_a11": rate([k for k in agents if agent_meta.get(by_key[k].ip, {}).get("declare") == "forged"],
+                                      lambda k: bool(verdicts[k].signals.get("A11"))),
+            "by_operator": {op: sum(1 for k, d in declared_of.items() if d and by_key[k].wba_agent == op)
+                            for op in sorted({by_key[k].wba_agent for k, d in declared_of.items() if d})},
+            "declared_in_any_fleet_or_indicator": sum(1 for k in exempt if k in fleet_of or k in fleet_of_t
+                                                      or k in ind["sessions"]),
+        },
         "before": {
             "alerts": alerts,
             "agent_sessions_caught": rate(agents, lambda k: k in caught_before),
@@ -271,7 +309,7 @@ def main() -> None:
         "per_session": [
             {**by_key[k].summary(), "truth": truth[k], **agent_meta.get(by_key[k].ip, {}), "score": verdicts[k].score, "band": verdicts[k].band,
              "reasons": verdicts[k].reasons, "fleet": fleet_of.get(k), "siem_alerted": k in caught_before,
-             "review": review.get(k),
+             "review": review.get(k), "declared": declared_of[k], "wba": sorted(by_key[k].wba),
              "tag": {"join": tags[k].join, "graphics": tags[k].device.get("renderer_class"),
                      "device_hash": tags[k].device_hash, "interaction": tags[k].interaction() if tags[k].joined else None,
                      "score": verdicts_t[k].score, "band": verdicts_t[k].band, "reasons": verdicts_t[k].reasons,

@@ -21,6 +21,13 @@ Usage:
               stays here and drives each browser over Playwright's server
     mixed     pairs alternate: agents 0-1 local, 2-3 docker, 4-5 local, ...
 
+--declare
+    none      agents pose as people (default; the impersonation case)
+    allowed   agents sign with Web Bot Auth as operator-a, which the lab
+              tenant allows (declared agents, spec 2.5)
+    unknown   agents sign as operator-b, which the tenant hasn't allowed
+    forged    agents claim operator-a but sign with a key of their own (A11)
+
 --ua-mode
     spoofed   every agent claims Chrome on Windows while the real browser runs
               on this Mac (a common, slightly sloppy fleet setup)
@@ -42,10 +49,12 @@ import random
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from playwright.async_api import async_playwright
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "edge"))
 from browser_agent import SHOP, Persona, run_agent  # noqa: E402
 from llm import LLM  # noqa: E402
 
@@ -99,6 +108,7 @@ async def main() -> None:
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--observe", choices=["dom", "screen", "mixed"], default="dom")
     ap.add_argument("--sandbox", choices=["local", "docker", "mixed"], default="local")
+    ap.add_argument("--declare", choices=["none", "allowed", "unknown", "forged"], default="none")
     args = ap.parse_args()
 
     llm = LLM.from_env()
@@ -124,10 +134,12 @@ async def main() -> None:
                     b = await box.start(pw) if box else browser
                     agent_ua = ua if args.ua_mode == "spoofed" or not box else \
                         (await _native_ua(b)).replace("HeadlessChrome", "Chrome")
+                    base = SANDBOX_SHOP if box else SHOP
                     res = await run_agent(b, llm, agent_id=f"{args.label}-{i:02d}", ip=ips[i],
                                           user_agent=agent_ua, locale="en-US", timezone="America/Chicago",
                                           persona=persona, task=TASK, max_steps=args.max_steps,
-                                          observe=_mode(args.observe, i), shop=SANDBOX_SHOP if box else SHOP)
+                                          observe=_mode(args.observe, i), shop=base,
+                                          extra_headers=_signature(args.declare, base))
                 except Exception as exc:          # a sandbox that won't start is one failed agent
                     from browser_agent import AgentResult
                     res = AgentResult(agent_id=f"{args.label}-{i:02d}", ip=ips[i], outcome="error",
@@ -136,6 +148,7 @@ async def main() -> None:
                     if box:
                         await box.stop()
                 res.sandbox = kind
+                res.declare = args.declare
                 print(f"  {res.agent_id} {res.observe:<6} {res.sandbox:<6} {res.ip:<16} {res.outcome:<10} steps={res.steps:<3} "
                       f"{res.ended - res.started:5.0f}s  {res.summary[:70]}", flush=True)
                 return res
@@ -148,7 +161,8 @@ async def main() -> None:
     manifest = {
         "label": args.label, "kind": "agent_fleet", "model": llm.describe(), "effort": llm.effort,
         "ua_mode": args.ua_mode, "observe": args.observe, "sandbox": args.sandbox,
-        "sandbox_image": SANDBOX_IMAGE if args.sandbox != "local" else None, "user_agent": ua, "task": TASK, "started": started, "ended": time.time(),
+        "sandbox_image": SANDBOX_IMAGE if args.sandbox != "local" else None, "declare": args.declare,
+        "user_agent": ua, "task": TASK, "started": started, "ended": time.time(),
         "usage": llm.usage.__dict__,
         "agents": [{k: v for k, v in r.__dict__.items() if k != "transcript"} for r in results],
     }
@@ -163,6 +177,20 @@ async def main() -> None:
     print(f"done in {time.time() - started:.0f}s; outcomes {outcomes}; model calls {llm.usage.calls}, "
           f"input tokens {llm.usage.input_tokens}, output tokens {llm.usage.output_tokens}, "
           f"cache reads {llm.usage.cache_read_tokens}", flush=True)
+
+
+def _signature(declare: str, base: str) -> dict:
+    """Web Bot Auth headers for this agent, signed for the host its browser uses (spec 2.5)."""
+    if declare == "none":
+        return {}
+    import webbotauth
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    authority = urlparse(base).netloc
+    if declare == "forged":
+        return webbotauth.sign_headers(Ed25519PrivateKey.generate(), webbotauth.OPERATORS["operator-a"], authority)
+    name = "operator-a" if declare == "allowed" else "operator-b"
+    return webbotauth.sign_headers(webbotauth.load_or_create(LAB / "state", name), webbotauth.OPERATORS[name],
+                                   authority)
 
 
 def _sandbox_kind(sandbox: str, i: int) -> str:
