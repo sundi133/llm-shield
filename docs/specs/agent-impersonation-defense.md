@@ -1,8 +1,9 @@
 # Spec: AI agent and fleet detection from SIEM logs
 
-Status: **rev 7 approved 2026-11-16; task 0b in progress.** Branch `spec/agent-impersonation-defense`
-(lab work on `feat/agent-detection-lab`). Architecture: `artifacts/agent-detection-architecture-v5.svg`
-(partner version: `-v4.svg`).
+Status: **rev 8 approved 2026-11-18; building in the rev 8 order (section 13).**
+Rev 7 approved 2026-11-16, task 0b built. Branch `spec/agent-impersonation-defense`
+(lab work on `feat/agent-detection-lab`, product build on `feat/agent-detection-tag`).
+Architecture: `artifacts/agent-detection-architecture-v5.svg` (partner version: `-v4.svg`).
 
 - Rev 2 moved detection to SIEM logs with no front-end SDK.
 - Rev 3 narrows the scope to the two things a SIEM can't already do:
@@ -40,6 +41,25 @@ Status: **rev 7 approved 2026-11-16; task 0b in progress.** Branch `spec/agent-i
   fake API key). No real user needs them, so touching one shows hostile
   intent; each carries an instruction only an AI agent follows, which shows
   it's an agent. Decoy hits are in the edge logs, so this works in tier 1.
+- Rev 8 (2026-11-18) changes the **build order and three details**, not the
+  design:
+  1. **Tag first.** The product is built tag-first: site keys, collector,
+     `shs.js`, traps, tier 2 scoring, fleets, enforcement and the portal,
+     then the SIEM connectors and tier 1 detectors as an add-on. A tenant can
+     run **tag-only** (a site key and no SIEM source); everything in rev 6
+     that works from logs alone still does (section 2.7).
+  2. **Tag hosting on our CDN.** Released `shs.js` files are published,
+     versioned and immutable, to a public GCS bucket behind Cloud CDN on our
+     own domain, with an SRI hash in the snippet. The collector still serves
+     the tag for self-hosted, on-prem and first-party routing (section 11).
+  3. **Trap layouts from the collector.** A trap code is an HMAC with a
+     server secret, which can't be in public JavaScript, so the tag fetches
+     its session's trap layout from a new collector route, `GET /t`
+     (sections 2.4 and 9).
+
+  Owner decision: build before the lab measures tier 2's gain with real
+  agents (task 0b's go/no-go). That run goes on in parallel, and its numbers
+  set the thresholds before any customer turns on enforce.
 
 Reuses SIEM export (`core/siem_dispatcher.py`, `storage/siem_store.py`) and
 ASIM shaping (`core/asim.py`).
@@ -266,6 +286,17 @@ session B proves one controller passed it between them.
   whether the product keeps `inert` is decided from that number.
 - **Canaries answer `204`:** Chrome aborts a navigation to a `204`, so the
   agent stays where it was; the access log row is the hit.
+- **Delivery from the tag (rev 8).** The trap secret never leaves the
+  server. After its load beacon the tag calls the collector's `GET /t` with
+  the site key and its `_shs`; the collector derives the codes, picks the
+  rotation (wording, field, position, whether T4 and `inert` appear) and
+  returns the layout with `Cache-Control: no-store`, recording each code in
+  `agd:{tenant}:trapcode:{code}`. The tag inserts the layout and reports
+  hits in its submit beacon (`traps.hit`, with the field's value only when
+  it equals one of that session's codes). The collector checks `code_match`
+  itself; the tag's own claim is never trusted. A controller that calls
+  `GET /t` directly learns only its own session's codes, which is what the
+  page shows anyway.
 - **Known blind spot:** agents that work only from screenshots never see a
   hidden trap. Showing them something people would also see is an
   accessibility risk, so the spec doesn't do it. Those agents are caught by
@@ -357,6 +388,25 @@ operator name. Being signed doesn't excuse looking for secrets.
 - **Served at the edge:** a static Nginx or CDN rule set (tier 1, codes from
   a hash of IP and time window) or routed through the collector for
   per-session codes (tier 2). Either way the hit is in the access log.
+
+### 2.7 Tag-only mode (rev 8)
+A tenant with a site key and no SIEM source runs on beacons alone. The
+collector records, with every beacon, what it sees of the request that
+carried it: a salted hash of the IP's /24 (or /48), the user agent and the
+client hints. That gives the worker a request side to compare against
+without any log.
+
+| Works tag-only | Needs a log source |
+|---|---|
+| A7, A8, A9 | A1 to A6 (timing between requests, funnel shape, header and protocol checks) |
+| A10 contradictions: beacons in one session from different clients (user agent, IP class), or a tag that reports a different user agent than the request carrying it | A10 tag missing: a protected form submitted with no beacon |
+| Traps T1, T2 (the canary goes to the collector, `GET /v/{code}`), T4 | T3 (a server snippet in the HTML) |
+| Fleets on device, timing, page sequence, network (supporting) and controller reuse | Fleets on accounts (beacons carry none) |
+| Indicators: `_shs`, client fingerprint (the beacon request's user agent and client hints), network | Account indicators; A11 and decoys (edge log fields) |
+
+Adding a SIEM source later turns the right-hand column on with no change to
+the tag. Detection delay in tag-only mode is the worker's beacon cycle
+(default 30 s) plus fleet recompute; there is no poll interval.
 
 ## 3. Part 2: fleet detection across new sessions
 
@@ -678,7 +728,9 @@ measured, not assumed:
   `python -m core.agent_detection.collector` (admin image, CPU, its own
   Railway service and OpenShift Deployment). It serves `shs.js`, accepts
   beacons, validates and caps them, and appends them to a Redis stream that
-  the worker reads. It returns `204` with no body: no verdict ever goes back
+  the worker reads. Rev 8: it also returns per-session trap layouts
+  (`GET /t`) and answers canary links (`GET /v/{code}`), both one Redis
+  round trip. It returns `204` with no body: no verdict ever goes back
   to the browser. Customers are told to route it through their own domain
   (a `/_shs/` path on their CDN) so it isn't stripped by ad blockers and
   stays first-party.
@@ -758,6 +810,12 @@ first_input_ms}, traps {shown, hit: [{trap, code_match}]}}`.
 characters). Unknown fields
 are dropped; out-of-range numbers are clamped.
 
+The collector adds a request block before it queues a beacon (rev 8, the
+browser can't set it): `req {ts (server time), net_hash (salted /24 or
+/48), ua, hints (sec-ch-ua, platform, mobile), origin}`. The stream entry
+also carries the tenant, so the worker never trusts a tenant claimed by the
+browser.
+
 ## 9. API / interface (admin plane)
 
 | Method, path | Auth | Purpose |
@@ -784,7 +842,13 @@ are dropped; out-of-range numbers are clamped.
 |---|---|---|
 | `GET /shs.js?k={site_key}` | none (public) | The tag, versioned, with an SRI hash in the install snippet; cacheable |
 | `POST /b` | site key in the body, `Origin` must match the key's origins (web) | One beacon; `204`, no body; rate-limited per site key and per IP; over the size cap or invalid is dropped silently |
+| `GET /t?k={site_key}&s={_shs}` | site key, `Origin` check (rev 8) | This session's trap layout as JSON, `no-store`; empty layout when traps are off for the tenant, the key is unknown or the rate limit is hit |
+| `GET /v/{code}` | none (rev 8) | Canary hit: `204`, no body; the hit is queued like a beacon with `kind: canary` |
 | `GET /health` | none | Liveness |
+
+The routes work at the root or under any prefix the customer's CDN maps to
+the collector (`/_shs/` in the docs), since the tag builds every URL from its
+configured endpoint.
 
 A site key is public (it is in the page), like a CAPTCHA site key: it only
 names the tenant and can write beacons, nothing else. Fake beacons with a
@@ -801,7 +865,8 @@ detector pack summary.
 
 ## 10. Security, compatibility, failure modes
 
-**Compatibility.** Opt-in per tenant: nothing runs until a source is added.
+**Compatibility.** Opt-in per tenant: nothing runs until a source or a site
+key (rev 8, tag-only) is added.
 Shield itself never blocks traffic; in enforce mode the customer's own tools
 act on the indicators it publishes, and new tenants start in monitor.
 `SHIELD_AGENT_DETECTION=off` stops the worker and hides the routes.
@@ -906,6 +971,15 @@ beacons, and tier 1 carries on unchanged.
   Deployment; no new dependency. Its imports go into `Dockerfile.admin` too.
 - **Tag:** `static/agent-detection/shs.js`, plain JavaScript with no build
   step and no third-party code; a size test keeps it under 15 KB.
+- **Tag hosting (rev 8):** `scripts/release_shs_tag.sh` copies the tag to
+  `shs-{version}.js` in a public GCS bucket served by Cloud CDN on our own
+  domain (bucket and domain are arguments; the owner runs it with their own
+  GCP credentials, never stored in the repo or CI). It refuses to overwrite
+  an existing version, sets `Content-Type: application/javascript` and a
+  one-year immutable cache, and prints the install snippet with its
+  `sha384` SRI hash. Bucket: uniform access, public read, object
+  versioning, a short writer list. The collector serves the same file at
+  `/shs.js` for self-hosted, on-prem and first-party customers.
 - **Mobile SDKs:** `sdk/agent-detection/android` (Kotlin) and
   `sdk/agent-detection/ios` (Swift), built and released outside the Shield
   images.
@@ -982,6 +1056,25 @@ beacons, and tier 1 carries on unchanged.
 - Full suite green in a clean venv; CI `pytest` gate passes.
 
 ## 13. Tasks (one PR each, in order)
+
+**Rev 8 build order (tag first).** Each step names the rev 7 tasks it takes
+from. One branch, `feat/agent-detection-tag`, one commit per step.
+
+| Step | What | From |
+|---|---|---|
+| R1 | Site keys (admin API) and the collector: `POST /b` with the request block, `GET /health`, the beacon stream, env flags, `Dockerfile.admin`, Railway and OpenShift service | 9 |
+| R2 | The product tag (`static/agent-detection/shs.js`, site key, consent mode, configurable endpoint), `/shs.js` from the collector, `scripts/release_shs_tag.sh` for GCS | 9 |
+| R3 | Traps from the tag: `GET /t`, `GET /v/{code}`, code check on beacons, trap codes in Redis, accessibility test | 10 |
+| R4 | Worker with tier 2 scoring from beacons: A7 to A10, trap hits, bands, detector pack file, `agd:{tenant}:sess` | 2, 10 |
+| R5 | Fleets from beacons: device cohorts, timing, page sequence, controller reuse, prevalence | 3, 10 |
+| R6 | Enforcement handoff: indicators, feed (JSON, CSV, Nginx), `indicators:read`, monitor first, revoke, kill switch, webhooks | 6 |
+| R7 | Portal: Tag page (snippet, install check), Detections, Fleets, Indicators, monitor and enforce | 2, 3, 9 |
+| R8 | End to end on the lab shop with product code, integration guide out of design preview, deploy runbook | 8 |
+
+Then tier 1 as an add-on: tasks 1, 2 (A1 to A6, A11, decoys), 3 (log
+traits), 4, 5, 7, 8 and 11 as written below.
+
+**Rev 7 task list:**
 0. **Lab v0 and baseline:**
    - test app with Nginx and login logs into a local Elastic;
    - three agent frameworks across containers, VMs and an Android emulator,
