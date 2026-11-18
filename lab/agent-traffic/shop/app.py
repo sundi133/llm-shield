@@ -17,6 +17,11 @@ response headers that Nginx logs, the way real apps log the user id:
 Traps T1 to T4 (spec 2.4) rotate per tag session (`_shs`, which the shop sets
 on the first response so traps on the first page already carry a code).
 
+Product mode (LAB_PRODUCT=1, set by run_shop.sh): the pages carry the
+PRODUCT tag (static/agent-detection/shs.js served by the product collector
+at /_shs/) with this lab's site key, and the shop renders no traps of its
+own: the product tag inserts them from the collector's layout.
+
 Run:  python -m uvicorn app:app --port 8200   (from this directory)
 """
 
@@ -38,6 +43,11 @@ SUSPENDED_FILE = STATE_DIR / "suspended.json"
 TRAP_KEY = traps.secret(STATE_DIR)
 TRAP_CODES: dict[str, str] = {}         # T1 code -> shs it was shown to (spec agd:{tenant}:trapcode:{code})
 SHS_RE = __import__("re").compile(r"^[0-9a-f]{24}$")
+PRODUCT = os.environ.get("LAB_PRODUCT", "") == "1"
+PRODUCT_SITE_KEY = ((STATE_DIR / "product" / "site_key").read_text().strip()
+                    if PRODUCT and (STATE_DIR / "product" / "site_key").exists() else "")
+TAG_LINE = (f'<script src="/_shs/shs.js" data-site="{html.escape(PRODUCT_SITE_KEY)}" async></script>'
+            if PRODUCT else '<script src="/_shs/shs.js?k=lab-site" async></script>')
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -114,12 +124,12 @@ def _page(request: Request, title: str, content: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)} | Acme Outfitters</title>
 <link rel="stylesheet" href="/static/style.css"><script src="/static/app.js" defer></script>
-<script src="/_shs/shs.js?k=lab-site" async></script>
+{TAG_LINE}
 <link rel="icon" href="/static/logo.svg"></head><body>
 <header><a href="/" class="brand"><img src="/static/logo.svg" alt="" width="28" height="28"> Acme Outfitters</a>
 <nav><a href="/">Shop</a> <a href="/promo">Promotions</a> <a href="/help">Help</a> <a href="/about">About</a>
 <a href="/cart">Cart ({len(sess['cart'])})</a> {who}</nav></header>
-<main><h1>{html.escape(title)}</h1>{content}{traps.page_traps(TRAP_KEY, sess["shs"])}</main>
+<main><h1>{html.escape(title)}</h1>{content}{"" if PRODUCT else traps.page_traps(TRAP_KEY, sess["shs"])}</main>
 <footer><a href="/help">Shipping and returns</a> <a href="/about">Our story</a></footer>
 </body></html>"""
 
@@ -191,6 +201,9 @@ def about(request: Request):
 def _form(request: Request, action: str, fields: str, button: str) -> str:
     """A form with the session's T1 (and maybe T4) trap at its rotated position."""
     _, sess, _ = _session(request)
+    if PRODUCT:                               # the product tag inserts the traps
+        return (f'<form method="post" action="{action}">{fields}'
+                f'<p><button type="submit">{button}</button></p></form>')
     d = traps.day()
     TRAP_CODES[traps.code(TRAP_KEY, sess["shs"], "T1", d)] = sess["shs"]
     trap = traps.form_traps(TRAP_KEY, sess["shs"], d)
@@ -200,6 +213,8 @@ def _form(request: Request, action: str, fields: str, button: str) -> str:
 
 
 async def _trap_hits(request: Request) -> list[str]:
+    if PRODUCT:                               # judged by the product collector instead
+        return []
     _, sess, _ = _session(request)
     form = await request.form()            # already parsed by FastAPI; cached
     return traps.check_form(TRAP_KEY, sess["shs"], form, TRAP_CODES.get)

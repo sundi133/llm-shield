@@ -68,8 +68,9 @@ def normalize_origin(value: str) -> str:
     if parts.path not in ("", "/") or parts.query or parts.fragment or parts.username:
         raise SiteKeyError(f"an origin has no path, query or credentials: {raw!r}")
     host = parts.hostname.lower()
-    if parts.scheme == "http" and host not in ("localhost", "127.0.0.1") and not host.endswith(".localhost"):
-        raise SiteKeyError(f"use https for {host} (http is accepted for localhost only)")
+    if parts.scheme == "http" and host not in ("localhost", "127.0.0.1", "host.docker.internal") \
+            and not host.endswith(".localhost"):
+        raise SiteKeyError(f"use https for {host} (http is accepted for local development hosts only)")
     try:
         port = parts.port
     except ValueError:

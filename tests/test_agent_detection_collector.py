@@ -146,6 +146,7 @@ def test_origins_are_normalized_and_deduplicated():
     assert sitekeys.normalize_origin("HTTPS://Shop.Example.com:443/") == "https://shop.example.com"
     assert sitekeys.normalize_origin("https://shop.example.com:8443") == "https://shop.example.com:8443"
     assert sitekeys.normalize_origin("http://localhost:8180") == "http://localhost:8180"
+    assert sitekeys.normalize_origin("http://host.docker.internal:8180") == "http://host.docker.internal:8180"
     rec = sitekeys.create("t", origins=["https://a.example", "https://A.example/"])
     assert rec["origins"] == ["https://a.example"]
 

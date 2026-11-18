@@ -1,6 +1,6 @@
 # Spec: AI agent and fleet detection from SIEM logs
 
-Status: **rev 8 approved 2026-11-18; building in the rev 8 order (section 13).**
+Status: **rev 8 approved 2026-11-18; R1 to R8 built on `feat/agent-detection-tag` (section 13).**
 Rev 7 approved 2026-11-16, task 0b built. Branch `spec/agent-impersonation-defense`
 (lab work on `feat/agent-detection-lab`, product build on `feat/agent-detection-tag`).
 Architecture: `artifacts/agent-detection-architecture-v5.svg` (partner version: `-v4.svg`).
@@ -1139,6 +1139,28 @@ from. One branch, `feat/agent-detection-tag`, one commit per step.
 
 Then tier 1 as an add-on: tasks 1, 2 (A1 to A6, A11, decoys), 3 (log
 traits), 4, 5, 7, 8 and 11 as written below.
+
+**Status (2026-11-18): R1 to R8 built.** R8 ran the lab's fleet demo on product
+code (`lab/agent-traffic/demo_product.sh`: product tag, collector, worker,
+admin API and feed, Nginx polling the feed with a feed token). Scripted
+rehearsal, plumbing only: wave 1 completed 12 sign-ups, promotions and orders
+in watch mode; one fleet of 12 across 12 networks (behavior, environment,
+time); with `shs` and `client` enforced, wave 2 was challenged at its first
+request, 0 promotions, 0 orders. Findings fixed on the way:
+- an agent session shows two clients (the spoofed one on page loads, the real
+  one on exit beacons, the A10 finding), so fleets and prevalence now count
+  every client a session showed; before, the fleet's browser signature was
+  never collected and wave 2 got through until its sessions were scored one
+  by one;
+- per-session publishing alone (first beacon, worker cycle, feed poll, edge
+  reload) takes several seconds, longer than a scripted agent needs for the
+  whole funnel; the first-request stop comes from the fleet's browser
+  signature, so a controller that varies its user agent per agent is stopped
+  a few requests in, on its shared device. Real model-driven agents take
+  minutes per funnel; the real lab run measures this.
+
+Docs: `docs/agent-detection-integration.md` (as built, unlisted) and
+`docs/agent-detection-deploy.md` (operators).
 
 **Rev 7 task list:**
 0. **Lab v0 and baseline:**

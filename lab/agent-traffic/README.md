@@ -59,6 +59,15 @@ takes. Optional, for sandboxed agents:
 docker build -t shield-lab-sandbox:1.65.2 lab/agent-traffic/sandbox
 ```
 
+## Product mode
+
+`LAB_PRODUCT=1 shop/run_shop.sh <python>` runs the shop on Shield's PRODUCT
+code instead of the lab prototypes: the product tag, collector, worker and
+admin API (portal at http://localhost:8205/tenant), a lab-only Redis, and a
+poller that writes the product feed into Nginx. `demo_product.sh` runs the
+fleet demo that way. The product processes use the repo's Python
+(`SHIELD_PY`, default `<repo>/.venv/bin/python`).
+
 ## Customer demo
 
 [DEMO.md](DEMO.md) is a 15-minute runbook: hidden traps, decoys and a fleet

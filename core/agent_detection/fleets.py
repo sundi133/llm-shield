@@ -87,10 +87,10 @@ class Prevalence:
             if (s.get("verdict") or {}).get("band") != "human_like":
                 continue
             self.humans += 1
-            d, c, p = scoring.device_of(s), _client(s), interaction_profile(s)
+            d, p = scoring.device_of(s), interaction_profile(s)
             if d:
                 self.devices[d] += 1
-            if c:
+            for c in set(s.get("clients") or []):        # every client a person's session showed
                 self.clients[c] += 1
             if p is not None:
                 self.profiles[p] += 1
@@ -205,7 +205,10 @@ def find_fleets(sessions: list[dict], *, min_size: Optional[int] = None,
                 traits.update(g)
         members.sort(key=lambda m: (m["first"], m["shs"]))
         devices = Counter(d for m in members if (d := scoring.device_of(m)))
-        clients = Counter(c for m in members if (c := _client(m)))
+        # Every client the members showed: an agent session often shows two
+        # (the spoofed one on page loads, the real one on exit beacons, A10),
+        # and the spoofed one is what the edge sees on every page request.
+        clients = Counter(c for m in members for c in set(m.get("clients") or []))
         bands = Counter((m.get("verdict") or {}).get("band", "human_like") for m in members)
         fleets.append({
             "id": fleet_id(members[0]["shs"]),

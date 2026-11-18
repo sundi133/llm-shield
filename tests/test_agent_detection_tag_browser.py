@@ -61,6 +61,12 @@ def server():
             "<label for=email>Email</label><input id=email name=email>"
             "<button type=submit>Create account</button></form></main>" + snippet + "</html>")
     app.add_api_route("/page", lambda: HTMLResponse(page))
+    ckey = sitekeys.create("acme", origins=[origin], consent="required")["site_key"]
+    csnip = tag.snippet(ckey, origin, origin, consent="required").replace(' integrity="', ' data-x="')
+    stub = ("<script>window.shs = window.shs || function () { (window.shs.q = window.shs.q || []).push(arguments); };"
+            "window.shs('consent');</script>")
+    app.add_api_route("/consented", lambda: HTMLResponse(
+        "<!doctype html><title>c</title><p>consented early</p>" + stub + csnip))
     import uvicorn
     srv = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
     t = threading.Thread(target=srv.run, daemon=True)
@@ -180,3 +186,22 @@ def test_following_the_hidden_link_is_a_canary_hit(browser, server):
     [hit] = [e for e in _entries(shs) if e["kind"] == "canary"]
     assert hit["traps"]["hit"][0]["trap"] == "T2"
     page.context.close()
+
+
+def test_consent_given_before_the_tag_loads_is_honoured(browser, server):
+    """The integration guide's queue stub: window.shs('consent') called before
+    the tag loads is replayed by the tag, so it runs with consent given."""
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    page.goto(server["origin"] + "/consented")
+    shs = None
+    end = time.time() + 5
+    while time.time() < end and not shs:
+        shs = next((c["value"] for c in ctx.cookies() if c["name"] == "_shs"), None)
+        time.sleep(0.05)
+    assert shs, "the tag never started"
+    end = time.time() + 3
+    while time.time() < end and not _entries(shs):
+        time.sleep(0.05)
+    assert [e.get("consent") for e in _entries(shs)][:1] == ["given"]
+    ctx.close()

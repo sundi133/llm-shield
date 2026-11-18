@@ -157,3 +157,27 @@ def test_the_worker_finds_and_stores_the_fleet(mem):
     [f] = mem.list_fleets("acme")
     assert f["size"] == 12 and f["networks"] == 12
     assert worker.process_tenant(mem, "acme", now=T0 + 70)["fleets"] is None   # not due yet
+
+
+def test_a_fleet_lists_every_client_its_members_showed():
+    """Agent sessions often show two clients (spoofed on page loads, real on
+    exit beacons); the spoofed one is what the edge sees, so both count."""
+    agents = _agents(12)
+    for a in agents:
+        a["clients"] = ["spoofed-chrome", f"real-{a['shs'][-3:]}"]
+        a["client_strings"] = {"spoofed-chrome": "Mozilla/5.0 Windows Chrome|x|y|?0"}
+    [f] = fleets.find_fleets(agents + _people(200))
+    top = f["clients"][0]
+    assert top["hash"] == "spoofed-chrome" and top["sessions"] == 12 and top["rare"]
+    assert top["value"] == "Mozilla/5.0 Windows Chrome|x|y|?0"
+
+
+def test_a_client_people_also_show_is_never_rare():
+    people = _people(1500)
+    for p in people[:5]:
+        p["clients"] = ["cl-person", "spoofed-chrome"]
+    agents = _agents(12)
+    for a in agents:
+        a["clients"] = ["spoofed-chrome"]
+    [f] = fleets.find_fleets(agents + people)
+    assert f["clients"][0]["hash"] == "spoofed-chrome" and f["clients"][0]["rare"] is False

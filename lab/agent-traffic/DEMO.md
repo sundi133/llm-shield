@@ -80,6 +80,28 @@ Narrate while it runs:
 3. **Wave 2:** the same controller with new personas and IPs. The feed fills with
    `<< CHALLENGED`: stopped at the first request, no promotions, no orders.
 
+### Act 4 on the product (recommended)
+
+The same fleet act on Shield's shipping code: the product tag on the shop,
+the product collector, worker and admin API, and Nginx polling the product
+feed with a feed token.
+
+```bash
+AGENT_LLM_PROVIDER=scripted ./demo_product.sh "$PY"
+```
+
+It prints what each wave got done and when the edge started challenging. In
+the scripted rehearsal (2026-11-18): wave 1 got 12 promotions and 12 orders;
+Shield linked one fleet of 12 across 12 networks; with session cookies and
+browser signatures enforced, wave 2 was challenged at its first request, with
+no promotions and no orders. That first-request stop came from the fleet's
+shared browser signature; a controller that varies its user agent per agent
+is caught on its shared device instead, a few requests in. Plumbing only: these
+agents are scripted, so the numbers are not detection rates.
+
+Then show the portal at `http://localhost:8205/tenant` (sign in with the API
+key in `state/product/admin_key`): Security Operations, AI Agent Detection.
+
 ## Act 5: the evidence (2 minutes)
 
 The report opens in your browser. Walk through:
