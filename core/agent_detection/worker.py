@@ -283,6 +283,8 @@ def publish_sessions(tenant: str, changed: dict[str, dict], sigs: dict, now: flo
     (a fresh sandbox from the same image, matched on its first beacon)."""
     items = []
     for shs, s in changed.items():
+        if s.get("pseudo") and not s.get("loads"):
+            continue                    # no tag cookie behind it: nothing an edge could match
         v = s.get("verdict") or {}
         if v.get("band") == "clear_agent":
             items.append({"type": "shs", "value": shs, "reason": f"clear agent (score {v.get('score')})"})

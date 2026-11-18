@@ -21,9 +21,10 @@ firewall or CDN a list to challenge. Shield is never in the request path and
 never blocks anything itself.
 
 **What is available today:** the tag, detection, fleets, watch mode and
-enforcement through the pull feed and webhooks (steps 1 to 4 below). Detection
-from SIEM logs, signed-agent (Web Bot Auth) handling, decoys and mobile SDKs
-come later; see [What comes next](#what-comes-next).
+enforcement through the pull feed and webhooks (steps 1 to 4 below), and
+decoys (step 5, optional). Detection from SIEM logs, signed-agent (Web Bot
+Auth) handling and mobile SDKs come later; see
+[What comes next](#what-comes-next).
 
 1. TOC
 {:toc}
@@ -36,6 +37,7 @@ come later; see [What comes next](#what-comes-next).
 | [2. Add the tag](#2-add-the-tag) | one script line, one CDN route | the tag on protected pages |
 | [3. Watch](#3-watch) | one to two weeks of review | nothing |
 | [4. Enforce](#4-enforce) | a poller and one edge rule | matching sessions are challenged |
+| [5. Decoys (optional)](#5-decoys-optional) | a block of edge rules, one robots.txt line | a few paths no visitor uses are forwarded to Shield |
 
 Pages load as fast as before: the tag loads asynchronously, sends small
 reports in the background, and never holds up a page or a form. If Shield is
@@ -235,6 +237,41 @@ signed like every other Shield webhook and sent only when a type is enforced.
 - **The default action is a challenge, not a block,** and every change is in
   the enforcement event log and the audit trail.
 
+## 5. Decoys (optional)
+
+Some agents never fill in a form: they hunt for secrets, requesting config
+files, admin pages and internal APIs. Decoys are things on the site that look
+valuable to them and are useless: a staff login page, config files such as
+`/.env`, a hidden internal API, and a key in the page code. Each answers with
+a short instruction only an AI agent follows. Requesting a decoy proves
+little, because simple scanners do that all day, so a bare request never
+flags anyone. Following the instruction, or using the fake key, marks a
+clear agent and names its session.
+
+1. **Turn decoys on** under **AI Agent Detection**, then **Decoys**. Enter the
+   customer's own key format (for example `acme_pk_`; formats of cloud and
+   SaaS providers are refused, so secret scanners never react) and what the
+   site runs on.
+2. **Check the paths.** The page lists this customer's decoy paths, drawn for
+   them alone. If any exists on the real site, add it to **Paths that exist
+   on your site**, or **Draw a new set**.
+3. **Add the customer's own scanners** (pentest and attack-surface tools) by
+   IP range or user agent. Their requests are answered but never recorded.
+4. **Install the edge rules.** Pick the site key and **Show** the rules: a
+   block of Nginx `location`s to paste into the site's `server { }` block. They
+   forward only the decoy paths to the Shield collector, with no variables,
+   and answer 404 if the collector can't be reached, so nothing a person uses
+   can break. For other CDNs, the JSON form lists each path, where to forward
+   it and the header to add.
+5. **Add the robots.txt line** shown on the page (`Disallow: ...`), so
+   well-behaved crawlers stay away from the hidden API.
+6. **Put the decoy key on pages:** tick **Decoy key on pages** on the site
+   key. The tag then adds a small JSON block to the page code holding a fake
+   key; people never see it and screen readers never reach it.
+
+Decoy content is fake and harmless: no real secret, no tracking beyond the
+site, and nothing from the request is ever written back.
+
 ## Rollout plan
 
 | When | Do |
@@ -242,7 +279,7 @@ signed like every other Shield webhook and sent only when a type is enforced.
 | Day 1 | Steps 1 and 2 on sign-up and checkout; check the Tag page shows reporting |
 | Days 2 to 14 | Watch mode. Review Detections and Fleets with the customer's security team |
 | Week 2 or 3 | Step 4: the poller and the edge rule, then enforce session cookies |
-| Later | Enforce browser signatures; add webhooks to the SOAR |
+| Later | Enforce browser signatures; add webhooks to the SOAR; decoys |
 
 Detection rates depend on the customer's traffic. Watch mode shows what Shield
 finds on their own visitors; don't quote rates before then.
@@ -254,8 +291,6 @@ finds on their own visitors; don't quote rates before then.
   alerts instead of duplicates.
 - **Signed agents** (Web Bot Auth): let declared agents from trusted
   operators through, and flag forged signatures.
-- **Decoys:** things on the site no real visitor needs, with an instruction
-  only an AI follows.
 - **Mobile SDKs** for Android, then iOS.
 
 ## Deployment

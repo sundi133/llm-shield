@@ -22,6 +22,10 @@ echo "== wave 1: $N agents, one controller, each on its own home IP; Shield is i
 ( cd "$LAB/agents" && "$PY" fleet.py --n "$N" --concurrency 5 --stagger 10 --label "$L-wave1" \
     --observe dom --sandbox "$SANDBOX" --seed 81 )
 
+echo "== decoys: 3 agents told to look around find the hidden API in robots.txt and follow its instruction"
+( cd "$LAB/agents" && "$PY" fleet.py --n 3 --concurrency 3 --stagger 2 --label "$L-explore" \
+    --task explore --observe dom --sandbox local --seed 91 )
+
 echo "== waiting for the worker to link the fleet"
 for i in $(seq 1 40); do
   n="$(api /v1/agent-detection/fleets | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["fleets"]))')"

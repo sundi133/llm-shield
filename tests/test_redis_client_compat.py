@@ -443,3 +443,17 @@ def test_agent_detection_indicators(kind, client_env, backend):
     rec, token = ind.mint_token(tenant, "edge")
     assert ind.resolve_token(token) == tenant and ind.list_tokens(tenant)[0]["id"] == rec["id"]
     assert ind.delete_token(tenant, rec["id"]) and ind.resolve_token(token) is None
+
+
+@live
+@pytest.mark.parametrize("kind", ["upstash", "redis-py"])
+def test_agent_detection_decoy_settings(kind, client_env, backend):
+    from core.agent_detection import decoys
+    raw, created = backend
+    _use(kind, client_env, raw)
+    tenant = f"compat-{kind}-{secrets.token_hex(4)}"
+    created.update({f"agd:{tenant}:*"})
+    assert decoys.load(tenant) is None                    # read-only: no seed created
+    st = decoys.save(tenant, {"enabled": True, "key_prefix": "acme_pk_"})
+    assert decoys.load(tenant)["seed"] == st["seed"] and decoys.load(tenant)["enabled"] is True
+    assert decoys.plan(tenant) == decoys.plan(tenant, decoys.load(tenant))

@@ -30,7 +30,12 @@ API = {
         "reporting": {"last_beacon": 1, "kinds": {X: 1}, "traps_shown": True},
         "snippet_first_party": X, "snippet_direct": X}]},
     "/v1/agent-detection/detections": {"detections": [{
-        "shs": SHS, "last": 1, "band": X, "score": X, "reasons": [X], "fleet_id": X}]},
+        "shs": SHS, "last": 1, "band": X, "score": X, "reasons": [X], "fleet_id": X,
+        "decoys": [{"decoy": X, "followed": True, "key_match": True}], "pseudo": True}]},
+    "/v1/agent-detection/decoys/edge": {"nginx": X, "forward": [], "robots_txt_line": X},
+    "/v1/agent-detection/decoys": {"enabled": True, "key_prefix": X, "stack": X, "stacks": [X],
+        "avoid": [X], "scanners": {"cidrs": [X], "uas": [X]}, "decoys": {X: [X], "D1 admin login": X},
+        "robots_txt_line": X, "paths": [X]},
     "/v1/agent-detection/sessions/": {"shs": X, "band": "grey", "score": X, "first": 1, "last": 2,
         "beacons": X, "clients": X, "networks": X, "pack": X, "reasons": [X], "pages": [X],
         "renderer": X, "renderer_class": X, "interaction": {"keys": X, "inputs": X},
@@ -75,12 +80,15 @@ def _settle(page):
     page.wait_for_timeout(150)
 
 
-@pytest.mark.parametrize("section", ["tag", "detections", "fleets", "enforcement"])
+@pytest.mark.parametrize("section", ["tag", "detections", "fleets", "enforcement", "decoys"])
 def test_hostile_values_never_become_markup(page, section):
     page.click(f"[data-ad-sec={section}]")
     _settle(page)
     if section == "detections":
         page.click("[data-ad-act=open-session]")
+        _settle(page)
+    if section == "decoys":
+        page.click("[data-ad-act=edge-rules]")
         _settle(page)
     assert page.evaluate("window.__xss") is None
     assert page.evaluate("document.querySelectorAll('#root img').length") == 0

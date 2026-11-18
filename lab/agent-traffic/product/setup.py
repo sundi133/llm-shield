@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPO))
 STATE = Path(os.environ["LAB_STATE_DIR"]) / "product"
 STATE.mkdir(parents=True, exist_ok=True)
 
-from core.agent_detection import indicators, sitekeys  # noqa: E402
+from core.agent_detection import decoys, indicators, sitekeys  # noqa: E402
 from storage import tenant_store as ts  # noqa: E402
 
 TENANT = "lab-shop"
@@ -41,8 +41,19 @@ for rec in sitekeys.list_for(TENANT):
     sitekeys.delete(TENANT, rec["site_key"])
 key = sitekeys.create(TENANT, origins=["http://localhost:8180", "http://127.0.0.1:8180",
                                        "http://host.docker.internal:8180"],
-                      label="Lab shop", created_by="lab")["site_key"]
+                      decoys=True, label="Lab shop", created_by="lab")["site_key"]
 write("site_key", key)
+
+# Decoys (rev 9): on, in the shop's own key format, and the PRODUCT's edge rules
+# for the lab Nginx (which runs in Docker, so the collector is host.docker.internal).
+# The lab edge passes the agent's simulated address, as it does for /_shs/.
+decoys.save(TENANT, {"enabled": True, "key_prefix": "acme_pk_"})
+plan = decoys.plan(TENANT)
+rules = decoys.edge_nginx(plan, key, "http://host.docker.internal:8201")
+rules = rules.replace("$proxy_add_x_forwarded_for", "$client_ip")
+rules += f'location = /robots.txt {{ default_type text/plain; return 200 "User-agent: *\\n{decoys.robots_line(plan)}\\n"; }}\n'
+(Path(os.environ["LAB_STATE_DIR"]) / "shield" / "decoys.conf").write_text(rules)
+print("product decoys: " + " ".join(decoys.paths(plan)))
 for t in indicators.list_tokens(TENANT):
     indicators.delete_token(TENANT, t["id"])
 write("feed_token", indicators.mint_token(TENANT, "lab edge")[1])

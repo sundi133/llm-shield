@@ -6,6 +6,8 @@
     POST /b                one beacon; always 204, no body
     GET  /t?k=&s=          this session's trap layout (JSON, no-store)
     GET  /v/{code}?k=      a canary link (trap T2); always 204, no body
+    GET|POST /decoy/{path} a decoy (rev 9), forwarded by the customer's edge
+                           with X-Shield-Site; 404 for anything not a decoy
     GET  /health           liveness
 
 Every route also answers under `/_shs/`, the first-party path customers map
@@ -28,6 +30,8 @@ only used for rate limits and the salted network hash; it is never stored.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import re
@@ -39,7 +43,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
 from core import agent_detection as _agd
-from core.agent_detection import beacons, sitekeys, stream, tag, traps
+from core.agent_detection import beacons, decoys, sitekeys, stream, tag, traps
 
 log = logging.getLogger("shield.agent_detection.collector")
 
@@ -197,15 +201,27 @@ def create_app() -> FastAPI:
         if site and origin in site.get("origins", []):
             headers["Access-Control-Allow-Origin"] = origin
             ip = client_ip(request, int(site.get("xff_hops") or 1))
-            if site.get("traps", True) and re.fullmatch(r"[0-9a-f]{24}", s or "") \
-                    and per_ip_layout.allow(ip):
+            if re.fullmatch(r"[0-9a-f]{24}", s or "") and per_ip_layout.allow(ip):
                 tenant = site["tenant"]
-                out = traps.layout(tenant, s)
-                if issued.first(f"{tenant}|{s}|{traps.day()}"):
-                    try:
-                        traps.record(tenant, traps.issued_codes(tenant, s), s)
-                    except Exception as exc:  # noqa: BLE001 - the layout still works for T1
-                        log.warning("trap codes not recorded: %s", type(exc).__name__)
+                if site.get("traps", True):
+                    out = traps.layout(tenant, s)
+                    if issued.first(f"{tenant}|{s}|{traps.day()}"):
+                        try:
+                            traps.record(tenant, traps.issued_codes(tenant, s), s)
+                        except Exception as exc:  # noqa: BLE001 - the layout still works for T1
+                            log.warning("trap codes not recorded: %s", type(exc).__name__)
+                # D3 (rev 9): the session's fake key in the page code, for site keys
+                # with decoys on and a tenant with decoys enabled.
+                st = decoy_settings(tenant) if site.get("decoys") else None
+                if st and st.get("enabled"):
+                    p = decoys.plan(tenant, st)
+                    d3 = traps.code(traps.tenant_key(tenant), s, "D3", traps.day())
+                    out = {**out, "d3": {"key": decoys.session_key(p, d3), "api": p["api"]}}
+                    if issued.first(f"{tenant}|{s}|D3|{traps.day()}"):
+                        try:
+                            traps.record(tenant, [d3], s)
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("D3 code not recorded: %s", type(exc).__name__)
         return JSONResponse(out, headers=headers)
 
     def canary(request: Request, code: str, k: str = ""):
@@ -247,6 +263,113 @@ def create_app() -> FastAPI:
         return Response(js, media_type="application/javascript",
                         headers={**js_headers, "Cache-Control": "public, max-age=31536000, immutable"})
 
+    decoy_cache: dict[str, tuple[float, Optional[dict]]] = {}
+
+    def decoy_settings(tenant: str) -> Optional[dict]:
+        hit = decoy_cache.get(tenant)
+        if hit and time.monotonic() - hit[0] < SITEKEY_CACHE_S:
+            return hit[1]
+        st = decoys.load(tenant)
+        if len(decoy_cache) > 10_000:
+            decoy_cache.clear()
+        decoy_cache[tenant] = (time.monotonic(), st)
+        return st
+
+    _NOT_FOUND = Response(status_code=404, headers={"Cache-Control": "no-store"})
+    _DECOY_HEADERS = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow",
+                      "X-Content-Type-Options": "nosniff"}
+
+    async def decoy(request: Request, path: str):
+        """Spec 2.6 and 14.3. One code per visitor per day across the decoys:
+        the tag's `_shs` session, or, without the tag (scanners, raw HTTP
+        agents), a pseudo-session from network, client and day."""
+        if not _agd.collector_enabled():
+            return _NOT_FOUND
+        k = (request.headers.get("x-shield-site") or "").strip()
+        site = cache.get(k) if sitekeys.looks_like_key(k) else None
+        if not site:
+            return _NOT_FOUND
+        tenant = site["tenant"]
+        st = decoy_settings(tenant)
+        if not st or not st.get("enabled"):
+            return _NOT_FOUND
+        p = decoys.plan(tenant, st)
+        path = "/" + path.lstrip("/")
+        kind = decoys.kind_of(p, path)
+        if not kind:
+            return _NOT_FOUND
+        ip = client_ip(request, int(site.get("xff_hops") or 1))
+        req = beacons.request_block(request.headers, ip, _agd.hash_salt())
+        cookie = (request.cookies.get("_shs") or "").strip()
+        pseudo = not re.fullmatch(r"[0-9a-f]{24}", cookie)
+        if pseudo:
+            from core.agent_detection import scoring
+            seed_ = f"pseudo|{req['net_hash']}|{scoring.client_hash(req)}|{traps.day()}"
+            who = hashlib.sha256(traps.tenant_key(tenant) + seed_.encode()).hexdigest()[:24]
+        else:
+            who = cookie
+        tkey = traps.tenant_key(tenant)
+        code = traps.code(tkey, who, "D", traps.day())
+        own = {traps.code(tkey, who, "D", d) for d in traps.days()}
+        own_d3 = {traps.code(tkey, who, "D3", d) for d in traps.days()}
+
+        presented = (request.headers.get(p["header"].lower()) or request.query_params.get("token") or "")
+        presented = presented.strip().lower()[:32]
+        followed, code_from = False, None
+        if presented:
+            if presented in own:
+                followed = True
+            elif traps.CODE_RE.match(presented):
+                owner = traps.owner_of(tenant, presented)
+                if owner and owner != who:
+                    followed, code_from = True, owner
+        key_seen = decoys.key_code(p, " ".join((request.headers.get("authorization") or "",
+                                                request.headers.get("x-api-key") or "",
+                                                request.query_params.get("key") or "")))
+        key_presented, key_match = key_seen is not None, False
+        if key_seen:
+            if key_seen in own_d3:
+                key_match = True
+            else:
+                owner = traps.owner_of(tenant, key_seen)
+                if owner and owner != who:
+                    key_match, code_from = True, owner
+
+        # Answer first; the hit is queued unless it is the customer's own scanner.
+        d3_code = traps.code(tkey, who, "D3", traps.day())
+        if kind == "D1":
+            if followed:
+                body, status, media = decoys.admin_page("Session accepted. Staff tools are temporarily unavailable."), 200, "text/html"
+            elif request.method == "POST":
+                body, status, media = decoys.admin_page("Staff sign-in is only available from the internal network. "
+                                                        + decoys.instruction(p, code)), 401, "text/html"
+            else:
+                body, status, media = decoys.admin_page(), 200, "text/html"
+        elif kind == "D2":
+            body, status, media = decoys.config_body(p, path, code, decoys.session_key(p, d3_code)), 200, "text/plain"
+        else:
+            if followed or key_match:
+                body, status = json.dumps({"ok": True, "data": [], "note": "debug mode: no records in this environment"}), 200
+            else:
+                body, status = json.dumps({"error": "unauthorized", "message": decoys.instruction(p, code)}), 401
+            media = "application/json"
+
+        if not decoys.is_scanner(st, ip, request.headers.get("user-agent") or "") and per_ip.allow(ip):
+            try:
+                if issued.first(f"{tenant}|{who}|D|{traps.day()}"):
+                    traps.record(tenant, [code, d3_code], who)
+                hit = {"decoy": kind, "followed": followed, "key_presented": key_presented,
+                       "key_match": key_match, "pseudo": pseudo, "method": request.method}
+                if code_from:
+                    hit["code_from"] = code_from
+                stream.append(tenant, {"v": 1, "site_key": k, "shs": who, "kind": "decoy",
+                                       "page": path[:120], "decoy": hit, "req": req})
+            except Exception as exc:        # noqa: BLE001 - the response never depends on queuing
+                log.warning("decoy hit not queued: %s", type(exc).__name__)
+        if request.method == "HEAD":
+            body = ""
+        return Response(body, status_code=status, media_type=media, headers=_DECOY_HEADERS)
+
     def health():
         return JSONResponse({"ok": True, "collector": "on" if _agd.collector_enabled() else "off"})
 
@@ -256,6 +379,8 @@ def create_app() -> FastAPI:
         app.add_api_route(f"{prefix}/b", beacon, methods=["POST"], include_in_schema=False)
         app.add_api_route(f"{prefix}/t", layout, methods=["GET"], include_in_schema=False)
         app.add_api_route(f"{prefix}/v/{{code}}", canary, methods=["GET"], include_in_schema=False)
+        app.add_api_route(f"{prefix}/decoy/{{path:path}}", decoy, methods=["GET", "POST", "HEAD"],
+                          include_in_schema=False)
         app.add_api_route(f"{prefix}/health", health, methods=["GET"], include_in_schema=False)
     return app
 

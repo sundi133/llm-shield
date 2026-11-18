@@ -107,6 +107,19 @@ def add(sess: dict, e: dict) -> dict:
     if kind == "canary":
         sess["traps"]["canaries"] += 1
         return sess
+    if kind == "decoy":
+        # Kept apart from pages and views, so a decoy path never shapes the
+        # behavior trait (fleet linking) like a real page would. Scored as A12 (R11).
+        d = e.get("decoy") or {}
+        sess.setdefault("decoys", [])
+        if len(sess["decoys"]) < 20:
+            sess["decoys"].append({k: d.get(k) for k in ("decoy", "followed", "key_presented", "key_match",
+                                                         "pseudo", "code_from") if d.get(k) is not None})
+        if d.get("pseudo"):
+            sess["pseudo"] = True
+        if d.get("code_from") and d["code_from"] != sess["shs"]:
+            _add_unique(sess["links"], d["code_from"], 50)       # one controller, as trap codes
+        return sess
     page = e.get("page") or ""
     if len(sess["pages"]) < p["max_pages"]:
         _add_unique(sess["pages"], page, p["max_pages"])
@@ -230,6 +243,26 @@ def a10_contradictions(sess: dict, _signals: dict):
     return (1.0, "; ".join(found)) if found else (0.0, None)
 
 
+def a12_decoys(sess: dict, _signals: dict):
+    """Spec 2.6. A followed instruction or the fake key brought back is a
+    clear agent; a bare hit counts only when the session also used the site
+    (tag reports), so the scanners requesting /.env all day never flag anyone."""
+    hits = sess.get("decoys") or []
+    if not hits:
+        return 0.0, None
+    kinds = sorted({h.get("decoy", "?") for h in hits})
+    if any(h.get("code_from") for h in hits):
+        return 1.0, f"used a decoy code shown to {len(sess['links'])} other session(s): one controller"
+    if any(h.get("key_match") for h in hits):
+        return 1.0, "presented the fake API key from this site's decoy to its hidden API"
+    if any(h.get("followed") for h in hits):
+        done = sorted({h.get("decoy", "?") for h in hits if h.get("followed")})
+        return 1.0, f"followed the hidden instruction in a decoy ({', '.join(done)})"
+    if sess.get("loads") or sess.get("views") or sess.get("submits"):
+        return pack()["a12"]["bare_hit_value"], f"requested decoy {', '.join(kinds)} while also using the site"
+    return 0.0, None
+
+
 def a9_environment(sess: dict, signals: dict):
     """Supporting only: counts when another detector already fired."""
     dev = sess["device"] or {}
@@ -246,7 +279,8 @@ def a9_environment(sess: dict, signals: dict):
 
 
 DETECTORS = [("A5", a5_traps), ("A7", a7_interaction), ("A8", a8_automation),
-             ("A10", a10_contradictions), ("A9", a9_environment)]     # A9 last: it reads the others
+             ("A10", a10_contradictions), ("A12", a12_decoys),
+             ("A9", a9_environment)]     # A9 last: it reads the others
 
 
 def score(sess: dict) -> dict:

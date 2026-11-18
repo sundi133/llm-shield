@@ -1,6 +1,7 @@
 # Spec: AI agent and fleet detection from SIEM logs
 
-Status: **rev 8 approved 2026-11-18; R1 to R8 built on `feat/agent-detection-tag` (section 13).**
+Status: **rev 9 approved 2026-11-18 (section 14: decoys and mobile SDKs in the product; SDKs on GitHub Packages first).**
+Rev 8 approved 2026-11-18; R1 to R8 built on `feat/agent-detection-tag` (section 13).
 Rev 7 approved 2026-11-16, task 0b built. Branch `spec/agent-impersonation-defense`
 (lab work on `feat/agent-detection-lab`, product build on `feat/agent-detection-tag`).
 Architecture: `artifacts/agent-detection-architecture-v5.svg` (partner version: `-v4.svg`).
@@ -58,7 +59,12 @@ Architecture: `artifacts/agent-detection-architecture-v5.svg` (partner version: 
      (sections 2.4 and 9).
 
   Owner decision: build before the lab measures tier 2's gain with real
-  agents (task 0b's go/no-go). That run goes on in parallel, and its numbers
+  agents (task 0b's go/no-go).
+- Rev 9 (2026-11-18, approved) brings **decoys** (section 2.6) and the **mobile
+  SDKs** (section 2.3) into the tag-first product: decoys served by the
+  collector with per-session codes, and Android then iOS SDKs reporting to
+  the same collector, with the customer's backend passing its own integrity
+  verdicts. Section 14. That run goes on in parallel, and its numbers
   set the thresholds before any customer turns on enforce.
 
 Reuses SIEM export (`core/siem_dispatcher.py`, `storage/siem_store.py`) and
@@ -1237,3 +1243,198 @@ Docs: `docs/agent-detection-integration.md` (as built, unlisted) and
 11. **Mobile SDKs:** Android first (integrity verdict pass-through, emulator,
    sensor and touch signals), then iOS; same beacon schema and collector;
    lab runs on an Android emulator.
+
+## 14. Rev 9: decoys and mobile SDKs in the product (approved 2026-11-18)
+
+### 14.1 Problem and outcome
+The rev 8 product sees an agent doing a normal task on a web page. Two gaps:
+- **Agents hunting for secrets** (config files, admin pages, internal APIs)
+  never touch the protected pages, so the tag never sees them. Decoys
+  (section 2.6, built in the lab) catch them, and an agent that follows a
+  decoy's instruction proves itself.
+- **Agents in mobile apps** (emulators and phone farms driving the customer's
+  Android or iOS app through accessibility services or `adb`) have no web
+  page to put a tag on.
+
+Outcome: a customer turns on decoys from the portal and pastes generated edge
+rules; an app team adds the SDK and gets the same detections, fleets and feed
+as the web. Non-goals: hack-back or anything harmful in a decoy; traps
+inside mobile apps (14.3); holding the customer's Google or Apple
+credentials; tier 1 (SIEM) work.
+
+### 14.2 Plane and latency
+Admin plane only, as rev 8. Decoy responses and mobile beacons are served by
+the **collector**; scoring by the **worker**; settings, edge rules and the
+attestation intake by the **admin API**. Nothing on `/guardrails/*`,
+`cap/mint` or `tools/call`; no data plane change. A decoy path is never on a
+real visitor's path, so serving it from the collector adds no latency to
+the customer's site.
+
+### 14.3 Design
+
+**Decoys (product form of section 2.6).**
+- **Generated per tenant** from a random seed (`agd:{tenant}:decoys`) and the
+  detector pack's wording: D1 admin path (matched to the customer's stack:
+  `/admin`, `/wp-admin`, `/staff/login`), two or three D2 config paths, a D4
+  internal API base, the instruction header name, and the D3 key in the
+  customer's own key format (a prefix they choose, for example `acme_pk_`;
+  cloud providers' formats are refused).
+- **Served by the collector.** The customer's edge forwards the tenant's
+  decoy paths to `/_shs/decoy/<path>` with `X-Shield-Site: <site key>`; the
+  portal generates the rules (Nginx include; written steps for Cloudflare,
+  Akamai, CloudFront). With the tag's `_shs` cookie on the request, codes are
+  per session (`HMAC(tenant_key, shs|Dn|day)[:8]`, the trap scheme). Without
+  it (scanners, raw HTTP agents), the session is a pseudo-session keyed by a
+  hash of network, client and day, so the worker can still score and link
+  it.
+- **D3 from the tag:** the trap layout (`GET /t`) gains a `d3` field, and the
+  tag adds a JSON config block (`<script type="application/json"
+  data-app-config>`, never rendered, never run, not in the page text or the
+  accessibility tree) holding the session's fake key and the D4 API base.
+  Only for site keys with `decoys` on and a tenant with decoys enabled, and
+  independent of the traps switch. The key is the customer's prefix, the
+  session's D3 code and a per-tenant tail, so whoever brings it back is
+  named (built in R11, tag 1.2.0).
+- **Scoring (R11):** A12, weight 0.9: a followed instruction, the fake key
+  brought back, or another session's decoy code is 1.0; a bare hit is 0.5
+  only when the session also has tag reports. A pseudo-session (no tag
+  cookie) can be scored and linked but is never published as an `shs`
+  indicator, since no edge could match it.
+- **Evidence:** a bare decoy hit is A12 at 0.5 and counts only when the same
+  session also used the site (tag beacons) or is in a fleet, so the scanners
+  hitting `/.env` all day never flag anyone; a followed instruction (the code
+  comes back) or the D3 key presented to D4 is A12 at 1.0, a clear agent; a
+  code shown to another session is a controller link.
+- **Customer's own scanners:** an allow list of CIDR ranges and user agent
+  substrings per tenant, checked by the collector before anything is queued.
+- **robots.txt:** the portal shows the one `Disallow:` line for D4 to add.
+
+**Mobile SDKs (product form of section 2.3), Android first, then iOS.**
+- **Same beacon schema** with `platform` (`android`, `ios`) and an `app`
+  block: app id, app version, SDK version. Site keys gain `platform` and
+  `app_ids` (package names or bundle ids) in place of origins. An app has no
+  `Origin`, so a mobile site key is easier to abuse than a web one; fake
+  beacons only add noise (section 2.3), and integrity verdicts (below) are
+  what make a mobile session trustworthy.
+- **Signals:** emulator markers (build properties `goldfish`, `ranchu`,
+  `sdk_gphone`, simulator on iOS), sensors present and moving (a short
+  accelerometer and gyroscope variance window), battery readings frozen,
+  accessibility services enabled (Android agents drive apps through them),
+  developer options and `adb` on, debugger attached; touches: count,
+  size and pressure variance, constant values (`adb input` and injected
+  events carry fixed ones), and fields changed with no touch or key event
+  (the mobile form of A7).
+- **Integrity verdicts, never credentials:** the customer's backend already
+  verifies Play Integrity or App Attest. It posts the verdict it got, with
+  the SDK session id, to `POST /v1/agent-detection/attestations` (tenant API
+  key). Shield never calls Google or Apple and never holds their keys.
+- **Session join and enforcement:** the SDK's session id (24 hex, 30-minute
+  idle) is what the app sends to its own backend in an `X-Shs` header. The
+  feed's Nginx format gains a third map on `$http_x_shs`, so an API gateway
+  enforces mobile sessions the way an edge enforces web ones.
+- **No mobile traps in rev 9:** an instruction hidden from people in a native
+  screen is also hidden from screen readers only if marked so, which also
+  hides it from agents that read the accessibility tree. The lab measures
+  options before the product adds any.
+- **Detectors:** A7m interaction, A8m automation (accessibility-driven input,
+  debugger, instrumentation), A9m emulator and device environment
+  (supporting only, as A9), A13 integrity (a failed device verdict is
+  supporting; it is common on rooted personal phones). Fleets link mobile
+  sessions on a rare device profile, timing, behavior and controller, with
+  the same prevalence rules.
+
+### 14.4 Data model
+| Key | Shape | TTL |
+|---|---|---|
+| `agd:{tenant}:decoys` | JSON `{enabled, seed, key_prefix, stack, avoid, scanners {cidrs, uas}, created, updated}`; `avoid` lists the customer's real routes a decoy must never take (R9) | none |
+| `agd:sitekey:{site_key}` | adds `platform` `android` or `ios`, `app_ids`, and `decoys` (bool) | none |
+| `agd:{tenant}:trapcode:{code}` | also records decoy codes (D1 to D4) | 24 h |
+| stream entries | new kinds `decoy` (`{decoy, followed, key_presented, key_match, pseudo, method, code_from}`; `shs` is the tag session, or a pseudo-session from network, client and day when the request carries no tag cookie) and `attest` (`{verdict}`, written by the admin API) | as the stream |
+
+### 14.5 API
+| Method, path | Plane, auth | Purpose |
+|---|---|---|
+| `GET/PUT /v1/agent-detection/decoys` | admin, portal session or tenant key; writes behind the config write gate | Enable, key prefix, stack, scanner allow list |
+| `POST /v1/agent-detection/decoys/reroll` | same, behind the write gate | Draw a new set (new seed); edge rules must be downloaded again |
+| `GET /v1/agent-detection/decoys/edge?site_key=&format=nginx\|json` | same | The edge rules for one of the tenant's site keys (Nginx locations without variables, falling back to 404; JSON for CDNs set up by hand) and the robots.txt line |
+| `GET/POST/HEAD /decoy/{path}` | collector, `X-Shield-Site` | Serve a decoy, queue the hit; 404 for paths not in the tenant's set, a disabled tenant or an unknown key. Responses are static (nothing from the request is written into them), say nothing about being a decoy, and carry `X-Robots-Tag: noindex`. The customer's scanners are answered but not queued (R10) |
+| `POST /v1/agent-detection/attestations` | admin, tenant API key | The customer backend's integrity verdict for an SDK session |
+| `POST /b` | collector | mobile beacons (`platform`, `app`), app id checked against the key |
+
+### 14.6 Security and compatibility
+- Off by default: decoys per tenant and per site key; mobile only with a
+  mobile site key. No change for existing web tenants.
+- Decoy content is static and fake, never reflects request input (no XSS),
+  carries no real secret, and never uses a cloud provider's key format
+  (refused list: `AKIA`, `ASIA`, `sk-`, `ghp_`, `gho_`, `xox`, `AIza`,
+  `-----BEGIN`, and the formats GitGuardian and GitHub secret scanning cover).
+- The edge rules turn a collector error into a 404, so a decoy can't break
+  or slow anything a person uses.
+- The SDKs have no third-party dependencies, collect no personal data, no
+  advertising or device ids, no screen or field content; they honor the
+  same consent call as the tag. Size budgets: Android AAR under 200 KB, iOS
+  framework under 300 KB.
+
+### 14.7 Packaging and deploy
+- `core/agent_detection/decoys.py` (port of the lab's `edge/decoys.py`);
+  collector routes; `Dockerfile.admin` already copies the package.
+- `sdk/agent-detection/android` (Kotlin, minSdk 24, Gradle library and a
+  sample app) and `sdk/agent-detection/ios` (Swift Package, iOS 15), built
+  and released outside the Shield images.
+- CI: an Android job (JDK 17, Gradle, Robolectric unit tests) on Ubuntu, and
+  an iOS job (XCTest) on macOS that runs only when `sdk/agent-detection/ios`
+  changes.
+- **Publishing (owner decision 2026-11-18):** GitHub Packages first (no new
+  accounts); Maven Central and the Swift Package index at general
+  availability (needs a Sonatype account and a signing key the owner holds).
+- No new Python dependencies.
+
+### 14.8 Failure modes
+| Case | Behavior |
+|---|---|
+| Collector down | decoy paths answer 404 at the edge; mobile beacons are lost; apps and pages unaffected |
+| Internet scanners on `/.env` | bare hits without other activity never flag a session |
+| The customer's pentest | allow-listed ranges and agents are dropped before queueing |
+| A real person opens a decoy by typing the URL | a bare hit: never a detection on its own |
+| Decoy code reused by another session | controller link, as traps |
+| Rooted personal phone | failed device integrity is supporting only |
+| App without the integrity call | A13 off for that tenant; everything else works |
+| Fake mobile beacons with a stolen key | noise for that tenant only; caps per session and per key |
+| Emulator used by the customer's own QA | allow list by app version or a debug build flag in the SDK |
+
+### 14.9 Test plan
+- Decoys: generation deterministic per seed and different per tenant; refused
+  key formats; collector serves only the tenant's paths, never reflects
+  input; scanner allow list; A12 levels (bare hit alone never flags; followed
+  is clear); code reuse links; edge rules render and fail closed to 404; the
+  lab's explore agents in product mode.
+- Mobile: schema and site key checks; attestation intake (tenant isolation,
+  unknown session); Android unit tests (signals, session, consent, size
+  budget); worker detectors on recorded emulator and device samples; an
+  Android emulator run in the lab; iOS XCTest.
+- Every new store on both Redis clients; clean venv; CI green.
+
+### 14.10 Steps (one commit each, one PR per group)
+
+| Step | What |
+|---|---|
+| R9 | Decoy generator and settings, edge rules API, robots line |
+| R10 | Collector decoy routes: per-session and pseudo-session codes, scanner allow list, `decoy` entries |
+| R11 | D3 from the tag, worker A12, decoy-code linking, indicators |
+| R12 | Portal Decoys section; lab product mode with decoys; docs |
+| R13 | Mobile site keys, schema `platform` and `app`, attestation intake, `X-Shs` feed map |
+| R14 | Android SDK, sample app, Android CI job |
+| R15 | Worker mobile detectors A7m, A8m, A9m, A13, mobile fleet traits |
+| R16 | iOS SDK, iOS CI job |
+| R17 | Lab Android emulator runs; mobile docs |
+
+Decoys (R9 to R12) and mobile (R13 to R17) are independent: two PRs.
+
+**Status (2026-11-18): R9 to R12 built** on `feat/agent-detection-decoys`. The
+lab's product mode turns decoys on and forwards the product's edge rules
+through its Nginx; `demo_product.sh` adds an explorer act. Scripted rehearsal
+(plumbing only): 3 explorer agents found the hidden API through robots.txt,
+followed its instruction and scored clear agents; bare hits without the tag
+stayed human-like. Mobile (R13 to R17) waits for a pilot customer with an
+app, per the owner's call to ship before building further.
+

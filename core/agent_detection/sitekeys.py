@@ -7,7 +7,7 @@ else. The collector checks the request's Origin against the key's origins.
 Keys (Redis, or an in-memory fallback when there is none):
 
   agd:sitekey:{site_key}   JSON {site_key, tenant, origins, platform, consent,
-                                 xff_hops, traps, label, created, created_by}
+                                 xff_hops, traps, decoys, label, created, created_by}
   agd:{tenant}:sitekeys    set of the tenant's site keys
   agd:tag_tenants          set of tenants with at least one site key (the
                            worker reads only these tenants' beacon streams)
@@ -124,7 +124,7 @@ def tag_tenants() -> list[str]:
 
 
 def create(tenant: str, *, origins, platform: str = "web", consent: str = "none",
-           xff_hops: int = 1, traps: bool = True, label: str = "",
+           xff_hops: int = 1, traps: bool = True, decoys: bool = False, label: str = "",
            created_by: str = "") -> dict:
     if not tenant:
         raise SiteKeyError("no tenant")
@@ -145,6 +145,7 @@ def create(tenant: str, *, origins, platform: str = "web", consent: str = "none"
         "consent": consent,
         "xff_hops": xff_hops,
         "traps": bool(traps),          # rev 8: per site key (tenant config later)
+        "decoys": bool(decoys),        # rev 9: the tag places D3 on this site's pages
         "label": (label or "")[:80],
         "created": int(time.time()),
         "created_by": (created_by or "")[:120],

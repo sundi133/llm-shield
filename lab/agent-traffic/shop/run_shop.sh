@@ -33,7 +33,7 @@ else
 fi
 
 for p in "uvicorn app:app --port 8201" "core.agent_detection.collector" "core.agent_detection.worker" \
-         "admin_app:app --port 8205" "product/feed_poll.sh"; do
+         "admin_app:app --host 127.0.0.1 --port 8205" "product/feed_poll.sh"; do
   pkill -f "$p" 2>/dev/null || true
 done
 
@@ -88,10 +88,14 @@ pkill -f "uvicorn verifier:app --port 8203" 2>/dev/null || true
     > "$STATE/logs/verifier.out" 2>&1 < /dev/null ) &
 
 # Decoys (spec 2.6): generated per deployment from state/decoy_seed; Nginx routes their paths here.
+# Product mode: product/setup.py already wrote decoys.conf from the PRODUCT's
+# edge rules (paths forwarded to the product collector), so the lab service stays off.
 pkill -f "uvicorn decoys:app --port 8204" 2>/dev/null || true
-( cd "$LAB/edge" && LAB_STATE_DIR="$STATE" "$PY" decoys.py --write-nginx "$STATE/shield/decoys.conf" )
-( cd "$LAB/edge" && exec env LAB_STATE_DIR="$STATE" nohup "$PY" -m uvicorn decoys:app --port 8204 --log-level warning \
-    > "$STATE/logs/decoys.out" 2>&1 < /dev/null ) &
+if [ "$PRODUCT" != "1" ]; then
+  ( cd "$LAB/edge" && LAB_STATE_DIR="$STATE" "$PY" decoys.py --write-nginx "$STATE/shield/decoys.conf" )
+  ( cd "$LAB/edge" && exec env LAB_STATE_DIR="$STATE" nohup "$PY" -m uvicorn decoys:app --port 8204 --log-level warning \
+      > "$STATE/logs/decoys.out" 2>&1 < /dev/null ) &
+fi
 
 # Nginx (the "edge").
 docker rm -f shield-lab-nginx >/dev/null 2>&1 || true
