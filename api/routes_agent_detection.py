@@ -15,6 +15,12 @@ Portal reads (R7, spec section 9):
   GET    /v1/agent-detection/stats?days=          daily counters
   GET    /v1/agent-detection/tag                  install snippets per site key, and whether beacons arrive
 
+Decoys (rev 9 R9, spec 2.6 and 14):
+
+  GET|PUT /v1/agent-detection/decoys               settings and this tenant's decoy paths
+  POST   /v1/agent-detection/decoys/reroll         draw a new set
+  GET    /v1/agent-detection/decoys/edge?site_key=&format=nginx|json   the edge rules
+
 Enforcement handoff (R6, spec section 5):
 
   GET    /v1/agent-detection/indicators            THE FEED for the edge: JSON, ?format=csv|nginx;
@@ -61,6 +67,7 @@ class SiteKeyIn(BaseModel):
     consent: str = "none"
     xff_hops: int = 1
     traps: bool = True
+    decoys: bool = False
     label: Optional[str] = ""
 
 
@@ -110,7 +117,7 @@ def create_site_key(body: SiteKeyIn, request: Request):
     _write(request, tid, "create an agent detection site key")
     try:
         rec = sitekeys.create(tid, origins=body.origins, platform=body.platform,
-                              consent=body.consent, xff_hops=body.xff_hops, traps=body.traps,
+                              consent=body.consent, xff_hops=body.xff_hops, traps=body.traps, decoys=body.decoys,
                               label=body.label or "", created_by=_actor(request, tid))
     except sitekeys.SiteKeyError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
@@ -399,3 +406,77 @@ def tag_install(request: Request):
             "tag_base": tag_base, "collector": collector,
             "configured": bool(tag_base and collector), "site_keys": keys,
             "first_party_path": "/_shs/"}
+
+
+# ── decoys (rev 9, R9) ───────────────────────────────────────────────
+
+
+class DecoysIn(BaseModel):
+    enabled: Optional[bool] = None
+    key_prefix: Optional[str] = None
+    stack: Optional[str] = None
+    avoid: Optional[list] = None
+    scanners: Optional[dict] = None
+
+
+def _decoy_view(tid: str) -> dict:
+    from core.agent_detection import decoys
+    st = decoys.settings(tid)
+    p = decoys.plan(tid, st)
+    return {"enabled": st["enabled"], "key_prefix": st["key_prefix"], "stack": st["stack"],
+            "stacks": sorted(decoys.STACKS), "avoid": st["avoid"], "scanners": st["scanners"],
+            "updated": st["updated"],
+            "decoys": {"D1 admin login": p["admin"], "D2 config files": p["configs"],
+                       "D4 internal API": p["api"] + "/" if p["api"] else "",
+                       "instruction header": p["header"]},
+            "paths": decoys.paths(p), "robots_txt_line": decoys.robots_line(p)}
+
+
+@router.get("/v1/agent-detection/decoys")
+def get_decoys(request: Request):
+    _on()
+    return _decoy_view(_tenant(request))
+
+
+@router.put("/v1/agent-detection/decoys")
+def put_decoys(body: DecoysIn, request: Request):
+    _on()
+    from core.agent_detection import decoys
+    tid = _tenant(request)
+    _write(request, tid, "change agent detection decoys")
+    change = {k: v for k, v in body.model_dump().items() if v is not None}
+    try:
+        decoys.save(tid, change)
+    except decoys.DecoyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    _audit(request, tid, "agent_detection.decoys.change", change=change)
+    return _decoy_view(tid)
+
+
+@router.post("/v1/agent-detection/decoys/reroll")
+def reroll_decoys(request: Request):
+    _on()
+    from core.agent_detection import decoys
+    tid = _tenant(request)
+    _write(request, tid, "draw new agent detection decoys")
+    decoys.reroll(tid)
+    _audit(request, tid, "agent_detection.decoys.reroll")
+    return _decoy_view(tid)
+
+
+@router.get("/v1/agent-detection/decoys/edge")
+def decoy_edge_rules(request: Request, site_key: str, format: str = "nginx"):
+    _on()
+    from core.agent_detection import decoys
+    tid = _tenant(request)
+    rec = sitekeys.get(site_key)
+    if not rec or rec.get("tenant") != tid:
+        raise HTTPException(status_code=404, detail="no such site key")
+    _, collector = _tag_urls()
+    p = decoys.plan(tid)
+    if format == "nginx":
+        return Response(decoys.edge_nginx(p, site_key, collector), media_type="text/plain; charset=utf-8",
+                        headers={"Cache-Control": "no-store"})
+    if format == "json":
+        return decoys.edge_json(p, site_key, collector)
+    raise HTTPException(status_code=400, detail="format must be nginx or json")
