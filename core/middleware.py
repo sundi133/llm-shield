@@ -286,6 +286,12 @@ class ShieldMiddleware(BaseHTTPMiddleware):
         "/v1/edge",
         # The DLP agent's heartbeat resolves its tenant the same way.
         "/v1/devices",
+        # AI agent detection's portal and API routes resolve their tenant the
+        # same way (docs/specs/agent-impersonation-defense.md, rev 8). Without
+        # the prefix they answered 401 to a valid tenant key whenever API-key
+        # auth was off. Enrichment only, like /v1/edge: the routes themselves
+        # refuse an anonymous caller, and the feed checks its own token.
+        "/v1/agent-detection",
     )
     _GUARDED_EXACT = {"/classify", "/classify_output", "/guardrails/input", "/guardrails/output", "/guardrails/file", "/v1/chat/completions",
                       # LiteLLM's Generic Guardrail API: an adapter over the two

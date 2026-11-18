@@ -34,6 +34,28 @@ jobs:
         # packages (core/, api/, storage/) import without a src layout.
         run: python -m pytest tests -q
 
+  agent-tag-browser:
+    # The AI agent detection tag in real Chromium (docs/specs/agent-impersonation-defense.md
+    # sections 2.4 and 12): traps stay out of the accessibility tree, the tab
+    # order and the customer's form post; an obeying agent is caught; canary
+    # links land. The pytest job above skips this file (no browser there).
+    name: agent tag (browser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+      - name: Install dependencies and Chromium
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt playwright==1.65.2
+          python -m playwright install --with-deps chromium
+      - name: Run the browser tests
+        run: python -m pytest tests/test_agent_detection_tag_browser.py tests/test_agent_detection_portal_browser.py -q -rs
+
   redis-clients:
     # The cloud runs on the upstash_redis REST client, on-prem on redis-py over
     # TCP, and their pipelines differ. The suite above uses the in-process

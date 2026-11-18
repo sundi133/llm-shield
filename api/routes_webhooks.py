@@ -44,6 +44,11 @@ def _validate_webhook_url(url: str) -> None:
 
 # Supported event types
 VALID_EVENTS = [
+    # AI agent detection (docs/specs/agent-impersonation-defense.md 5.3):
+    # a fleet's indicators were published, and its indicators lapsed.
+    # Only sent when an indicator type is in enforce mode.
+    "agent_fleet.indicators",
+    "agent_fleet.ended",
     "guardrail_blocked",
     "tool_disabled",
     "tool_enabled",

@@ -1,8 +1,9 @@
 # Spec: AI agent and fleet detection from SIEM logs
 
-Status: **rev 7 approved 2026-11-16; task 0b in progress.** Branch `spec/agent-impersonation-defense`
-(lab work on `feat/agent-detection-lab`). Architecture: `artifacts/agent-detection-architecture-v5.svg`
-(partner version: `-v4.svg`).
+Status: **rev 8 approved 2026-11-18; R1 to R8 built on `feat/agent-detection-tag` (section 13).**
+Rev 7 approved 2026-11-16, task 0b built. Branch `spec/agent-impersonation-defense`
+(lab work on `feat/agent-detection-lab`, product build on `feat/agent-detection-tag`).
+Architecture: `artifacts/agent-detection-architecture-v5.svg` (partner version: `-v4.svg`).
 
 - Rev 2 moved detection to SIEM logs with no front-end SDK.
 - Rev 3 narrows the scope to the two things a SIEM can't already do:
@@ -40,6 +41,25 @@ Status: **rev 7 approved 2026-11-16; task 0b in progress.** Branch `spec/agent-i
   fake API key). No real user needs them, so touching one shows hostile
   intent; each carries an instruction only an AI agent follows, which shows
   it's an agent. Decoy hits are in the edge logs, so this works in tier 1.
+- Rev 8 (2026-11-18) changes the **build order and three details**, not the
+  design:
+  1. **Tag first.** The product is built tag-first: site keys, collector,
+     `shs.js`, traps, tier 2 scoring, fleets, enforcement and the portal,
+     then the SIEM connectors and tier 1 detectors as an add-on. A tenant can
+     run **tag-only** (a site key and no SIEM source); everything in rev 6
+     that works from logs alone still does (section 2.7).
+  2. **Tag hosting on our CDN.** Released `shs.js` files are published,
+     versioned and immutable, to a public GCS bucket behind Cloud CDN on our
+     own domain, with an SRI hash in the snippet. The collector still serves
+     the tag for self-hosted, on-prem and first-party routing (section 11).
+  3. **Trap layouts from the collector.** A trap code is an HMAC with a
+     server secret, which can't be in public JavaScript, so the tag fetches
+     its session's trap layout from a new collector route, `GET /t`
+     (sections 2.4 and 9).
+
+  Owner decision: build before the lab measures tier 2's gain with real
+  agents (task 0b's go/no-go). That run goes on in parallel, and its numbers
+  set the thresholds before any customer turns on enforce.
 
 Reuses SIEM export (`core/siem_dispatcher.py`, `storage/siem_store.py`) and
 ASIM shaping (`core/asim.py`).
@@ -266,6 +286,20 @@ session B proves one controller passed it between them.
   whether the product keeps `inert` is decided from that number.
 - **Canaries answer `204`:** Chrome aborts a navigation to a `204`, so the
   agent stays where it was; the access log row is the hit.
+- **Delivery from the tag (rev 8).** The trap secret never leaves the
+  server. After its load beacon the tag calls the collector's `GET /t` with
+  the site key and its `_shs`; the collector derives the codes, picks the
+  rotation (wording, field, position, whether T4 and `inert` appear) and
+  returns the layout with `Cache-Control: no-store`, recording each code in
+  `agd:{tenant}:trapcode:{code}`. The tag inserts the layout and reports
+  hits in its submit beacon (`traps.hit`, with the field's value only when
+  it looks like a code, 8 hex characters; anything else is reported as T4
+  with no value). Trap inputs carry no `name`, so they are never posted to
+  the customer's server. Traps are on or off per site key in rev 8
+  (`traps`, default on). The collector checks `code_match`
+  itself; the tag's own claim is never trusted. A controller that calls
+  `GET /t` directly learns only its own session's codes, which is what the
+  page shows anyway.
 - **Known blind spot:** agents that work only from screenshots never see a
   hidden trap. Showing them something people would also see is an
   accessibility risk, so the spec doesn't do it. Those agents are caught by
@@ -357,6 +391,40 @@ operator name. Being signed doesn't excuse looking for secrets.
 - **Served at the edge:** a static Nginx or CDN rule set (tier 1, codes from
   a hash of IP and time window) or routed through the collector for
   per-session codes (tier 2). Either way the hit is in the access log.
+
+### 2.7 Tag-only mode (rev 8)
+A tenant with a site key and no SIEM source runs on beacons alone. The
+collector records, with every beacon, what it sees of the request that
+carried it: a salted hash of the IP's /24 (or /48), the user agent and the
+client hints. That gives the worker a request side to compare against
+without any log.
+
+| Works tag-only | Needs a log source |
+|---|---|
+| A7, A8, A9 | A1 to A6 (timing between requests, funnel shape, header and protocol checks) |
+| A10 contradictions: beacons in one session from different clients (user agent, IP class), or a tag that reports a different user agent than the request carrying it | A10 tag missing: a protected form submitted with no beacon |
+| Traps T1, T2 (the canary goes to the collector, `GET /v/{code}`), T4 | T3 (a server snippet in the HTML) |
+| Fleets on device, timing, page sequence, network (supporting) and controller reuse | Fleets on accounts (beacons carry none) |
+| Indicators: `_shs`, client fingerprint (the beacon request's user agent and client hints), network | Account indicators; A11 and decoys (edge log fields) |
+
+**Fleets in tag-only mode (rev 8, R5).** The worker recomputes fleets every
+2 minutes over the sessions seen in the last 6 hours. Prevalence is counted
+over that window's human-like sessions (rather than the hourly counters of
+section 8, which tier 1 still uses), and it now applies to behavior too: two
+sessions share **behavior** only when their bucketed interaction profile is
+rare among human-like sessions (under 0.1%, floor 1,000). Found while
+building R5: at real volume, people on a popular funnel share a path, an
+ordinary profile and a 30-second window all the time, and the rev 7 rule
+chained 10,000 synthetic shoppers into one "fleet". The cost is explicit:
+agents that score human-like and also type like people link only through a
+trap code (controller). No false fleets beats catching perfect mimics.
+Pairs are compared only inside blocks a link needs (same rare profile plus
+the same 30-second slot, device, client or network), so the work stays
+near-linear.
+
+Adding a SIEM source later turns the right-hand column on with no change to
+the tag. Detection delay in tag-only mode is the worker's beacon cycle
+(default 30 s) plus fleet recompute; there is no poll interval.
 
 ## 3. Part 2: fleet detection across new sessions
 
@@ -625,6 +693,32 @@ them at once (the kill switch).
 | **Webhook push** | SOAR and custom automation | the existing outbound webhooks (`core/webhook_dispatcher.py`), event types `agent_fleet.indicators` and `agent_fleet.ended`, signed like every other Shield webhook |
 | **SIEM** | analysts and SIEM-native playbooks | the indicators ride on the fleet detection event (section 8) |
 
+**Rev 8 (R6), as built:**
+- **Feed token, not a key scope.** The feed takes `X-Shield-Feed-Token`, a
+  `shs_fd_` token minted per tenant (`/v1/agent-detection/feed-tokens`, at
+  most 5, shown once, sha256 kept). It is not a tenant API key, so it works
+  on the feed and nowhere else by construction, and the shared key
+  middleware the guard path runs through is untouched. The feed's exact path
+  is the only agent detection route on the auth layer's self-authenticated
+  list.
+- **Tag-only indicator types:** `shs` (fleet members, clear agents, and a
+  new session on an active fleet's rare device or client, published on its
+  first beacon) and `client`, the exact string an edge matches with
+  `"$http_user_agent|$http_sec_ch_ua|$http_sec_ch_ua_platform|$http_sec_ch_ua_mobile"`,
+  rare among human-like sessions on that exact string. **Networks are not
+  published** in tag-only mode: Shield keeps only a salted /24 hash, which no
+  edge can match. Accounts need tier 1.
+- **Formats:** JSON (with the edge client key), CSV, and an Nginx file of two
+  `map` blocks (`$shield_agd_shs`, `$shield_agd_client`). ETag is the hash of
+  the indicators, so polling every 60 s answers 304 when nothing changed.
+- **Settings** live in `agd:{tenant}:enforcement` (modes per type, action,
+  lifetime 300 s to 24 h, paused) rather than the tenant config blob, behind
+  the config write gate. Revoked indicators are held back 24 h
+  (`agd:{tenant}:revoked`) so the worker doesn't republish them at once.
+- **Webhooks** `agent_fleet.indicators` (members and the rare client, pages
+  as the tag-only undo list) and `agent_fleet.ended`, only when a type is in
+  enforce and nothing is paused.
+
 Shipped examples (docs, not connectors):
 - an Nginx `map` plus `auth_request` snippet that challenges matching sessions;
 - a Splunk SOAR playbook and a Sentinel playbook that suspend or flag fleet
@@ -678,7 +772,9 @@ measured, not assumed:
   `python -m core.agent_detection.collector` (admin image, CPU, its own
   Railway service and OpenShift Deployment). It serves `shs.js`, accepts
   beacons, validates and caps them, and appends them to a Redis stream that
-  the worker reads. It returns `204` with no body: no verdict ever goes back
+  the worker reads. Rev 8: it also returns per-session trap layouts
+  (`GET /t`) and answers canary links (`GET /v/{code}`), both one Redis
+  round trip. It returns `204` with no body: no verdict ever goes back
   to the browser. Customers are told to route it through their own domain
   (a `/_shs/` path on their CDN) so it isn't stripped by ad blockers and
   stays first-party.
@@ -712,11 +808,17 @@ Prefix `agd:` (agent detection). All keys are tenant-scoped.
 | `agd:{tenant}:sess:{key_hash}` | hash: entity age class, detector scores, timing vector, path MinHash, fingerprint hash, network hash, fleet_id; tier 2 adds device hash, environment class, interaction vector, tag state (joined, missing, contradicting), trap hits | 24 h |
 | `agd:sitekey:{site_key}` | `{tenant, origins, platform (web, android, ios), consent, created}` | none |
 | `agd:{tenant}:sitekeys` | set of the tenant's site keys | none |
-| `agd:{tenant}:beacons` | Redis stream of validated beacons (`XADD MAXLEN ~ 200000`), read by the worker with a consumer group | trimmed by length |
+| `agd:tag_tenants` | set of tenants with at least one site key; the worker reads only their beacon streams (rev 8) | none |
+| `agd:{tenant}:beacons` | Redis stream of validated beacons (`XADD MAXLEN ~ 200000`); rev 8 reads it with `XRANGE` after a cursor under a per-tenant lock (both Redis clients support it the same way) instead of a consumer group | trimmed by length |
+| `agd:{tenant}:cursor:beacons` | last stream id the worker saved sessions for (rev 8) | none |
+| `agd:{tenant}:worker_lock` | one worker per tenant per cycle, `SET NX` (rev 8) | 120 s |
+| `agd:{tenant}:sess:{shs}` | tag-only session summary and verdict, JSON (rev 8: keyed by `_shs` itself, since the `_shs` indicator must carry it) | 24 h |
+| `agd:{tenant}:sessions` | sorted set `_shs` to last seen, trimmed to 24 h (rev 8: what the portal lists and R5 links) | entries dropped after 24 h |
 | `agd:{tenant}:trapcode:{code}` | the `_shs` hash that was shown this code | 24 h |
 | `agd:{tenant}:lsh:{band}:{bucket_hash}` | set of session key hashes (path similarity candidates) | 1 h |
 | `agd:{tenant}:trait:{kind}:{value_hash}:{bucket}` | set of session key hashes (start, fingerprint, network) | 1 h |
-| `agd:{tenant}:fleet:{id}` | hash: size, networks, traits, member sample, first_seen, last_seen | 24 h after last match |
+| `agd:{tenant}:fleet:{id}` | hash: size, networks, traits, member sample, first_seen, last_seen (rev 8: JSON with members up to 5,000, bands, and the devices and clients with their prevalence; id from the earliest member, so it stays stable as the fleet grows) | 24 h after last match |
+| `agd:{tenant}:fleets` | sorted set fleet id to last seen (rev 8) | entries dropped after 24 h |
 | `agd:{tenant}:alerted:{entity_hash}` | existing alert ids for this entity in the window | 2 h |
 | `agd:{tenant}:detections` | capped list (10,000) of sent detections and enrichments | 7 days |
 | `agd:{tenant}:queue` | sorted set of grey-zone session and fleet ids awaiting the agent, by enqueue time | entries dropped after 2 h |
@@ -747,7 +849,8 @@ Prefix `agd:` (agent detection). All keys are tenant-scoped.
 
 **Beacon schema** (version 1, at most 16 KB):
 `{v, site_key, shs, page (path template), t (ms since navigation), kind
-(load, leave, submit), device {renderer, renderer_class, cores, memory,
+(load, leave, submit), consent (given, not_required; rev 8: a site key with
+`consent: required` keeps only `given`), device {renderer, renderer_class, cores, memory,
 screen, dpr, tz, langs, touch, canvas_hash, fonts_hash}, automation
 {webdriver, cdp, headless_shape, hints_mismatch}, interaction {keys, inputs,
 inputs_without_keys, fields_touched, corrections, clicks, centre_clicks,
@@ -757,6 +860,12 @@ first_input_ms}, traps {shown, hit: [{trap, code_match}]}}`.
 `corrections` counts Backspace and Delete presses only (a count, never which
 characters). Unknown fields
 are dropped; out-of-range numbers are clamped.
+
+The collector adds a request block before it queues a beacon (rev 8, the
+browser can't set it): `req {ts (server time), net_hash (salted /24 or
+/48), ua, hints (sec-ch-ua, platform, mobile), origin}`. The stream entry
+also carries the tenant, so the worker never trusts a tenant claimed by the
+browser.
 
 ## 9. API / interface (admin plane)
 
@@ -771,7 +880,7 @@ are dropped; out-of-range numbers are clamped.
 | `POST /v1/agent-detection/detections/{id}/feedback` | portal session | Mark a detection true or false positive (feeds the nightly hunt) |
 | `GET /v1/agent-detection/proposals`; `POST .../{id}/approve` or `/reject` | portal admin | Hunt rule proposals with their lab evaluation; approval queues the rule for the next detector pack |
 | `GET /v1/agent-detection/budget` | portal session | Today's model calls, tokens and remaining budget |
-| `GET /v1/agent-detection/indicators?format=json\|csv\|nginx` | tenant API key with a new `indicators:read` scope | Current indicators; `ETag` and `If-None-Match` supported; empty in monitor mode |
+| `GET /v1/agent-detection/indicators?format=json\|csv\|nginx` | feed token in `X-Shield-Feed-Token` (rev 8; was a tenant API key with an `indicators:read` scope) | Current indicators; `ETag` and `If-None-Match` supported; empty in monitor mode |
 | `POST /v1/agent-detection/indicators/{id}/revoke` | portal admin | Remove one indicator early |
 | `POST /v1/agent-detection/indicators/clear` | portal admin | Kill switch: remove all indicators and pause publishing for this tenant |
 | `POST /v1/agent-detection/detections/{id}/promote` | portal admin | Make a grey-zone (agent-raised) detection eligible for indicators |
@@ -784,7 +893,13 @@ are dropped; out-of-range numbers are clamped.
 |---|---|---|
 | `GET /shs.js?k={site_key}` | none (public) | The tag, versioned, with an SRI hash in the install snippet; cacheable |
 | `POST /b` | site key in the body, `Origin` must match the key's origins (web) | One beacon; `204`, no body; rate-limited per site key and per IP; over the size cap or invalid is dropped silently |
+| `GET /t?k={site_key}&s={_shs}` | site key, `Origin` check (or the `Referer`'s origin: a same-origin GET carries no `Origin`) (rev 8) | This session's trap layout as JSON, `no-store`; empty layout when traps are off on the site key, the key is unknown or the rate limit is hit |
+| `GET /v/{code}?k={site_key}` | none (rev 8) | Canary hit: `204`, no body; queued with `kind: canary` for the session the code was shown to, plus `cookie_shs` when a different session's `_shs` cookie came with it. The site key names the tenant whose codes to look in |
 | `GET /health` | none | Liveness |
+
+The routes work at the root or under any prefix the customer's CDN maps to
+the collector (`/_shs/` in the docs), since the tag builds every URL from its
+configured endpoint.
 
 A site key is public (it is in the page), like a CAPTCHA site key: it only
 names the tenant and can write beacons, nothing else. Fake beacons with a
@@ -799,9 +914,25 @@ Portal: an **AI Agent Detection** page with Sources, Detections (with the
 agent's explanation and feedback buttons), Fleets, Proposals, Budget, and the
 detector pack summary.
 
+**Rev 8 (R7), as built:** Security Operations > AI Agent Detection
+(`static/agent-detection-ui.js`, mounted by `static/tenant.html`) with Tag
+(site keys, both install snippets with the SRI hash, and an install check
+from the newest 500 beacons), Detections (with each session's reasons,
+pages, graphics, interaction and traps), Fleets (traits, verdicts, pages,
+the shared device and browser signature with their prevalence), and
+Enforcement (watch or enforce per type, action, lifetime, the kill switch,
+indicators with revoke, feed tokens, the event log). Sources, Proposals and
+Budget come with tier 1 and the investigator. Snippet hosts come from
+`SHIELD_AGENT_DETECTION_TAG_URL` and `SHIELD_AGENT_DETECTION_COLLECTOR_URL`
+on the admin plane (placeholders when unset). `/v1/agent-detection` joins the
+main middleware's tenant-enrichment prefixes (enrichment only, like
+`/v1/edge`): without it a valid tenant key got 401 whenever API-key auth was
+off.
+
 ## 10. Security, compatibility, failure modes
 
-**Compatibility.** Opt-in per tenant: nothing runs until a source is added.
+**Compatibility.** Opt-in per tenant: nothing runs until a source or a site
+key (rev 8, tag-only) is added.
 Shield itself never blocks traffic; in enforce mode the customer's own tools
 act on the indicators it publishes, and new tenants start in monitor.
 `SHIELD_AGENT_DETECTION=off` stops the worker and hides the routes.
@@ -906,6 +1037,15 @@ beacons, and tier 1 carries on unchanged.
   Deployment; no new dependency. Its imports go into `Dockerfile.admin` too.
 - **Tag:** `static/agent-detection/shs.js`, plain JavaScript with no build
   step and no third-party code; a size test keeps it under 15 KB.
+- **Tag hosting (rev 8):** `scripts/release_shs_tag.sh` copies the tag to
+  `shs-{version}.js` in a public GCS bucket served by Cloud CDN on our own
+  domain (bucket and domain are arguments; the owner runs it with their own
+  GCP credentials, never stored in the repo or CI). It refuses to overwrite
+  an existing version, sets `Content-Type: application/javascript` and a
+  one-year immutable cache, and prints the install snippet with its
+  `sha384` SRI hash. Bucket: uniform access, public read, object
+  versioning, a short writer list. The collector serves the same file at
+  `/shs.js` for self-hosted, on-prem and first-party customers.
 - **Mobile SDKs:** `sdk/agent-detection/android` (Kotlin) and
   `sdk/agent-detection/ios` (Swift), built and released outside the Shield
   images.
@@ -982,6 +1122,47 @@ beacons, and tier 1 carries on unchanged.
 - Full suite green in a clean venv; CI `pytest` gate passes.
 
 ## 13. Tasks (one PR each, in order)
+
+**Rev 8 build order (tag first).** Each step names the rev 7 tasks it takes
+from. One branch, `feat/agent-detection-tag`, one commit per step.
+
+| Step | What | From |
+|---|---|---|
+| R1 | Site keys (admin API) and the collector: `POST /b` with the request block, `GET /health`, the beacon stream, env flags, `Dockerfile.admin`, Railway and OpenShift service | 9 |
+| R2 | The product tag (`static/agent-detection/shs.js`, site key, consent mode, configurable endpoint), `/shs.js` from the collector, `scripts/release_shs_tag.sh` for GCS | 9 |
+| R3 | Traps from the tag: `GET /t`, `GET /v/{code}`, code check on beacons, trap codes in Redis, accessibility test | 10 |
+| R4 | Worker with tier 2 scoring from beacons: A7 to A10, trap hits, bands, detector pack file, `agd:{tenant}:sess` | 2, 10 |
+| R5 | Fleets from beacons: device cohorts, timing, page sequence, controller reuse, prevalence | 3, 10 |
+| R6 | Enforcement handoff: indicators, feed (JSON, CSV, Nginx), `indicators:read`, monitor first, revoke, kill switch, webhooks | 6 |
+| R7 | Portal: Tag page (snippet, install check), Detections, Fleets, Indicators, monitor and enforce | 2, 3, 9 |
+| R8 | End to end on the lab shop with product code, integration guide out of design preview, deploy runbook | 8 |
+
+Then tier 1 as an add-on: tasks 1, 2 (A1 to A6, A11, decoys), 3 (log
+traits), 4, 5, 7, 8 and 11 as written below.
+
+**Status (2026-11-18): R1 to R8 built.** R8 ran the lab's fleet demo on product
+code (`lab/agent-traffic/demo_product.sh`: product tag, collector, worker,
+admin API and feed, Nginx polling the feed with a feed token). Scripted
+rehearsal, plumbing only: wave 1 completed 12 sign-ups, promotions and orders
+in watch mode; one fleet of 12 across 12 networks (behavior, environment,
+time); with `shs` and `client` enforced, wave 2 was challenged at its first
+request, 0 promotions, 0 orders. Findings fixed on the way:
+- an agent session shows two clients (the spoofed one on page loads, the real
+  one on exit beacons, the A10 finding), so fleets and prevalence now count
+  every client a session showed; before, the fleet's browser signature was
+  never collected and wave 2 got through until its sessions were scored one
+  by one;
+- per-session publishing alone (first beacon, worker cycle, feed poll, edge
+  reload) takes several seconds, longer than a scripted agent needs for the
+  whole funnel; the first-request stop comes from the fleet's browser
+  signature, so a controller that varies its user agent per agent is stopped
+  a few requests in, on its shared device. Real model-driven agents take
+  minutes per funnel; the real lab run measures this.
+
+Docs: `docs/agent-detection-integration.md` (as built, unlisted) and
+`docs/agent-detection-deploy.md` (operators).
+
+**Rev 7 task list:**
 0. **Lab v0 and baseline:**
    - test app with Nginx and login logs into a local Elastic;
    - three agent frameworks across containers, VMs and an Android emulator,

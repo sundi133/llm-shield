@@ -29,7 +29,11 @@ _LOCKOUT_WINDOW_SECS = int(os.environ.get("SHIELD_AUTH_LOCKOUT_SECS", "300"))
 
 # Exact paths whose route checks its own non-API-key credential. Adding one is
 # a deliberate act: the route must refuse an unauthenticated caller itself.
-_SELF_AUTHENTICATED_PATHS = frozenset({"/v1/devices/enroll"})
+# The AI agent detection feed authenticates with its own feed token, which is
+# not an API key and works nowhere else (docs/specs/agent-impersonation-defense.md
+# section 5.3, rev 8). Exact path only: /indicators/preview and the write
+# routes under it still need a key.
+_SELF_AUTHENTICATED_PATHS = frozenset({"/v1/devices/enroll", "/v1/agent-detection/indicators"})
 
 # {ip: [(timestamp, ...),]} — in-memory; Redis-backed deployments can
 # override via SHIELD_AUTH_RATE_LIMIT_REDIS=1 in future.
