@@ -171,6 +171,26 @@ class RedisStore:
         return out
 
 
+    def recent_ids(self, tenant: str, limit: int) -> list[str]:
+        return [_d(i) for i in (self.r.zrevrange(f"agd:{tenant}:sessions", 0, max(0, limit - 1)) or [])]
+
+    def daily_stats(self, tenant: str, days: list[str]) -> dict[str, dict]:
+        from storage.tenant_store import run_pipeline
+        pipe = self.r.pipeline()
+        for d in days:
+            pipe.hgetall(f"agd:{tenant}:stats:{d}")
+        out = {}
+        for d, raw in zip(days, run_pipeline(pipe)):
+            if isinstance(raw, list):           # some clients answer HGETALL as a flat list
+                raw = dict(zip(raw[0::2], raw[1::2]))
+            out[d] = {_d(k): int(_d(v)) for k, v in (raw or {}).items()}
+        return out
+
+    def last_entries(self, tenant: str, count: int) -> list[dict]:
+        raw = self.r.xrevrange(stream.key(tenant), "+", "-", count=count)
+        return [e for _sid, e in _entry_pairs(raw)]
+
+
 class MemoryStore:
     """No Redis (tests, a laptop): reads the in-memory stream stand-in."""
 
@@ -227,6 +247,18 @@ class MemoryStore:
 
     def list_fleets(self, tenant):
         return sorted(self.fleets.get(tenant, {}).values(), key=lambda f: -f["last_seen"])
+
+    def recent_ids(self, tenant, limit):
+        idx = self.index.get(tenant, {})
+        return sorted(idx, key=lambda k: -idx[k])[:limit]
+
+    def daily_stats(self, tenant, days):
+        """The memory store keeps one running total; it is reported as today's."""
+        today = time.strftime("%Y%m%d", time.gmtime())
+        return {d: (dict(self.stats.get(tenant, {})) if d == today else {}) for d in days}
+
+    def last_entries(self, tenant, count):
+        return list(reversed(stream.memory_entries(tenant)[-count:]))
 
 
 _last_fleet_run: dict[str, float] = {}
@@ -364,10 +396,26 @@ def process_tenant(store, tenant: str, now: Optional[float] = None, owner: str =
     return done
 
 
+_MEMORY = None
+
+
 def store_for_env():
+    """Redis when configured; otherwise ONE in-memory store per process, so a
+    single-process setup (a laptop, tests) reads what its worker wrote."""
+    global _MEMORY
     from storage import tenant_store
     r = tenant_store._get_redis()
-    return RedisStore(r) if r is not None else MemoryStore()
+    if r is not None:
+        return RedisStore(r)
+    if _MEMORY is None:
+        _MEMORY = MemoryStore()
+    return _MEMORY
+
+
+def _reset_memory_for_tests() -> None:
+    global _MEMORY
+    _MEMORY = None
+    _last_fleet_run.clear()
 
 
 def run_cycle(store, tenants: Optional[Iterable[str]] = None, now: Optional[float] = None) -> dict:

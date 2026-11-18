@@ -54,7 +54,7 @@ jobs:
           pip install -r requirements-test.txt playwright==1.65.2
           python -m playwright install --with-deps chromium
       - name: Run the browser tests
-        run: python -m pytest tests/test_agent_detection_tag_browser.py -q -rs
+        run: python -m pytest tests/test_agent_detection_tag_browser.py tests/test_agent_detection_portal_browser.py -q -rs
 
   redis-clients:
     # The cloud runs on the upstash_redis REST client, on-prem on redis-py over

@@ -914,6 +914,21 @@ Portal: an **AI Agent Detection** page with Sources, Detections (with the
 agent's explanation and feedback buttons), Fleets, Proposals, Budget, and the
 detector pack summary.
 
+**Rev 8 (R7), as built:** Security Operations > AI Agent Detection
+(`static/agent-detection-ui.js`, mounted by `static/tenant.html`) with Tag
+(site keys, both install snippets with the SRI hash, and an install check
+from the newest 500 beacons), Detections (with each session's reasons,
+pages, graphics, interaction and traps), Fleets (traits, verdicts, pages,
+the shared device and browser signature with their prevalence), and
+Enforcement (watch or enforce per type, action, lifetime, the kill switch,
+indicators with revoke, feed tokens, the event log). Sources, Proposals and
+Budget come with tier 1 and the investigator. Snippet hosts come from
+`SHIELD_AGENT_DETECTION_TAG_URL` and `SHIELD_AGENT_DETECTION_COLLECTOR_URL`
+on the admin plane (placeholders when unset). `/v1/agent-detection` joins the
+main middleware's tenant-enrichment prefixes (enrichment only, like
+`/v1/edge`): without it a valid tenant key got 401 whenever API-key auth was
+off.
+
 ## 10. Security, compatibility, failure modes
 
 **Compatibility.** Opt-in per tenant: nothing runs until a source or a site

@@ -7,6 +7,14 @@ Site keys for the tag (rev 8 step R1):
   POST   /v1/agent-detection/sitekeys              create one
   DELETE /v1/agent-detection/sitekeys/{site_key}   delete one
 
+Portal reads (R7, spec section 9):
+
+  GET    /v1/agent-detection/detections?band=     flagged sessions with reasons (clear_agent, grey, all)
+  GET    /v1/agent-detection/sessions/{shs}       one session's summary and verdict
+  GET    /v1/agent-detection/fleets               fleets seen in the last 24 h
+  GET    /v1/agent-detection/stats?days=          daily counters
+  GET    /v1/agent-detection/tag                  install snippets per site key, and whether beacons arrive
+
 Enforcement handoff (R6, spec section 5):
 
   GET    /v1/agent-detection/indicators            THE FEED for the edge: JSON, ?format=csv|nginx;
@@ -32,6 +40,9 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import hashlib
+import os
+import re
+import time
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
@@ -219,7 +230,8 @@ def put_enforcement(body: EnforcementIn, request: Request):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
     ind.log_event(tid, "settings", by=_actor(request, tid), **change)
-    _audit(request, tid, "agent_detection.enforcement.change", **change)
+    # as one field: the change may carry "action", which is _audit's own parameter
+    _audit(request, tid, "agent_detection.enforcement.change", change=change)
     return st
 
 
@@ -261,3 +273,129 @@ def delete_feed_token(token_id: str, request: Request):
         raise HTTPException(status_code=404, detail="no such feed token")
     _audit(request, tid, "agent_detection.feed_token.delete", token_id=token_id)
     return {"deleted": token_id}
+
+
+# ── portal reads (R7) ────────────────────────────────────────────────
+
+_BANDS = {"clear_agent": ("clear_agent",), "grey": ("grey",), "flagged": ("clear_agent", "grey"),
+          "all": ("clear_agent", "grey", "human_like")}
+
+
+def _store():
+    from core.agent_detection import worker
+    return worker.store_for_env()
+
+
+def _summary(s: dict) -> dict:
+    from core.agent_detection import scoring
+    v = s.get("verdict") or {}
+    dev = s.get("device") or {}
+    return {"shs": s["shs"], "first": s.get("first"), "last": s.get("last"), "beacons": s.get("n"),
+            "score": v.get("score"), "band": v.get("band"), "reasons": v.get("reasons", []),
+            "signals": v.get("signals", {}), "pages": (s.get("pages") or [])[:10],
+            "renderer": str(dev.get("renderer", ""))[:80], "renderer_class": dev.get("renderer_class"),
+            "device": scoring.device_of(s), "clients": len(s.get("clients") or []),
+            "networks": len(s.get("nets") or []), "traps": s.get("traps", {}),
+            "links": (s.get("links") or [])[:20], "pack": v.get("pack")}
+
+
+@router.get("/v1/agent-detection/detections")
+def list_detections(request: Request, band: str = "flagged", limit: int = 100):
+    _on()
+    tid = _tenant(request)
+    if band not in _BANDS:
+        raise HTTPException(status_code=400, detail=f"band must be one of {', '.join(_BANDS)}")
+    limit = max(1, min(limit, 500))
+    store = _store()
+    ids = store.recent_ids(tid, 2000)
+    out = []
+    for i in range(0, len(ids), 500):
+        got = store.get_sessions(tid, ids[i:i + 500])
+        for shs in ids[i:i + 500]:
+            s = got.get(shs)
+            if s and (s.get("verdict") or {}).get("band") in _BANDS[band]:
+                out.append(_summary(s))
+        if len(out) >= limit:
+            break
+    fleet_of = {m: f["id"] for f in store.list_fleets(tid) for m in f.get("members", [])}
+    for d in out[:limit]:
+        d["fleet_id"] = fleet_of.get(d["shs"])
+    return {"detections": out[:limit], "scanned": len(ids)}
+
+
+@router.get("/v1/agent-detection/sessions/{shs}")
+def get_session(shs: str, request: Request):
+    _on()
+    tid = _tenant(request)
+    if not re.fullmatch(r"[0-9a-f]{24}", shs):
+        raise HTTPException(status_code=404, detail="no such session")
+    s = _store().get_sessions(tid, [shs]).get(shs)
+    if not s:
+        raise HTTPException(status_code=404, detail="no such session")
+    from core.agent_detection import scoring
+    return {**_summary(s), "interaction": scoring.interaction(s), "automation": s.get("automation", {})}
+
+
+@router.get("/v1/agent-detection/fleets")
+def list_fleets(request: Request):
+    _on()
+    tid = _tenant(request)
+    fleets = _store().list_fleets(tid)
+    for f in fleets:
+        f["member_count"] = len(f.get("members", []))
+        f["members"] = f.get("members", [])[:50]
+    return {"fleets": fleets}
+
+
+@router.get("/v1/agent-detection/stats")
+def get_stats(request: Request, days: int = 7):
+    _on()
+    tid = _tenant(request)
+    days = max(1, min(days, 35))
+    now = time.time()
+    keys = [time.strftime("%Y%m%d", time.gmtime(now - n * 86400)) for n in range(days)]
+    store = _store()
+    daily = store.daily_stats(tid, keys)
+    return {"days": [{"day": d, **daily.get(d, {})} for d in keys],
+            "fleets_active": len(store.list_fleets(tid)),
+            "indicators_active": len(ind.active(tid)), "enforcement": ind.settings(tid)}
+
+
+def _tag_urls() -> tuple[str, str]:
+    """Where released tags live and where the collector answers, for the snippet."""
+    collector = (os.environ.get("SHIELD_AGENT_DETECTION_COLLECTOR_URL", "") or "").strip().rstrip("/")
+    tag_base = (os.environ.get("SHIELD_AGENT_DETECTION_TAG_URL", "") or "").strip().rstrip("/") or collector
+    return tag_base, collector
+
+
+@router.get("/v1/agent-detection/tag")
+def tag_install(request: Request):
+    """The install snippets, and whether each site key's beacons are arriving
+    (from the newest 500 stream entries, so a quiet site shows no data)."""
+    _on()
+    tid = _tenant(request)
+    from core.agent_detection import tag as tag_mod
+    tag_base, collector = _tag_urls()
+    seen: dict[str, dict] = {}
+    try:
+        for e in _store().last_entries(tid, 500):
+            k = e.get("site_key")
+            if not k:
+                continue
+            row = seen.setdefault(k, {"last_beacon": 0.0, "kinds": {}, "traps_shown": False})
+            row["last_beacon"] = max(row["last_beacon"], float((e.get("req") or {}).get("ts") or 0))
+            row["kinds"][e.get("kind")] = row["kinds"].get(e.get("kind"), 0) + 1
+            row["traps_shown"] = row["traps_shown"] or bool((e.get("traps") or {}).get("shown"))
+    except Exception:       # noqa: BLE001 - the install check is advice, never an error page
+        pass
+    keys = []
+    for rec in sitekeys.list_for(tid):
+        k, consent = rec["site_key"], rec.get("consent", "none")
+        base = tag_base or "https://YOUR-TAG-HOST"
+        keys.append({**rec, "reporting": seen.get(k),
+                     "snippet_first_party": tag_mod.snippet(k, base, "", consent),
+                     "snippet_direct": tag_mod.snippet(k, base, collector or "https://YOUR-COLLECTOR", consent)})
+    return {"version": tag_mod.version(), "integrity": tag_mod.sri(), "file": tag_mod.filename(),
+            "tag_base": tag_base, "collector": collector,
+            "configured": bool(tag_base and collector), "site_keys": keys,
+            "first_party_path": "/_shs/"}

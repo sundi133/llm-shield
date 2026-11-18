@@ -317,3 +317,14 @@ def test_only_the_feed_itself_skips_the_api_key_check():
 def test_the_webhook_events_can_be_subscribed():
     from api.routes_webhooks import VALID_EVENTS
     assert {"agent_fleet.indicators", "agent_fleet.ended"} <= set(VALID_EVENTS)
+
+
+def test_saving_every_setting_at_once_works(admin):
+    """Regression: the portal sends modes, action and lifetime together; the
+    action field once collided with the audit helper's own parameter (500)."""
+    r = admin.put("/v1/agent-detection/enforcement", headers=_k(ACME_ADMIN), json={
+        "modes": {"shs": "enforce", "client": "monitor"}, "action": "block", "lifetime_s": 1800})
+    assert r.status_code == 200, r.text
+    assert r.json()["action"] == "block" and r.json()["lifetime_s"] == 1800
+    [e] = [e for e in ind.read_log(ACME) if e["event"] == "settings"]
+    assert e["action"] == "block"
