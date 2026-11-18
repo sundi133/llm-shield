@@ -1340,7 +1340,7 @@ the customer's site.
 | `agd:{tenant}:decoys` | JSON `{enabled, seed, key_prefix, stack, avoid, scanners {cidrs, uas}, created, updated}`; `avoid` lists the customer's real routes a decoy must never take (R9) | none |
 | `agd:sitekey:{site_key}` | adds `platform` `android` or `ios`, `app_ids`, and `decoys` (bool) | none |
 | `agd:{tenant}:trapcode:{code}` | also records decoy codes (D1 to D4) | 24 h |
-| stream entries | new kinds `decoy` (`{decoy, followed, code_from, key_presented}`) and `attest` (`{verdict}`, written by the admin API) | as the stream |
+| stream entries | new kinds `decoy` (`{decoy, followed, key_presented, key_match, pseudo, method, code_from}`; `shs` is the tag session, or a pseudo-session from network, client and day when the request carries no tag cookie) and `attest` (`{verdict}`, written by the admin API) | as the stream |
 
 ### 14.5 API
 | Method, path | Plane, auth | Purpose |
@@ -1348,7 +1348,7 @@ the customer's site.
 | `GET/PUT /v1/agent-detection/decoys` | admin, portal session or tenant key; writes behind the config write gate | Enable, key prefix, stack, scanner allow list |
 | `POST /v1/agent-detection/decoys/reroll` | same, behind the write gate | Draw a new set (new seed); edge rules must be downloaded again |
 | `GET /v1/agent-detection/decoys/edge?site_key=&format=nginx\|json` | same | The edge rules for one of the tenant's site keys (Nginx locations without variables, falling back to 404; JSON for CDNs set up by hand) and the robots.txt line |
-| `GET/POST /decoy/{path}` | collector, `X-Shield-Site` | Serve a decoy, queue the hit; 404 for paths not in the tenant's set |
+| `GET/POST/HEAD /decoy/{path}` | collector, `X-Shield-Site` | Serve a decoy, queue the hit; 404 for paths not in the tenant's set, a disabled tenant or an unknown key. Responses are static (nothing from the request is written into them), say nothing about being a decoy, and carry `X-Robots-Tag: noindex`. The customer's scanners are answered but not queued (R10) |
 | `POST /v1/agent-detection/attestations` | admin, tenant API key | The customer backend's integrity verdict for an SDK session |
 | `POST /b` | collector | mobile beacons (`platform`, `app`), app id checked against the key |
 

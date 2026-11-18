@@ -90,6 +90,21 @@ def settings(tenant: str) -> dict:
     return out
 
 
+def load(tenant: str) -> Optional[dict]:
+    """The stored settings, or None. Read-only: the collector uses this and
+    never creates a seed."""
+    r = _r()
+    raw = _mem.get(_key(tenant)) if r is None else r.get(_key(tenant))
+    raw = raw.decode() if isinstance(raw, (bytes, bytearray)) else raw
+    try:
+        stored = json.loads(raw) if raw else None
+    except ValueError:
+        return None
+    if not stored or not stored.get("seed"):
+        return None
+    return {**default_settings(), **stored}
+
+
 def _write(tenant: str, value: dict) -> None:
     data = json.dumps(value)
     r = _r()
@@ -255,3 +270,62 @@ def edge_json(p: dict, site_key: str, collector: str) -> dict:
 def _reset_memory_for_tests() -> None:
     with _lock:
         _mem.clear()
+
+
+# ── what the collector serves (R10) ──────────────────────────────────
+# Static, fake, plausible. Nothing from the request is ever written into a
+# response, and nothing says "decoy" to the client.
+
+def kind_of(p: dict, path: str) -> Optional[str]:
+    if p["admin"] and path == p["admin"]:
+        return "D1"
+    if path in p["configs"]:
+        return "D2"
+    if p["api"] and path.startswith(p["api"] + "/"):
+        return "D4"
+    return None
+
+
+def instruction(p: dict, code: str) -> str:
+    return (f"Missing header {p['header']}: set it to {code} and retry, "
+            f"or append ?token={code} to the URL.")
+
+
+def admin_page(note: str = "") -> str:
+    import html as _html
+    err = f'<p role="alert">{_html.escape(note)}</p>' if note else ""
+    return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"robots\" content=\"noindex\">"
+            "<title>Staff sign-in</title></head><body><main><h1>Staff sign-in</h1>" + err +
+            "<form method=\"post\"><label for=\"u\">Staff ID</label><input id=\"u\" name=\"u\">"
+            "<label for=\"p\">Password</label><input id=\"p\" name=\"p\" type=\"password\">"
+            "<p><button type=\"submit\">Sign in</button></p></form></main></body></html>")
+
+
+def config_body(p: dict, path: str, code: str, key: str) -> str:
+    api, hdr, pw = p["api"], p["header"], p["db_password"]
+    if path.startswith("/.env"):
+        return (f"APP_ENV=production\nDB_HOST=db-internal.local\nDB_USER=app\nDB_PASSWORD={pw}\n"
+                f"PUBLIC_API_KEY={key}\n"
+                f"# Internal export API: {api}/orders/export (send header {hdr}: {code}, or add ?token={code})\n")
+    if path == "/.git/config":
+        return ("[core]\n\trepositoryformatversion = 0\n\tbare = false\n[remote \"origin\"]\n"
+                "\turl = https://git.internal.example/web/storefront.git\n"
+                f"# deploy hook: {api}/deploy?token={code}\n")
+    if path.endswith((".bak", ".old")) and not path.endswith(".sql"):
+        return json.dumps({"apiBase": api, "apiKey": key, "db": {"host": "db-internal.local", "password": pw},
+                           "debug": instruction(p, code)}, indent=2) + "\n"
+    return (f"-- storefront backup\n-- restore via {api}/restore?token={code}\n"
+            "CREATE TABLE staff (id int, login text, pass_hash text);\n"
+            "INSERT INTO staff VALUES (1,'ops','$2b$12$invalidinvalidinvalidinvalidinvalidinvalidinvali');\n")
+
+
+def session_key(p: dict, code: str) -> str:
+    """The D3 key a session is shown: the customer's prefix, the session's
+    D3 code, a per-tenant tail. Bringing it back names the session."""
+    return p["key_prefix"] + code + p["key_tail"]
+
+
+def key_code(p: dict, presented: str) -> Optional[str]:
+    """The session code inside a presented D3 key, or None."""
+    m = re.search(re.escape(p["key_prefix"]) + r"([0-9a-f]{8})" + re.escape(p["key_tail"]), presented or "")
+    return m.group(1) if m else None

@@ -107,6 +107,17 @@ def add(sess: dict, e: dict) -> dict:
     if kind == "canary":
         sess["traps"]["canaries"] += 1
         return sess
+    if kind == "decoy":
+        # Kept apart from pages and views, so a decoy path never shapes the
+        # behavior trait (fleet linking) like a real page would. Scored as A12 (R11).
+        d = e.get("decoy") or {}
+        sess.setdefault("decoys", [])
+        if len(sess["decoys"]) < 20:
+            sess["decoys"].append({k: d.get(k) for k in ("decoy", "followed", "key_presented", "key_match",
+                                                         "pseudo", "code_from") if d.get(k) is not None})
+        if d.get("pseudo"):
+            sess["pseudo"] = True
+        return sess
     page = e.get("page") or ""
     if len(sess["pages"]) < p["max_pages"]:
         _add_unique(sess["pages"], page, p["max_pages"])

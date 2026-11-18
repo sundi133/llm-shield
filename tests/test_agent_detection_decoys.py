@@ -195,3 +195,153 @@ def test_tenants_have_separate_decoys(admin):
     admin.put("/v1/agent-detection/decoys", headers=_k(ACME_ADMIN), json={"enabled": True})
     assert admin.get("/v1/agent-detection/decoys", headers=_k(GLOBEX_ADMIN)).json()["enabled"] is False
     assert a["paths"] and g["paths"]
+
+
+# ── R10: the collector serves decoys ─────────────────────────────────
+
+from core.agent_detection import collector, scoring, stream, traps  # noqa: E402
+
+SHOP = "https://shop.acme.example"
+A, B = "a" * 24, "b" * 24
+
+
+@pytest.fixture
+def col(env):
+    env.setenv("SHIELD_AGENT_DETECTION_HASH_SALT", "s")
+    env.setenv("SHIELD_AGENT_DETECTION_TRAP_SECRET", "t")
+    env.setenv("SHIELD_TRUST_PROXY_HEADERS", "1")
+    stream._reset_memory_for_tests()
+    traps._reset_memory_for_tests()
+    key = sitekeys.create(ACME, origins=[SHOP], decoys=True)["site_key"]
+    decoys.save(ACME, {"enabled": True, "key_prefix": "acme_pk_",
+                       "scanners": {"cidrs": ["198.51.100.0/24"], "uas": ["PentestBot"]}})
+    c = TestClient(collector.create_app(), base_url="https://collect.example")
+    yield c, key, decoys.plan(ACME)
+    stream._reset_memory_for_tests()
+    traps._reset_memory_for_tests()
+
+
+def _get(c, key, path, shs=None, ip="203.0.113.7", method="get", **kw):
+    c.cookies.clear()
+    if shs:
+        c.cookies.set("_shs", shs)
+    headers = {"X-Shield-Site": key, "X-Forwarded-For": ip, "User-Agent": "Mozilla/5.0 X",
+               **kw.pop("headers", {})}
+    return getattr(c, method)(f"/_shs/decoy{path}", headers=headers, **kw)
+
+
+def _hits():
+    return [e for e in stream.memory_entries(ACME) if e["kind"] == "decoy"]
+
+
+def test_a_config_decoy_answers_with_this_sessions_code_and_is_queued(col):
+    c, key, p = col
+    path = p["configs"][0]
+    r = _get(c, key, path, shs=A)
+    code = traps.code(traps.tenant_key(ACME), A, "D", traps.day())
+    assert r.status_code == 200 and code in r.text
+    assert r.headers["x-robots-tag"] == "noindex, nofollow" and r.headers["cache-control"] == "no-store"
+    assert "decoy" not in r.text.lower() and not any("decoy" in v.lower() for v in r.headers.values())
+    [h] = _hits()
+    assert h["shs"] == A and h["page"] == path
+    assert h["decoy"] == {"decoy": "D2", "followed": False, "key_presented": False, "key_match": False,
+                          "pseudo": False, "method": "GET"}
+
+
+def test_following_the_instruction_by_header_or_token(col):
+    c, key, p = col
+    code = traps.code(traps.tenant_key(ACME), A, "D", traps.day())
+    api = p["api"] + "/orders/export"
+    assert _get(c, key, api, shs=A).status_code == 401
+    r = _get(c, key, api, shs=A, headers={p["header"]: code})
+    assert r.status_code == 200 and json_ok(r)
+    r = _get(c, key, api, shs=A, params={"token": code})
+    assert r.status_code == 200
+    assert [h["decoy"]["followed"] for h in _hits()] == [False, True, True]
+
+
+def json_ok(r):
+    return r.json().get("ok") is True
+
+
+def test_another_sessions_code_links_the_two(col):
+    c, key, p = col
+    _get(c, key, p["configs"][0], shs=B)                        # B was shown its code
+    b_code = traps.code(traps.tenant_key(ACME), B, "D", traps.day())
+    _get(c, key, p["api"] + "/x", shs=A, headers={p["header"]: b_code})
+    last = _hits()[-1]["decoy"]
+    assert last["followed"] is True and last["code_from"] == B
+
+
+def test_the_key_from_a_config_file_presented_to_the_api(col):
+    c, key, p = col
+    env_file = _get(c, key, p["configs"][0], shs=A).text
+    import re as _re
+    leaked = _re.search(_re.escape(p["key_prefix"]) + r"[0-9a-f]{8}[0-9a-f]{24}", env_file)
+    if not leaked:                                              # the config shape may not carry the key
+        leaked_key = decoys.session_key(p, traps.code(traps.tenant_key(ACME), A, "D3", traps.day()))
+    else:
+        leaked_key = leaked.group(0)
+    r = _get(c, key, p["api"] + "/orders", shs=A, headers={"Authorization": f"Bearer {leaked_key}"})
+    assert r.status_code == 200
+    last = _hits()[-1]["decoy"]
+    assert last["key_presented"] is True and last["key_match"] is True
+
+
+def test_without_the_tag_a_pseudo_session_is_stable_per_client(col):
+    c, key, p = col
+    _get(c, key, p["configs"][0])
+    _get(c, key, p["configs"][0])
+    _get(c, key, p["configs"][0], headers={"User-Agent": "curl/8.9"})
+    a, b, d = [h["shs"] for h in _hits()]
+    assert a == b != d and all(h["decoy"]["pseudo"] for h in _hits())
+    assert len(a) == 24
+
+
+def test_the_customers_scanners_are_answered_but_not_queued(col):
+    c, key, p = col
+    assert _get(c, key, p["configs"][0], ip="198.51.100.20").status_code == 200
+    assert _get(c, key, p["configs"][0], headers={"User-Agent": "PentestBot/2"}).status_code == 200
+    assert _hits() == []
+
+
+@pytest.mark.parametrize("case", ["no_site", "other_path", "disabled", "unknown_key"])
+def test_anything_else_is_a_plain_404(col, case):
+    c, key, p = col
+    if case == "no_site":
+        r = c.get(f"/decoy{p['configs'][0]}")
+    elif case == "other_path":
+        r = _get(c, key, "/checkout")
+    elif case == "unknown_key":
+        r = _get(c, "shs_pk_" + "0" * 24, p["configs"][0])
+    else:
+        decoys.save(ACME, {"enabled": False})
+        r = TestClient(collector.create_app()).get(f"/decoy{p['configs'][0]}", headers={"X-Shield-Site": key})
+    assert r.status_code == 404 and r.content == b""
+    assert _hits() == []
+
+
+def test_nothing_from_the_request_is_reflected(col):
+    c, key, p = col
+    evil = "<script>alert(1)</script>"
+    for path in (p["admin"], p["api"] + "/x"):
+        r = _get(c, key, path, shs=A, params={"q": evil, "token": evil}, headers={p["header"]: evil, "Referer": evil})
+        assert evil not in r.text and "alert(1)" not in r.text
+    r = _get(c, key, p["admin"], shs=A, method="post", data={"u": evil, "p": evil})
+    assert r.status_code == 401 and evil not in r.text
+
+
+def test_head_and_the_first_party_prefix(col):
+    c, key, p = col
+    r = _get(c, key, p["configs"][0], shs=A, method="head")
+    assert r.status_code == 200 and r.content == b""
+    r = c.get(f"/decoy{p['configs'][0]}", headers={"X-Shield-Site": key})
+    assert r.status_code == 200
+
+
+def test_the_worker_keeps_decoy_hits_apart_from_pages():
+    s = scoring.new_session(A)
+    scoring.add(s, {"kind": "decoy", "page": "/.env", "req": {"ts": 1.0},
+                    "decoy": {"decoy": "D2", "followed": True, "pseudo": True, "method": "GET"}})
+    assert s["pages"] == [] and s["views"] == {} and s["pseudo"] is True
+    assert s["decoys"] == [{"decoy": "D2", "followed": True, "pseudo": True}]
