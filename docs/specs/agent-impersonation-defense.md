@@ -1,6 +1,6 @@
 # Spec: AI agent and fleet detection from SIEM logs
 
-Status: **rev 9 drafted 2026-11-18, awaiting approval (section 14: decoys and mobile SDKs in the product).**
+Status: **rev 9 approved 2026-11-18 (section 14: decoys and mobile SDKs in the product; SDKs on GitHub Packages first).**
 Rev 8 approved 2026-11-18; R1 to R8 built on `feat/agent-detection-tag` (section 13).
 Rev 7 approved 2026-11-16, task 0b built. Branch `spec/agent-impersonation-defense`
 (lab work on `feat/agent-detection-lab`, product build on `feat/agent-detection-tag`).
@@ -60,7 +60,7 @@ Architecture: `artifacts/agent-detection-architecture-v5.svg` (partner version: 
 
   Owner decision: build before the lab measures tier 2's gain with real
   agents (task 0b's go/no-go).
-- Rev 9 (2026-11-18, draft) brings **decoys** (section 2.6) and the **mobile
+- Rev 9 (2026-11-18, approved) brings **decoys** (section 2.6) and the **mobile
   SDKs** (section 2.3) into the tag-first product: decoys served by the
   collector with per-session codes, and Android then iOS SDKs reporting to
   the same collector, with the customer's backend passing its own integrity
@@ -1244,7 +1244,7 @@ Docs: `docs/agent-detection-integration.md` (as built, unlisted) and
    sensor and touch signals), then iOS; same beacon schema and collector;
    lab runs on an Android emulator.
 
-## 14. Rev 9: decoys and mobile SDKs in the product (draft)
+## 14. Rev 9: decoys and mobile SDKs in the product (approved 2026-11-18)
 
 ### 14.1 Problem and outcome
 The rev 8 product sees an agent doing a normal task on a web page. Two gaps:
@@ -1374,10 +1374,9 @@ the customer's site.
 - CI: an Android job (JDK 17, Gradle, Robolectric unit tests) on Ubuntu, and
   an iOS job (XCTest) on macOS that runs only when `sdk/agent-detection/ios`
   changes.
-- **Open question for the owner:** where the SDKs are published. Default:
-  GitHub Packages first (no new accounts), Maven Central and the Swift
-  Package index at general availability (needs a Sonatype account and a
-  signing key you hold).
+- **Publishing (owner decision 2026-11-18):** GitHub Packages first (no new
+  accounts); Maven Central and the Swift Package index at general
+  availability (needs a Sonatype account and a signing key the owner holds).
 - No new Python dependencies.
 
 ### 14.8 Failure modes
