@@ -33,7 +33,7 @@ else
 fi
 
 for p in "uvicorn app:app --port 8201" "core.agent_detection.collector" "core.agent_detection.worker" \
-         "admin_app:app --port 8205" "product/feed_poll.sh"; do
+         "admin_app:app --host 127.0.0.1 --port 8205" "product/feed_poll.sh"; do
   pkill -f "$p" 2>/dev/null || true
 done
 
