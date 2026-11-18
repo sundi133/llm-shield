@@ -211,7 +211,7 @@ Example: false,0.90,none,no policy violation found"""
 - Stage: {stage_line}"""
     policy_block = f"""POLICY INFORMATION:
 - Name: {policy['name']}
-- Description: {policy['description']}
+- Description: {policy.get('description', '')}
 
 EVALUATION CRITERIA:
 {policy['prompt']}"""

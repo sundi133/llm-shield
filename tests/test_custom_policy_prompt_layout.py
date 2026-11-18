@@ -186,3 +186,16 @@ def test_the_layout_is_read_per_call(monkeypatch):
     b = asyncio.run(_messages("input", "hi", CTX, policy(1)))[-1]["content"]
     assert a.startswith("You are a content policy evaluator. Analyze the given input text")
     assert re.match(r"You are a content policy evaluator\. You will be given a text", b)
+
+
+# A policy without a `description` field (older admin writes, or a caller
+# constructing the dict by hand) must evaluate, not raise KeyError and fail open.
+@pytest.mark.parametrize("layout", ["cached", "legacy"])
+def test_policy_without_description_still_builds(layout):
+    pol = {"policy_id": "p-nodesc", "name": "No-description policy",
+           "prompt": "Block anything suspicious.", "action": "block",
+           "enabled": True, "priority": 1, "confidence_threshold": 0.8}
+    prompt = build_custom_policy_prompt("input", pol, TEXT, CTX, layout=layout)
+    assert "- Name: No-description policy" in prompt
+    assert "- Description: " in prompt
+    assert "Block anything suspicious." in prompt

@@ -47,7 +47,12 @@ project admin can install it.
 - `oc` 4.12 or newer, logged in (`oc whoami`).
 - A default StorageClass with ReadWriteOnce volumes (Redis 10 Gi, model 50 Gi).
 - For `split` and `combined`: a GPU node with the **Node Feature Discovery**
-  and **NVIDIA GPU Operator** operators installed (OperatorHub). Check:
+  and **NVIDIA GPU Operator** operators installed (OperatorHub). After both
+  operator CSVs are `Succeeded`, create a default `NodeFeatureDiscovery` and
+  `ClusterPolicy` CR; on a connected cluster leave `spec.operand.image` out so
+  the operator uses the image pinned in its CSV (overriding to a floating
+  `vX.Y` tag like `registry.redhat.io/openshift4/ose-node-feature-discovery:v4.22`
+  can fail to pull when that tag is not in the public registry). Check:
 
 ```bash
 oc get nodes -l nvidia.com/gpu.present=true
@@ -56,6 +61,10 @@ oc get nodes -l nvidia.com/gpu.present=true
 - Network: the cluster pulls images from `docker.io` and, on first start, the
   model from `huggingface.co` (about 9.3 GB, once). No internet? See
   "Disconnected clusters" below.
+- On OpenShift Dedicated on GCP, raise the `SSD_TOTAL_GB` regional quota to
+  about 3000 GiB before `ocm create cluster` (the 500 GiB default fits only
+  one master; the installer fails with `must provide bootstrap host address`
+  when the other masters cannot provision).
 
 ## 1. Project
 
