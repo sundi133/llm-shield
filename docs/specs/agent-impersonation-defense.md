@@ -1288,9 +1288,18 @@ the customer's site.
   hash of network, client and day, so the worker can still score and link
   it.
 - **D3 from the tag:** the trap layout (`GET /t`) gains a `d3` field, and the
-  tag adds a JSON config block (`<script type="application/json">`, never
-  rendered, never focusable) holding the session's fake key and the D4 API
-  base. Off when decoys are off for the site key.
+  tag adds a JSON config block (`<script type="application/json"
+  data-app-config>`, never rendered, never run, not in the page text or the
+  accessibility tree) holding the session's fake key and the D4 API base.
+  Only for site keys with `decoys` on and a tenant with decoys enabled, and
+  independent of the traps switch. The key is the customer's prefix, the
+  session's D3 code and a per-tenant tail, so whoever brings it back is
+  named (built in R11, tag 1.2.0).
+- **Scoring (R11):** A12, weight 0.9: a followed instruction, the fake key
+  brought back, or another session's decoy code is 1.0; a bare hit is 0.5
+  only when the session also has tag reports. A pseudo-session (no tag
+  cookie) can be scored and linked but is never published as an `shs`
+  indicator, since no edge could match it.
 - **Evidence:** a bare decoy hit is A12 at 0.5 and counts only when the same
   session also used the site (tag beacons) or is in a fleet, so the scanners
   hitting `/.env` all day never flag anyone; a followed instruction (the code

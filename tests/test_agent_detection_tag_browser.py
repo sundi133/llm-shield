@@ -24,7 +24,7 @@ import pytest
 
 pw = pytest.importorskip("playwright.sync_api")
 
-from core.agent_detection import collector, sitekeys, stream, tag, traps  # noqa: E402
+from core.agent_detection import collector, decoys, sitekeys, stream, tag, traps  # noqa: E402
 from storage import tenant_store as ts  # noqa: E402
 
 
@@ -50,6 +50,7 @@ def server():
     mp.delenv("SHIELD_AGENT_DETECTION_COLLECTOR", raising=False)
     mp.setattr(ts, "_get_redis", lambda: None)
     sitekeys._reset_memory_for_tests(); stream._reset_memory_for_tests(); traps._reset_memory_for_tests()
+    decoys._reset_memory_for_tests()
     port = _free_port()
     origin = f"http://127.0.0.1:{port}"
     key = sitekeys.create("acme", origins=[origin])["site_key"]
@@ -61,6 +62,11 @@ def server():
             "<label for=email>Email</label><input id=email name=email>"
             "<button type=submit>Create account</button></form></main>" + snippet + "</html>")
     app.add_api_route("/page", lambda: HTMLResponse(page))
+    dkey = sitekeys.create("acme", origins=[origin], decoys=True)["site_key"]
+    decoys.save("acme", {"enabled": True, "key_prefix": "acme_pk_"})
+    dsnip = tag.snippet(dkey, origin, origin).replace(' integrity="', ' data-x="')
+    app.add_api_route("/decoyed", lambda: HTMLResponse(
+        "<!doctype html><html lang=en><title>d</title><main><h1>Shop</h1><p>Hello</p></main>" + dsnip + "</html>"))
     ckey = sitekeys.create("acme", origins=[origin], consent="required")["site_key"]
     csnip = tag.snippet(ckey, origin, origin, consent="required").replace(' integrity="', ' data-x="')
     stub = ("<script>window.shs = window.shs || function () { (window.shs.q = window.shs.q || []).push(arguments); };"
@@ -204,4 +210,20 @@ def test_consent_given_before_the_tag_loads_is_honoured(browser, server):
     while time.time() < end and not _entries(shs):
         time.sleep(0.05)
     assert [e.get("consent") for e in _entries(shs)][:1] == ["given"]
+    ctx.close()
+
+
+def test_the_fake_key_is_in_the_page_code_but_never_shown(browser, server):
+    """D3 (spec 2.6): agents reading the page source find the key; people,
+    screen readers and the page's visible text never do."""
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    page.goto(server["origin"] + "/decoyed")
+    page.wait_for_selector("script[data-app-config]", state="attached", timeout=5000)
+    cfg = page.evaluate("JSON.parse(document.querySelector('script[data-app-config]').textContent)")
+    assert cfg["publicKey"].startswith("acme_pk_") and cfg["apiBase"].startswith("/")
+    assert cfg["publicKey"] in page.content()
+    assert cfg["publicKey"] not in page.inner_text("body")
+    assert cfg["publicKey"] not in page.locator("body").aria_snapshot()
+    assert page.evaluate("window.__xss_ran_config === undefined")      # type=application/json never runs
     ctx.close()

@@ -345,3 +345,86 @@ def test_the_worker_keeps_decoy_hits_apart_from_pages():
                     "decoy": {"decoy": "D2", "followed": True, "pseudo": True, "method": "GET"}})
     assert s["pages"] == [] and s["views"] == {} and s["pseudo"] is True
     assert s["decoys"] == [{"decoy": "D2", "followed": True, "pseudo": True}]
+
+
+# ── R11: D3 from the tag, A12, links, indicators ─────────────────────
+
+from core.agent_detection import indicators as ind  # noqa: E402
+from core.agent_detection import worker  # noqa: E402
+
+
+def _layout(c, key, shs=A):
+    return c.get("/t", params={"k": key, "s": shs}, headers={"origin": SHOP}).json()
+
+
+def test_the_layout_carries_the_sessions_fake_key_for_decoy_site_keys(col):
+    c, key, p = col
+    lay = _layout(c, key)
+    d3 = traps.code(traps.tenant_key(ACME), A, "D3", traps.day())
+    assert lay["d3"] == {"key": decoys.session_key(p, d3), "api": p["api"]}
+    assert lay["t1"] is not None
+    assert traps.owner_of(ACME, d3) == A                        # recorded for reuse links
+
+
+def test_no_fake_key_without_decoys_on_the_site_key_or_the_tenant(col):
+    c, key, p = col
+    plain = sitekeys.create(ACME, origins=[SHOP])["site_key"]
+    assert "d3" not in _layout(c, plain)
+    decoys.save(ACME, {"enabled": False})
+    fresh = TestClient(collector.create_app(), base_url="https://collect.example")
+    assert "d3" not in _layout(fresh, key)
+
+
+def test_decoys_without_traps_still_get_the_fake_key(col):
+    c, key, p = col
+    no_traps = sitekeys.create(ACME, origins=[SHOP], traps=False, decoys=True)["site_key"]
+    lay = _layout(c, no_traps)
+    assert lay["t1"] is None and lay["d3"]["api"] == p["api"]
+
+
+def test_another_sessions_fake_key_links_the_sessions(col):
+    c, key, p = col
+    a_key = _layout(c, key, A)["d3"]["key"]
+    _get(c, key, p["api"] + "/orders", shs=B, headers={"X-Api-Key": a_key})
+    last = _hits()[-1]["decoy"]
+    assert last["key_match"] is True and last["code_from"] == A
+
+
+def _sess(*hits, used_site=False):
+    s = scoring.new_session(A)
+    if used_site:
+        scoring.add(s, {"kind": "load", "page": "/", "t": 5, "req": {"ts": 1.0}, "device": {"renderer_class": "gpu"}})
+    for h in hits:
+        scoring.add(s, {"kind": "decoy", "page": "/.env", "req": {"ts": 2.0}, "decoy": h})
+    return s
+
+
+def test_a12_levels():
+    bare = {"decoy": "D2", "followed": False, "key_presented": False, "key_match": False, "pseudo": False}
+    assert scoring.score(_sess(bare))["band"] == "human_like"                  # a scanner-like bare hit
+    v = scoring.score(_sess(bare, used_site=True))
+    assert v["signals"]["A12"] == 0.5 and v["band"] == "grey" and "while also using the site" in v["reasons"][-1]
+    for strong, words in (({**bare, "followed": True}, "followed the hidden instruction"),
+                          ({**bare, "key_presented": True, "key_match": True}, "fake API key"),
+                          ({**bare, "followed": True, "code_from": B}, "one controller")):
+        v = scoring.score(_sess(strong))
+        assert v["band"] == "clear_agent" and words in " ".join(v["reasons"]), words
+    assert _sess({**bare, "followed": True, "code_from": B})["links"] == [B]
+
+
+def test_a_clear_pseudo_session_is_not_published_but_a_tag_session_is(col, env):
+    c, key, p = col
+    mem = worker.MemoryStore()
+    ind._reset_memory_for_tests()
+    code_pseudo = None
+    _get(c, key, p["configs"][0])                                # no tag cookie: pseudo
+    pseudo_id = _hits()[-1]["shs"]
+    code_pseudo = traps.code(traps.tenant_key(ACME), pseudo_id, "D", traps.day())
+    _get(c, key, p["api"] + "/x", headers={p["header"]: code_pseudo})
+    code_a = traps.code(traps.tenant_key(ACME), A, "D", traps.day())
+    _get(c, key, p["api"] + "/x", shs=A, headers={p["header"]: code_a})
+    worker.process_tenant(mem, ACME)
+    assert mem.sessions[ACME][pseudo_id]["verdict"]["band"] == "clear_agent"
+    assert mem.sessions[ACME][A]["verdict"]["band"] == "clear_agent"
+    assert [i["value"] for i in ind.active(ACME)] == [A]
+    ind._reset_memory_for_tests()

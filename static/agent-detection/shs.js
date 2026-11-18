@@ -1,4 +1,4 @@
-/*! shs.js @version 1.1.0 | Shield AI agent detection tag | no third-party code */
+/*! shs.js @version 1.2.0 | Shield AI agent detection tag | no third-party code */
 /* Spec: docs/specs/agent-impersonation-defense.md 2.3, 2.4, 8. Counts, timings and
  * hashes only; no key codes, field values, page text or query strings. Attributes:
  * data-site (site key), data-collector (default /_shs), data-consent="required"
@@ -245,6 +245,10 @@
       if (!w.fetch) return;
       fetch(BASE + '/t?k=' + KEY + '&s=' + SHS, { credentials: 'omit' }).then(function (r) { return r.json(); })
         .then(function (j) {
+          if (j && j.d3 && d.head) {              // D3 decoy key: never rendered, never run
+            d.head.appendChild(el('script', { type: 'application/json', 'data-app-config': '' },
+              JSON.stringify({ apiBase: j.d3.api, publicKey: j.d3.key })));
+          }
           if (!j || !j.t1) return;
           LAY = j;
           TRAPS.shown = j.t4 ? ['T1', 'T2', 'T4'] : ['T1', 'T2'];

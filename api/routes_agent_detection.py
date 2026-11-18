@@ -303,7 +303,8 @@ def _summary(s: dict) -> dict:
             "renderer": str(dev.get("renderer", ""))[:80], "renderer_class": dev.get("renderer_class"),
             "device": scoring.device_of(s), "clients": len(s.get("clients") or []),
             "networks": len(s.get("nets") or []), "traps": s.get("traps", {}),
-            "links": (s.get("links") or [])[:20], "pack": v.get("pack")}
+            "links": (s.get("links") or [])[:20], "pack": v.get("pack"),
+            "decoys": (s.get("decoys") or [])[:20], "pseudo": bool(s.get("pseudo"))}
 
 
 @router.get("/v1/agent-detection/detections")

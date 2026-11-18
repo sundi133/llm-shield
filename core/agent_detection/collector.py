@@ -201,15 +201,27 @@ def create_app() -> FastAPI:
         if site and origin in site.get("origins", []):
             headers["Access-Control-Allow-Origin"] = origin
             ip = client_ip(request, int(site.get("xff_hops") or 1))
-            if site.get("traps", True) and re.fullmatch(r"[0-9a-f]{24}", s or "") \
-                    and per_ip_layout.allow(ip):
+            if re.fullmatch(r"[0-9a-f]{24}", s or "") and per_ip_layout.allow(ip):
                 tenant = site["tenant"]
-                out = traps.layout(tenant, s)
-                if issued.first(f"{tenant}|{s}|{traps.day()}"):
-                    try:
-                        traps.record(tenant, traps.issued_codes(tenant, s), s)
-                    except Exception as exc:  # noqa: BLE001 - the layout still works for T1
-                        log.warning("trap codes not recorded: %s", type(exc).__name__)
+                if site.get("traps", True):
+                    out = traps.layout(tenant, s)
+                    if issued.first(f"{tenant}|{s}|{traps.day()}"):
+                        try:
+                            traps.record(tenant, traps.issued_codes(tenant, s), s)
+                        except Exception as exc:  # noqa: BLE001 - the layout still works for T1
+                            log.warning("trap codes not recorded: %s", type(exc).__name__)
+                # D3 (rev 9): the session's fake key in the page code, for site keys
+                # with decoys on and a tenant with decoys enabled.
+                st = decoy_settings(tenant) if site.get("decoys") else None
+                if st and st.get("enabled"):
+                    p = decoys.plan(tenant, st)
+                    d3 = traps.code(traps.tenant_key(tenant), s, "D3", traps.day())
+                    out = {**out, "d3": {"key": decoys.session_key(p, d3), "api": p["api"]}}
+                    if issued.first(f"{tenant}|{s}|D3|{traps.day()}"):
+                        try:
+                            traps.record(tenant, [d3], s)
+                        except Exception as exc:  # noqa: BLE001
+                            log.warning("D3 code not recorded: %s", type(exc).__name__)
         return JSONResponse(out, headers=headers)
 
     def canary(request: Request, code: str, k: str = ""):
