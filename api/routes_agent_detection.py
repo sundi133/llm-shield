@@ -478,6 +478,6 @@ def decoy_edge_rules(request: Request, site_key: str, format: str = "nginx"):
     if format == "nginx":
         return Response(decoys.edge_nginx(p, site_key, collector), media_type="text/plain; charset=utf-8",
                         headers={"Cache-Control": "no-store"})
-    if format == "json":
-        return decoys.edge_json(p, site_key, collector)
+    if format == "json":            # the portal reads JSON only, so the Nginx text rides along
+        return {**decoys.edge_json(p, site_key, collector), "nginx": decoys.edge_nginx(p, site_key, collector)}
     raise HTTPException(status_code=400, detail="format must be nginx or json")

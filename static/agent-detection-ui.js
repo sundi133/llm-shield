@@ -35,6 +35,7 @@
         <button class="small" data-ad-sec="detections">Detections</button>
         <button class="small" data-ad-sec="fleets">Fleets</button>
         <button class="small" data-ad-sec="enforcement">Enforcement</button>
+        <button class="small" data-ad-sec="decoys">Decoys</button>
       </div>
       <div data-ad="body"></div>`;
     const $ = sel => root.querySelector(`[data-ad="${sel}"]`);
@@ -85,6 +86,7 @@
             <label><input type="checkbox" data-ad="consent"> Run only after consent</label>
             <label><input type="checkbox" data-ad="cdn"> Our CDN forwards /_shs/ to the collector</label>
             <label><input type="checkbox" data-ad="traps" checked> Hidden traps</label>
+            <label><input type="checkbox" data-ad="decoys"> Decoy key on pages</label>
             <input data-ad="label" type="text" maxlength="80" placeholder="Label (optional)" style="flex:1;min-width:140px;">
           </div>
           <button class="primary small" data-ad-act="create-key">Create site key</button>
@@ -105,7 +107,7 @@
         </div>
         <div style="font-size:12px;color:var(--text-muted);margin:0.35rem 0;">
           ${esc((k.origins || []).join(', '))} · consent ${esc(k.consent)} · traps ${k.traps === false ? 'off' : 'on'}
-          · ${k.xff_hops === 2 ? 'through your CDN' : 'direct'}</div>
+          · ${k.xff_hops === 2 ? 'through your CDN' : 'direct'} · decoy key ${k.decoys ? 'on' : 'off'}</div>
         <div style="font-size:13px;margin-bottom:0.5rem;">${status}</div>
         <div style="font-size:12px;font-weight:600;">Snippet, first-party (route /_shs/ on your CDN to the collector)</div>
         <pre style="white-space:pre-wrap;word-break:break-all;font-size:11px;">${esc(k.snippet_first_party)}</pre>
@@ -117,7 +119,7 @@
       const origins = $('origins').value.split(/\s+/).map(s => s.trim()).filter(Boolean);
       await call('/v1/agent-detection/sitekeys', { method: 'POST', body: JSON.stringify({
         origins, consent: $('consent').checked ? 'required' : 'none', xff_hops: $('cdn').checked ? 2 : 1,
-        traps: $('traps').checked, label: $('label').value }) });
+        traps: $('traps').checked, decoys: $('decoys').checked, label: $('label').value }) });
       toast('Site key created', 'success');
       loadTag();
     }
@@ -255,6 +257,68 @@
       await Promise.all([loadEnforcement(), loadStats()]);
     }
 
+    // ── Decoys (rev 9) ───────────────────────────────────────────────
+    async function loadDecoys() {
+      body().innerHTML = 'Loading...';
+      const [dc, t, det] = await Promise.all([call('/v1/agent-detection/decoys'), call('/v1/agent-detection/tag'),
+        call('/v1/agent-detection/detections?band=all&limit=500')]);
+      const keys = t.site_keys || [];
+      const hits = (det.detections || []).filter(x => (x.decoys || []).length);
+      const lines = (arr) => esc((arr || []).join('\n'));
+      body().innerHTML = `
+        <div class="card">
+          <div style="font-weight:600;margin-bottom:0.25rem;">Decoys ${dc.enabled ? '<span class="badge badge-success">on</span>' : '<span class="badge badge-basic">off</span>'}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:0.5rem;">Things no real visitor needs: a staff login, config files, a hidden API,
+            and a key in your page code. Each answers with an instruction only an AI agent follows. A bare request never flags anyone;
+            following the instruction does. Check that none of the paths below exists on your site.</div>
+          <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:center;font-size:13px;">
+            <label><input type="checkbox" data-ad="dc-enabled" ${dc.enabled ? 'checked' : ''}> Decoys on</label>
+            <label>Your key format <input data-ad="dc-prefix" type="text" maxlength="30" value="${esc(dc.key_prefix)}" style="width:120px;"></label>
+            <label>Your site runs on <select data-ad="dc-stack">${(dc.stacks || []).map(x =>
+              `<option ${x === dc.stack ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
+          </div>
+          <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-top:0.5rem;font-size:12px;">
+            <label style="flex:1;min-width:200px;">Paths that exist on your site (one per line)
+              <textarea data-ad="dc-avoid" rows="3" style="width:100%;min-height:0;height:64px;">${lines(dc.avoid)}</textarea></label>
+            <label style="flex:1;min-width:200px;">Your scanners: IP ranges (one per line)
+              <textarea data-ad="dc-cidrs" rows="3" style="width:100%;min-height:0;height:64px;">${lines((dc.scanners || {}).cidrs)}</textarea></label>
+            <label style="flex:1;min-width:200px;">Your scanners: user agent contains (one per line)
+              <textarea data-ad="dc-uas" rows="3" style="width:100%;min-height:0;height:64px;">${lines((dc.scanners || {}).uas)}</textarea></label>
+          </div>
+          <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+            <button class="primary small" data-ad-act="save-decoys">Save</button>
+            <button class="small" data-ad-act="reroll-decoys">Draw a new set</button>
+          </div>
+        </div>
+        <div class="card">
+          <div style="font-weight:600;margin-bottom:0.25rem;">This site's decoys</div>
+          <div style="font-size:13px;">${Object.entries(dc.decoys || {}).map(([k, v]) =>
+            `<div><b>${esc(k)}</b> ${esc(Array.isArray(v) ? v.join(', ') : v)}</div>`).join('')}</div>
+          <div style="font-size:13px;margin-top:0.5rem;">Add to robots.txt: <code>${esc(dc.robots_txt_line)}</code></div>
+          <div style="font-size:13px;margin-top:0.75rem;">Edge rules for
+            <select data-ad="dc-key">${keys.map(k => `<option value="${esc(k.site_key)}">${esc(k.label || k.site_key)}</option>`).join('')}</select>
+            <button class="small" data-ad-act="edge-rules" ${keys.length ? '' : 'disabled'}>Show</button></div>
+          <pre data-ad="dc-rules" style="white-space:pre-wrap;word-break:break-all;font-size:11px;display:none;"></pre>
+        </div>
+        <div class="card">
+          <div style="font-weight:600;margin-bottom:0.5rem;">Recent decoy hits (${esc(hits.length)} sessions, last 24 h)</div>
+          ${hits.length ? `<div class="gov-table-wrap"><table class="gov-table"><thead><tr>
+            <th>Last seen</th><th>Session</th><th>Verdict</th><th>Decoys</th><th>Tag</th></tr></thead><tbody>
+            ${hits.slice(0, 100).map(x => `<tr><td>${esc(when(x.last))}</td><td>${short(x.shs)}</td><td>${band(x.band)} ${esc(x.score)}</td>
+              <td style="font-size:12px;">${esc(x.decoys.map(h => h.decoy + (h.followed ? ' followed' : '') + (h.key_match ? ' key used' : '')).join(', '))}</td>
+              <td>${x.pseudo ? 'no tag' : 'tag'}</td></tr>`).join('')}
+            </tbody></table></div>` : '<div style="font-size:13px;color:var(--text-muted);">No decoy hits yet.</div>'}
+        </div>`;
+    }
+    async function saveDecoys() {
+      const lines = sel => $(sel).value.split('\n').map(x => x.trim()).filter(Boolean);
+      await call('/v1/agent-detection/decoys', { method: 'PUT', body: JSON.stringify({
+        enabled: $('dc-enabled').checked, key_prefix: $('dc-prefix').value.trim(), stack: $('dc-stack').value,
+        avoid: lines('dc-avoid'), scanners: { cidrs: lines('dc-cidrs'), uas: lines('dc-uas') } }) });
+      toast('Decoys saved', 'success');
+      await loadDecoys();
+    }
+
     // ── events ───────────────────────────────────────────────────────
     root.addEventListener('change', e => {
       if (e.target.matches('[data-ad="band"]')) { st.band = e.target.value; loadDetections(); }
@@ -291,6 +355,14 @@
           $('new-token').innerHTML = `<div class="toast success" style="margin-top:0.5rem;">Copy it now, it is shown once:
             <pre style="white-space:pre-wrap;word-break:break-all;">${esc(t.token)}</pre></div>`;
         }
+        if (act === 'save-decoys') await saveDecoys();
+        if (act === 'reroll-decoys' && confirm('Draw new decoy paths and values? Download the edge rules again afterwards.')) {
+          await call('/v1/agent-detection/decoys/reroll', { method: 'POST' }); await loadDecoys();
+        }
+        if (act === 'edge-rules') {
+          const r = await call(`/v1/agent-detection/decoys/edge?format=json&site_key=${encodeURIComponent($('dc-key').value)}`);
+          const box = $('dc-rules'); box.style.display = ''; box.textContent = r.nginx || '';
+        }
         if (act === 'delete-token' && confirm('Delete this feed token? An edge using it stops getting updates.')) {
           await call(`/v1/agent-detection/feed-tokens/${encodeURIComponent(el.dataset.id)}`, { method: 'DELETE' });
           loadEnforcement();
@@ -301,7 +373,8 @@
     function load() {
       root.querySelectorAll('[data-ad-sec]').forEach(b => b.classList.toggle('primary', b.getAttribute('data-ad-sec') === st.section));
       loadStats();
-      const f = { tag: loadTag, detections: loadDetections, fleets: loadFleets, enforcement: loadEnforcement }[st.section];
+      const f = { tag: loadTag, detections: loadDetections, fleets: loadFleets, enforcement: loadEnforcement,
+                  decoys: loadDecoys }[st.section];
       return f().catch(() => {});
     }
     return { load };

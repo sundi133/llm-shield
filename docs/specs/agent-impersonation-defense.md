@@ -1430,3 +1430,11 @@ the customer's site.
 
 Decoys (R9 to R12) and mobile (R13 to R17) are independent: two PRs.
 
+**Status (2026-11-18): R9 to R12 built** on `feat/agent-detection-decoys`. The
+lab's product mode turns decoys on and forwards the product's edge rules
+through its Nginx; `demo_product.sh` adds an explorer act. Scripted rehearsal
+(plumbing only): 3 explorer agents found the hidden API through robots.txt,
+followed its instruction and scored clear agents; bare hits without the tag
+stayed human-like. Mobile (R13 to R17) waits for a pilot customer with an
+app, per the owner's call to ship before building further.
+

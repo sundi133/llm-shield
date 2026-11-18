@@ -67,6 +67,12 @@ def main():
     print("== product mode: tag, collector, worker, feed and edge are Shield's shipping code")
     show("wave 1 (watch mode, nothing enforced)", w1)
     show("wave 2 (session cookie and browser signature enforced)", w2)
+    det = api("/v1/agent-detection/detections?band=all&limit=500")["detections"]
+    dec = [d for d in det if d.get("decoys")]
+    followed = [d for d in dec if any(h.get("followed") or h.get("key_match") for h in d["decoys"])]
+    print(f"decoys: {len(dec)} sessions touched a decoy; {len(followed)} followed its hidden instruction "
+          f"({sum(d['band'] == 'clear_agent' for d in followed)} scored clear agent); "
+          f"{sum(1 for d in dec if d not in followed and d['band'] == 'human_like')} bare hits left alone")
     fleets = api("/v1/agent-detection/fleets")["fleets"]
     stats = api("/v1/agent-detection/stats?days=1")
     print(f"Shield: {len(fleets)} fleet(s) "

@@ -90,7 +90,9 @@ feed with a feed token.
 AGENT_LLM_PROVIDER=scripted ./demo_product.sh "$PY"
 ```
 
-It prints what each wave got done and when the edge started challenging. In
+It prints what each wave got done and when the edge started challenging, and
+what the decoys caught: after wave 1, three agents told to look around find
+the hidden API in robots.txt and follow its instruction. In
 the scripted rehearsal (2026-11-18): wave 1 got 12 promotions and 12 orders;
 Shield linked one fleet of 12 across 12 networks; with session cookies and
 browser signatures enforced, wave 2 was challenged at its first request, with
