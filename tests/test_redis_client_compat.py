@@ -417,3 +417,29 @@ def test_agent_detection_fleet_store(kind, client_env, backend):
     store.save_fleets(tenant, [fleet], now)
     assert [f["id"] for f in store.list_fleets(tenant)] == ["fl_test"]
     assert 0 < raw.execute_command("TTL", f"agd:{tenant}:fleet:fl_test") <= worker.FLEET_TTL_S
+
+
+@live
+@pytest.mark.parametrize("kind", ["upstash", "redis-py"])
+def test_agent_detection_indicators(kind, client_env, backend):
+    """Indicators (pipelined ZSCORE/HGET then HSET/ZADD), pruning, revoke,
+    the log (LPUSH/LTRIM/LRANGE), settings and feed tokens on both clients."""
+    from core.agent_detection import indicators as ind
+    raw, created = backend
+    _use(kind, client_env, raw)
+    tenant = f"compat-{kind}-{secrets.token_hex(4)}"
+    created.update({f"agd:{tenant}:*", "agd:feedtoken:*"})
+    now = time.time()
+    assert ind.publish(tenant, [{"type": "shs", "value": "a" * 24}, {"type": "client", "value": "UA|h|p|?0"}], now) == 2
+    assert ind.publish(tenant, [{"type": "shs", "value": "a" * 24}], now + 5) == 0
+    assert {i["type"] for i in ind.active(tenant, now + 5)} == {"shs", "client"}
+    assert ind.active(tenant, now + ind.DEFAULT_LIFETIME_S + 10) == []          # pruned
+    ind.publish(tenant, [{"type": "shs", "value": "b" * 24}])
+    assert ind.revoke(tenant, ind.indicator_id("shs", "b" * 24), who="t") is True
+    assert ind.publish(tenant, [{"type": "shs", "value": "b" * 24}]) == 0       # held back
+    assert ind.read_log(tenant)[0]["event"] == "revoke"
+    assert ind.save_settings(tenant, {"modes": {"shs": "enforce"}})["modes"]["shs"] == "enforce"
+    assert ind.settings(tenant)["modes"]["shs"] == "enforce"
+    rec, token = ind.mint_token(tenant, "edge")
+    assert ind.resolve_token(token) == tenant and ind.list_tokens(tenant)[0]["id"] == rec["id"]
+    assert ind.delete_token(tenant, rec["id"]) and ind.resolve_token(token) is None

@@ -693,6 +693,32 @@ them at once (the kill switch).
 | **Webhook push** | SOAR and custom automation | the existing outbound webhooks (`core/webhook_dispatcher.py`), event types `agent_fleet.indicators` and `agent_fleet.ended`, signed like every other Shield webhook |
 | **SIEM** | analysts and SIEM-native playbooks | the indicators ride on the fleet detection event (section 8) |
 
+**Rev 8 (R6), as built:**
+- **Feed token, not a key scope.** The feed takes `X-Shield-Feed-Token`, a
+  `shs_fd_` token minted per tenant (`/v1/agent-detection/feed-tokens`, at
+  most 5, shown once, sha256 kept). It is not a tenant API key, so it works
+  on the feed and nowhere else by construction, and the shared key
+  middleware the guard path runs through is untouched. The feed's exact path
+  is the only agent detection route on the auth layer's self-authenticated
+  list.
+- **Tag-only indicator types:** `shs` (fleet members, clear agents, and a
+  new session on an active fleet's rare device or client, published on its
+  first beacon) and `client`, the exact string an edge matches with
+  `"$http_user_agent|$http_sec_ch_ua|$http_sec_ch_ua_platform|$http_sec_ch_ua_mobile"`,
+  rare among human-like sessions on that exact string. **Networks are not
+  published** in tag-only mode: Shield keeps only a salted /24 hash, which no
+  edge can match. Accounts need tier 1.
+- **Formats:** JSON (with the edge client key), CSV, and an Nginx file of two
+  `map` blocks (`$shield_agd_shs`, `$shield_agd_client`). ETag is the hash of
+  the indicators, so polling every 60 s answers 304 when nothing changed.
+- **Settings** live in `agd:{tenant}:enforcement` (modes per type, action,
+  lifetime 300 s to 24 h, paused) rather than the tenant config blob, behind
+  the config write gate. Revoked indicators are held back 24 h
+  (`agd:{tenant}:revoked`) so the worker doesn't republish them at once.
+- **Webhooks** `agent_fleet.indicators` (members and the rare client, pages
+  as the tag-only undo list) and `agent_fleet.ended`, only when a type is in
+  enforce and nothing is paused.
+
 Shipped examples (docs, not connectors):
 - an Nginx `map` plus `auth_request` snippet that challenges matching sessions;
 - a Splunk SOAR playbook and a Sentinel playbook that suspend or flag fleet
@@ -854,7 +880,7 @@ browser.
 | `POST /v1/agent-detection/detections/{id}/feedback` | portal session | Mark a detection true or false positive (feeds the nightly hunt) |
 | `GET /v1/agent-detection/proposals`; `POST .../{id}/approve` or `/reject` | portal admin | Hunt rule proposals with their lab evaluation; approval queues the rule for the next detector pack |
 | `GET /v1/agent-detection/budget` | portal session | Today's model calls, tokens and remaining budget |
-| `GET /v1/agent-detection/indicators?format=json\|csv\|nginx` | tenant API key with a new `indicators:read` scope | Current indicators; `ETag` and `If-None-Match` supported; empty in monitor mode |
+| `GET /v1/agent-detection/indicators?format=json\|csv\|nginx` | feed token in `X-Shield-Feed-Token` (rev 8; was a tenant API key with an `indicators:read` scope) | Current indicators; `ETag` and `If-None-Match` supported; empty in monitor mode |
 | `POST /v1/agent-detection/indicators/{id}/revoke` | portal admin | Remove one indicator early |
 | `POST /v1/agent-detection/indicators/clear` | portal admin | Kill switch: remove all indicators and pause publishing for this tenant |
 | `POST /v1/agent-detection/detections/{id}/promote` | portal admin | Make a grey-zone (agent-raised) detection eligible for indicators |

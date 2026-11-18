@@ -218,7 +218,12 @@ def find_fleets(sessions: list[dict], *, min_size: Optional[int] = None,
             "devices": [{"hash": d, "sessions": n, "rare": prev.rare_device(d),
                          "share": round(prev.share("device", d), 5)} for d, n in devices.most_common(5)],
             "clients": [{"hash": c, "sessions": n, "rare": prev.rare_client(c),
-                         "share": round(prev.share("client", c), 5)} for c, n in clients.most_common(5)],
+                         "share": round(prev.share("client", c), 5),
+                         "value": next((m["client_strings"][c] for m in members
+                                        if c in (m.get("client_strings") or {})), None)}
+                        for c, n in clients.most_common(5)],
+            # the undo list (spec 5.4) in tag-only form: where the fleet's sessions went
+            "pages": dict(Counter(p for m in members for p in (m.get("pages") or [])).most_common(20)),
             "nets": sorted(nets)[:200],
             "pack": scoring.pack()["version"],
         })

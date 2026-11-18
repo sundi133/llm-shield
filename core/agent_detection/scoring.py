@@ -50,16 +50,22 @@ def device_hash(dev: dict) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-def client_hash(req: dict) -> str:
+def client_string(req: dict) -> str:
+    """Exactly what an edge matches with
+    "$http_user_agent|$http_sec_ch_ua|$http_sec_ch_ua_platform|$http_sec_ch_ua_mobile"."""
     h = req.get("hints") or {}
-    raw = "|".join((req.get("ua", ""), h.get("ua", ""), h.get("platform", ""), h.get("mobile", "")))
-    return hashlib.sha256(raw.encode()).hexdigest()[:12]
+    return "|".join((req.get("ua", ""), h.get("ua", ""), h.get("platform", ""), h.get("mobile", "")))
+
+
+def client_hash(req: dict) -> str:
+    return hashlib.sha256(client_string(req).encode()).hexdigest()[:12]
 
 
 def new_session(shs: str) -> dict:
     return {"shs": shs, "first": 0.0, "last": 0.0, "n": 0, "dropped": 0, "pages": [], "views": {},
             "loads": 0, "submits": 0, "device": {}, "device_hashes": [], "automation": {},
-            "clients": [], "nets": [], "traps": {"shown": [], "hits": [], "canaries": 0},
+            "clients": [], "client_strings": {}, "nets": [],
+            "traps": {"shown": [], "hits": [], "canaries": 0},
             "links": []}
 
 
@@ -81,7 +87,13 @@ def add(sess: dict, e: dict) -> dict:
     sess["last"] = max(sess["last"], ts)
     _add_unique(sess["nets"], req.get("net_hash"))
     if req:
-        _add_unique(sess["clients"], client_hash(req))
+        ch = client_hash(req)
+        _add_unique(sess["clients"], ch)
+        cs = sess.setdefault("client_strings", {})
+        # Only an exact string can become an edge indicator; the collector
+        # cuts the UA at 300 characters, so a cut one is never kept.
+        if ch not in cs and len(cs) < 5 and len(req.get("ua", "")) < 300:
+            cs[ch] = client_string(req)
     kind = e.get("kind")
     tr = e.get("traps") or {}
     for t in tr.get("shown", []):

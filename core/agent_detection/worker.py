@@ -38,6 +38,7 @@ from typing import Iterable, Optional
 
 from core import agent_detection as _agd
 from core.agent_detection import fleets as fleets_mod
+from core.agent_detection import indicators as ind
 from core.agent_detection import scoring, sitekeys, stream
 
 log = logging.getLogger("shield.agent_detection.worker")
@@ -231,12 +232,84 @@ class MemoryStore:
 _last_fleet_run: dict[str, float] = {}
 
 
+def _webhook(tenant: str, event: str, payload: dict) -> None:
+    """Fires only when some indicator type is enforced and nothing is paused
+    (spec 5.5: monitor mode sends nothing out)."""
+    st = ind.settings(tenant)
+    if st["paused"] or "enforce" not in st["modes"].values():
+        return
+    try:
+        import asyncio
+        from core.webhook_dispatcher import dispatch_event
+        asyncio.run(dispatch_event(tenant, event, payload))
+    except Exception as exc:            # noqa: BLE001 - delivery is best effort; the feed is the source of truth
+        log.warning("webhook %s not sent: %s", event, type(exc).__name__)
+
+
+def publish_sessions(tenant: str, changed: dict[str, dict], sigs: dict, now: float) -> int:
+    """Clear agents, and any session on an active fleet's rare device or client
+    (a fresh sandbox from the same image, matched on its first beacon)."""
+    items = []
+    for shs, s in changed.items():
+        v = s.get("verdict") or {}
+        if v.get("band") == "clear_agent":
+            items.append({"type": "shs", "value": shs, "reason": f"clear agent (score {v.get('score')})"})
+            continue
+        fid = sigs.get("devices", {}).get(scoring.device_of(s) or "")
+        how = "device"
+        if not fid:
+            fid = next((sigs.get("clients", {}).get(c) for c in s.get("clients") or []
+                        if sigs.get("clients", {}).get(c)), None)
+            how = "browser signature"
+        if fid:
+            items.append({"type": "shs", "value": shs, "fleet_id": fid,
+                          "reason": f"new session on the {how} of fleet {fid}"})
+    return ind.publish(tenant, items, now)
+
+
 def recompute_fleets(store, tenant: str, now: Optional[float] = None) -> list[dict]:
     now = time.time() if now is None else now
     window = _env_float("SHIELD_AGENT_DETECTION_FLEET_WINDOW_S", 6 * 3600)
     sessions = store.recent_sessions(tenant, now - window, MAX_WINDOW_SESSIONS)
     found = fleets_mod.find_fleets(sessions)
     store.save_fleets(tenant, found, now)
+
+    # Indicators for active fleets, renewed every recompute while the fleet
+    # keeps going; they lapse on their own once it stops (spec 5.2).
+    lifetime = ind.settings(tenant)["lifetime_s"]
+    live = [f for f in found if f["last_seen"] >= now - lifetime]
+    items, sigs = [], {"devices": {}, "clients": {}}
+    for f in live:
+        items += [{"type": "shs", "value": m, "fleet_id": f["id"], "reason": f"member of fleet {f['id']}"}
+                  for m in f["members"]]
+        for c in f["clients"]:
+            if c["rare"]:
+                sigs["clients"][c["hash"]] = f["id"]
+                if c.get("value"):
+                    items.append({"type": "client", "value": c["value"], "fleet_id": f["id"],
+                                  "prevalence": c["share"], "reason": f"browser signature of fleet {f['id']}"})
+        for d in f["devices"]:
+            if d["rare"]:
+                sigs["devices"][d["hash"]] = f["id"]
+    ind.publish(tenant, items, now)
+    ind.set_json(tenant, "fleet_sigs", sigs)
+
+    before = set(ind.get_json(tenant, "fleets_published", []))
+    now_ids = {f["id"] for f in live}
+    ind.set_json(tenant, "fleets_published", sorted(now_ids))
+    for f in live:
+        if f["id"] in before:
+            continue
+        ind.log_event(tenant, "fleet_published", fleet_id=f["id"], size=f["size"])
+        values = [{"type": "shs", "value": m} for m in f["members"][:500]] + \
+                 [{"type": "client", "value": c["value"]} for c in f["clients"] if c["rare"] and c.get("value")]
+        _webhook(tenant, "agent_fleet.indicators", {
+            "fleet_id": f["id"], "size": f["size"], "networks": f["networks"], "traits": f["traits"],
+            "first_seen": f["first_seen"], "last_seen": f["last_seen"], "pages": f.get("pages", {}),
+            "indicators": values, "feed": "/v1/agent-detection/indicators"})
+    for fid in sorted(before - now_ids):
+        ind.log_event(tenant, "fleet_ended", fleet_id=fid)
+        _webhook(tenant, "agent_fleet.ended", {"fleet_id": fid})
     return found
 
 
@@ -249,6 +322,7 @@ def process_tenant(store, tenant: str, now: Optional[float] = None, owner: str =
         done["skipped"] = 1
         return done
     try:
+        sigs = ind.get_json(tenant, "fleet_sigs", {})
         for _ in range(MAX_BATCHES):
             batch = store.read(tenant, store.cursor(tenant), BATCH)
             if not batch:
@@ -273,6 +347,7 @@ def process_tenant(store, tenant: str, now: Optional[float] = None, owner: str =
                     newly[band] += 1
             stats = {"beacons": len(batch), "sessions_scored": len(changed), **newly}
             store.put_sessions(tenant, changed, now, stats)
+            publish_sessions(tenant, changed, sigs, now)
             store.set_cursor(tenant, batch[-1][0])     # only after the sessions are saved
             done["entries"] += len(batch)
             done["sessions"] += len(changed)
