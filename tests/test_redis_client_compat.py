@@ -392,3 +392,28 @@ def test_agent_detection_worker_store(kind, client_env, backend):
     assert worker.process_tenant(store, tenant)["entries"] == 1
     assert store.get_sessions(tenant, [a])[a]["n"] == 2
     assert raw.execute_command("GET", f"agd:{tenant}:worker_lock") is None
+
+
+@live
+@pytest.mark.parametrize("kind", ["upstash", "redis-py"])
+def test_agent_detection_fleet_store(kind, client_env, backend):
+    """Recent sessions (ZRANGEBYSCORE + pipelined GET) and fleets (SET EX,
+    ZADD, ZREVRANGE) on both clients."""
+    from core.agent_detection import scoring, worker
+    raw, created = backend
+    r = _use(kind, client_env, raw)
+    tenant = f"compat-{kind}-{secrets.token_hex(4)}"
+    created.update({f"agd:{tenant}:*"})
+    store, now = worker.RedisStore(r), time.time()
+    sessions = {}
+    for i in range(3):
+        s = scoring.new_session(f"{i:024x}")
+        s.update(first=now - 10, last=now - 10 + i)
+        sessions[s["shs"]] = s
+    store.put_sessions(tenant, sessions, now, {})
+    got = store.recent_sessions(tenant, now - 60, 2)
+    assert sorted(s["shs"] for s in got) == [f"{1:024x}", f"{2:024x}"]        # the 2 most recent
+    fleet = {"id": "fl_test", "size": 3, "last_seen": now, "members": list(sessions)}
+    store.save_fleets(tenant, [fleet], now)
+    assert [f["id"] for f in store.list_fleets(tenant)] == ["fl_test"]
+    assert 0 < raw.execute_command("TTL", f"agd:{tenant}:fleet:fl_test") <= worker.FLEET_TTL_S

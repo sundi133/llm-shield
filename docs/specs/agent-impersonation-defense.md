@@ -407,6 +407,21 @@ without any log.
 | Fleets on device, timing, page sequence, network (supporting) and controller reuse | Fleets on accounts (beacons carry none) |
 | Indicators: `_shs`, client fingerprint (the beacon request's user agent and client hints), network | Account indicators; A11 and decoys (edge log fields) |
 
+**Fleets in tag-only mode (rev 8, R5).** The worker recomputes fleets every
+2 minutes over the sessions seen in the last 6 hours. Prevalence is counted
+over that window's human-like sessions (rather than the hourly counters of
+section 8, which tier 1 still uses), and it now applies to behavior too: two
+sessions share **behavior** only when their bucketed interaction profile is
+rare among human-like sessions (under 0.1%, floor 1,000). Found while
+building R5: at real volume, people on a popular funnel share a path, an
+ordinary profile and a 30-second window all the time, and the rev 7 rule
+chained 10,000 synthetic shoppers into one "fleet". The cost is explicit:
+agents that score human-like and also type like people link only through a
+trap code (controller). No false fleets beats catching perfect mimics.
+Pairs are compared only inside blocks a link needs (same rare profile plus
+the same 30-second slot, device, client or network), so the work stays
+near-linear.
+
 Adding a SIEM source later turns the right-hand column on with no change to
 the tag. Detection delay in tag-only mode is the worker's beacon cycle
 (default 30 s) plus fleet recompute; there is no poll interval.
@@ -776,7 +791,8 @@ Prefix `agd:` (agent detection). All keys are tenant-scoped.
 | `agd:{tenant}:trapcode:{code}` | the `_shs` hash that was shown this code | 24 h |
 | `agd:{tenant}:lsh:{band}:{bucket_hash}` | set of session key hashes (path similarity candidates) | 1 h |
 | `agd:{tenant}:trait:{kind}:{value_hash}:{bucket}` | set of session key hashes (start, fingerprint, network) | 1 h |
-| `agd:{tenant}:fleet:{id}` | hash: size, networks, traits, member sample, first_seen, last_seen | 24 h after last match |
+| `agd:{tenant}:fleet:{id}` | hash: size, networks, traits, member sample, first_seen, last_seen (rev 8: JSON with members up to 5,000, bands, and the devices and clients with their prevalence; id from the earliest member, so it stays stable as the fleet grows) | 24 h after last match |
+| `agd:{tenant}:fleets` | sorted set fleet id to last seen (rev 8) | entries dropped after 24 h |
 | `agd:{tenant}:alerted:{entity_hash}` | existing alert ids for this entity in the window | 2 h |
 | `agd:{tenant}:detections` | capped list (10,000) of sent detections and enrichments | 7 days |
 | `agd:{tenant}:queue` | sorted set of grey-zone session and fleet ids awaiting the agent, by enqueue time | entries dropped after 2 h |

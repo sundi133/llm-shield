@@ -15,6 +15,12 @@ Keys it writes (spec section 8; rev 8 adds the index and the stream cursor):
   agd:{tenant}:sess:{shs}       session summary + verdict (JSON, 24 h)
   agd:{tenant}:sessions         sorted set shs -> last seen, trimmed to 24 h
   agd:{tenant}:stats:{yyyymmdd} hash of counters (35 days)
+  agd:{tenant}:fleet:{id}       fleet JSON (24 h after it was last seen)
+  agd:{tenant}:fleets           sorted set fleet id -> last seen, trimmed to 24 h
+
+Fleets are recomputed every SHIELD_AGENT_DETECTION_FLEET_S (default 120 s)
+per tenant over the sessions last seen in the window
+(SHIELD_AGENT_DETECTION_FLEET_WINDOW_S, default 6 h, at most 50,000).
 
 Rev 8 reads the stream with a cursor and a per-tenant lock instead of a
 consumer group: both Redis clients support XRANGE the same way, and one
@@ -31,6 +37,7 @@ import time
 from typing import Iterable, Optional
 
 from core import agent_detection as _agd
+from core.agent_detection import fleets as fleets_mod
 from core.agent_detection import scoring, sitekeys, stream
 
 log = logging.getLogger("shield.agent_detection.worker")
@@ -40,6 +47,15 @@ LOCK_TTL_S = 120
 BATCH = 2000
 MAX_BATCHES = 10            # per tenant per cycle; the rest waits for the next cycle
 STATS_TTL_S = 35 * 86_400
+FLEET_TTL_S = 86_400
+MAX_WINDOW_SESSIONS = 50_000
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
 
 
 def _d(v):
@@ -117,6 +133,43 @@ class RedisStore:
         run_pipeline(pipe)
 
 
+    def recent_sessions(self, tenant: str, since: float, limit: int) -> list[dict]:
+        ids = self.r.zrangebyscore(f"agd:{tenant}:sessions", since, "+inf")
+        ids = [_d(i) for i in (ids or [])][-limit:]
+        out = []
+        for i in range(0, len(ids), 1000):
+            chunk = ids[i:i + 1000]
+            out.extend(self.get_sessions(tenant, chunk).values())
+        return out
+
+    def save_fleets(self, tenant: str, fleets: list[dict], now: float) -> None:
+        from storage.tenant_store import run_pipeline
+        pipe = self.r.pipeline()
+        for f in fleets:
+            pipe.set(f"agd:{tenant}:fleet:{f['id']}", json.dumps(f, separators=(",", ":")), ex=FLEET_TTL_S)
+        if fleets:
+            pipe.zadd(f"agd:{tenant}:fleets", {f["id"]: f["last_seen"] or now for f in fleets})
+        pipe.zremrangebyscore(f"agd:{tenant}:fleets", 0, now - FLEET_TTL_S)
+        run_pipeline(pipe)
+
+    def list_fleets(self, tenant: str) -> list[dict]:
+        ids = [_d(i) for i in (self.r.zrevrange(f"agd:{tenant}:fleets", 0, 199) or [])]
+        if not ids:
+            return []
+        from storage.tenant_store import run_pipeline
+        pipe = self.r.pipeline()
+        for i in ids:
+            pipe.get(f"agd:{tenant}:fleet:{i}")
+        out = []
+        for raw in run_pipeline(pipe):
+            try:
+                if raw:
+                    out.append(json.loads(_d(raw)))
+            except ValueError:
+                pass
+        return out
+
+
 class MemoryStore:
     """No Redis (tests, a laptop): reads the in-memory stream stand-in."""
 
@@ -125,6 +178,7 @@ class MemoryStore:
         self.sessions: dict[str, dict[str, dict]] = {}
         self.index: dict[str, dict[str, float]] = {}
         self.stats: dict[str, dict[str, int]] = {}
+        self.fleets: dict[str, dict[str, dict]] = {}
 
     def lock(self, tenant, owner):
         return True
@@ -159,11 +213,38 @@ class MemoryStore:
             st[k] = st.get(k, 0) + v
 
 
+    def recent_sessions(self, tenant, since, limit):
+        idx = self.index.get(tenant, {})
+        ids = sorted((k for k, v in idx.items() if v >= since), key=lambda k: idx[k])[-limit:]
+        return list(self.get_sessions(tenant, ids).values())
+
+    def save_fleets(self, tenant, fleets, now):
+        have = self.fleets.setdefault(tenant, {})
+        have.update({f["id"]: json.loads(json.dumps(f)) for f in fleets})
+        for fid in [k for k, f in have.items() if f["last_seen"] < now - FLEET_TTL_S]:
+            have.pop(fid)
+
+    def list_fleets(self, tenant):
+        return sorted(self.fleets.get(tenant, {}).values(), key=lambda f: -f["last_seen"])
+
+
+_last_fleet_run: dict[str, float] = {}
+
+
+def recompute_fleets(store, tenant: str, now: Optional[float] = None) -> list[dict]:
+    now = time.time() if now is None else now
+    window = _env_float("SHIELD_AGENT_DETECTION_FLEET_WINDOW_S", 6 * 3600)
+    sessions = store.recent_sessions(tenant, now - window, MAX_WINDOW_SESSIONS)
+    found = fleets_mod.find_fleets(sessions)
+    store.save_fleets(tenant, found, now)
+    return found
+
+
 def process_tenant(store, tenant: str, now: Optional[float] = None, owner: str = "") -> dict:
     """One cycle for one tenant. Returns counters (for logs and tests)."""
     now = time.time() if now is None else now
     owner = owner or f"{socket.gethostname()}:{os.getpid()}"
-    done = {"entries": 0, "sessions": 0, "clear_agent": 0, "grey": 0, "skipped": 0}
+    done = {"entries": 0, "sessions": 0, "clear_agent": 0, "grey": 0, "skipped": 0, "fleets": None}
     if not store.lock(tenant, owner):
         done["skipped"] = 1
         return done
@@ -199,6 +280,10 @@ def process_tenant(store, tenant: str, now: Optional[float] = None, owner: str =
                 done[band] += n
             if len(batch) < BATCH:
                 break
+        every = _env_float("SHIELD_AGENT_DETECTION_FLEET_S", 120)
+        if now - _last_fleet_run.get(tenant, 0.0) >= every:
+            _last_fleet_run[tenant] = now
+            done["fleets"] = len(recompute_fleets(store, tenant, now))
     finally:
         store.unlock(tenant, owner)
     return done
