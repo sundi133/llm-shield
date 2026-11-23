@@ -38,6 +38,7 @@ Optional add-ons (uncomment in your overlay's `kustomization.yaml`):
 | `components/redis-auth` | Redis password (on by default in `split` and `external`) |
 | `components/vault` | The secret vault for the LLM gateway's vault mode |
 | `components/external-redis` | Use your own Redis instead of the bundled one |
+| `components/agent-detection` | AI agent detection: the tag's public collector and the scoring worker (see below) |
 
 Nothing here is cluster-scoped and nothing has a hardcoded namespace, so a
 project admin can install it.
@@ -265,6 +266,22 @@ Add `components/external-redis` and put its address in `REDIS_URL` in both
 - one endpoint (`redis://`, or `rediss://` for TLS; Sentinel addresses are not supported);
 - Lua scripting enabled;
 - `maxmemory-policy noeviction`, persistence on.
+
+## AI agent detection
+
+Only if you use the AI agent detection tag. Two deployments from the admin
+image: the collector, a small public service browsers send tag beacons to,
+and the worker, which scores them (internal, no Route). Both read only
+`REDIS_URL` from `shield-admin-secrets`. Create the secret, add
+`components/agent-detection` to your overlay, and apply:
+
+```bash
+oc create secret generic shield-agent-detection --from-literal=SHIELD_AGENT_DETECTION_HASH_SALT=$(openssl rand -hex 32) --from-literal=SHIELD_AGENT_DETECTION_TRAP_SECRET=$(openssl rand -hex 32)
+```
+
+Expose its Route publicly, or map your site's `/_shs/` path to it on your CDN
+(first-party, so ad blockers leave it alone). `GET /health` answers
+`{"ok": true}`.
 
 ## Upgrade
 

@@ -333,3 +333,127 @@ def test_tenant_and_pipeline_primitives(kind, client_env, backend):
     tx.incr(f"compat:{tenant}:a")
     res = ts.run_pipeline(tx)
     assert res[1] == 2 and r.get(f"compat:{tenant}:a") == "2"
+
+
+@live
+@pytest.mark.parametrize("kind", ["upstash", "redis-py"])
+def test_agent_detection_site_keys_stream_and_trap_codes(kind, client_env, backend):
+    """Site keys, the beacon stream (XADD differs between the two clients) and
+    trap codes (SET NX EX) on both clients (docs/specs/agent-impersonation-defense.md)."""
+    from core.agent_detection import sitekeys, stream, traps
+    raw, created = backend
+    _use(kind, client_env, raw)
+    tenant = f"compat-{kind}-{secrets.token_hex(4)}"
+    created.update({f"agd:{tenant}:*", "agd:sitekey:*", "agd:tag_tenants"})
+
+    rec = sitekeys.create(tenant, origins=["https://shop.example"])
+    assert sitekeys.get(rec["site_key"])["tenant"] == tenant
+    assert [k["site_key"] for k in sitekeys.list_for(tenant)] == [rec["site_key"]]
+    assert tenant in sitekeys.tag_tenants()
+
+    sid = stream.append(tenant, {"shs": "a" * 24, "kind": "load"})
+    assert sid and "-" in sid
+    entries = raw.execute_command("XRANGE", stream.key(tenant), "-", "+")
+    assert len(entries) == 1
+
+    traps.record(tenant, ["0a1b2c3d"], "a" * 24)
+    traps.record(tenant, ["0a1b2c3d"], "b" * 24)              # first writer wins
+    assert traps.owner_of(tenant, "0a1b2c3d") == "a" * 24
+    assert 0 < raw.execute_command("TTL", traps.code_key(tenant, "0a1b2c3d")) <= traps.CODE_TTL_S
+
+    assert sitekeys.delete(tenant, rec["site_key"]) is True
+    assert sitekeys.get(rec["site_key"]) is None and tenant not in sitekeys.tag_tenants()
+
+
+@live
+@pytest.mark.parametrize("kind", ["upstash", "redis-py"])
+def test_agent_detection_worker_store(kind, client_env, backend):
+    """The worker's reads and pipelined writes (XRANGE with an exclusive
+    start, GET/SET EX, ZADD, HINCRBY) on both clients."""
+    from core.agent_detection import stream, worker
+    raw, created = backend
+    r = _use(kind, client_env, raw)
+    tenant = f"compat-{kind}-{secrets.token_hex(4)}"
+    created.update({f"agd:{tenant}:*"})
+    a, b = "a" * 24, "b" * 24
+    req = {"ts": time.time(), "net_hash": "n", "ua": "UA", "hints": {}}
+    stream.append(tenant, {"shs": a, "kind": "load", "page": "/", "t": 5, "req": req,
+                           "device": {"renderer_class": "gpu"}, "automation": {"webdriver": True}})
+    stream.append(tenant, {"shs": b, "kind": "load", "page": "/", "t": 5, "req": req})
+    store = worker.RedisStore(r)
+    out = worker.process_tenant(store, tenant)
+    assert out["entries"] == 2 and out["sessions"] == 2
+    sess = store.get_sessions(tenant, [a, b])
+    assert sess[a]["verdict"]["signals"]["A8"] == 1.0 and sess[b]["n"] == 1
+    assert 0 < raw.execute_command("TTL", f"agd:{tenant}:sess:{a}") <= worker.SESSION_TTL_S
+    assert raw.execute_command("ZCARD", f"agd:{tenant}:sessions") == 2
+    assert worker.process_tenant(store, tenant)["entries"] == 0          # the cursor held
+    stream.append(tenant, {"shs": a, "kind": "leave", "page": "/", "t": 9, "req": req})
+    assert worker.process_tenant(store, tenant)["entries"] == 1
+    assert store.get_sessions(tenant, [a])[a]["n"] == 2
+    assert raw.execute_command("GET", f"agd:{tenant}:worker_lock") is None
+
+
+@live
+@pytest.mark.parametrize("kind", ["upstash", "redis-py"])
+def test_agent_detection_fleet_store(kind, client_env, backend):
+    """Recent sessions (ZRANGEBYSCORE + pipelined GET) and fleets (SET EX,
+    ZADD, ZREVRANGE) on both clients."""
+    from core.agent_detection import scoring, worker
+    raw, created = backend
+    r = _use(kind, client_env, raw)
+    tenant = f"compat-{kind}-{secrets.token_hex(4)}"
+    created.update({f"agd:{tenant}:*"})
+    store, now = worker.RedisStore(r), time.time()
+    sessions = {}
+    for i in range(3):
+        s = scoring.new_session(f"{i:024x}")
+        s.update(first=now - 10, last=now - 10 + i)
+        sessions[s["shs"]] = s
+    store.put_sessions(tenant, sessions, now, {})
+    got = store.recent_sessions(tenant, now - 60, 2)
+    assert sorted(s["shs"] for s in got) == [f"{1:024x}", f"{2:024x}"]        # the 2 most recent
+    fleet = {"id": "fl_test", "size": 3, "last_seen": now, "members": list(sessions)}
+    store.save_fleets(tenant, [fleet], now)
+    assert [f["id"] for f in store.list_fleets(tenant)] == ["fl_test"]
+    assert 0 < raw.execute_command("TTL", f"agd:{tenant}:fleet:fl_test") <= worker.FLEET_TTL_S
+
+
+@live
+@pytest.mark.parametrize("kind", ["upstash", "redis-py"])
+def test_agent_detection_indicators(kind, client_env, backend):
+    """Indicators (pipelined ZSCORE/HGET then HSET/ZADD), pruning, revoke,
+    the log (LPUSH/LTRIM/LRANGE), settings and feed tokens on both clients."""
+    from core.agent_detection import indicators as ind
+    raw, created = backend
+    _use(kind, client_env, raw)
+    tenant = f"compat-{kind}-{secrets.token_hex(4)}"
+    created.update({f"agd:{tenant}:*", "agd:feedtoken:*"})
+    now = time.time()
+    assert ind.publish(tenant, [{"type": "shs", "value": "a" * 24}, {"type": "client", "value": "UA|h|p|?0"}], now) == 2
+    assert ind.publish(tenant, [{"type": "shs", "value": "a" * 24}], now + 5) == 0
+    assert {i["type"] for i in ind.active(tenant, now + 5)} == {"shs", "client"}
+    assert ind.active(tenant, now + ind.DEFAULT_LIFETIME_S + 10) == []          # pruned
+    ind.publish(tenant, [{"type": "shs", "value": "b" * 24}])
+    assert ind.revoke(tenant, ind.indicator_id("shs", "b" * 24), who="t") is True
+    assert ind.publish(tenant, [{"type": "shs", "value": "b" * 24}]) == 0       # held back
+    assert ind.read_log(tenant)[0]["event"] == "revoke"
+    assert ind.save_settings(tenant, {"modes": {"shs": "enforce"}})["modes"]["shs"] == "enforce"
+    assert ind.settings(tenant)["modes"]["shs"] == "enforce"
+    rec, token = ind.mint_token(tenant, "edge")
+    assert ind.resolve_token(token) == tenant and ind.list_tokens(tenant)[0]["id"] == rec["id"]
+    assert ind.delete_token(tenant, rec["id"]) and ind.resolve_token(token) is None
+
+
+@live
+@pytest.mark.parametrize("kind", ["upstash", "redis-py"])
+def test_agent_detection_decoy_settings(kind, client_env, backend):
+    from core.agent_detection import decoys
+    raw, created = backend
+    _use(kind, client_env, raw)
+    tenant = f"compat-{kind}-{secrets.token_hex(4)}"
+    created.update({f"agd:{tenant}:*"})
+    assert decoys.load(tenant) is None                    # read-only: no seed created
+    st = decoys.save(tenant, {"enabled": True, "key_prefix": "acme_pk_"})
+    assert decoys.load(tenant)["seed"] == st["seed"] and decoys.load(tenant)["enabled"] is True
+    assert decoys.plan(tenant) == decoys.plan(tenant, decoys.load(tenant))

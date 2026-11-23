@@ -2915,6 +2915,10 @@
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
         Guardrail Metrics
       </div>
+      <div class="nav-item" data-tab="agent-detection">
+        <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        AI Agent Detection
+      </div>
       <div class="nav-item" data-tab="kill-switch">
         <svg class="nav-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>
         Emergency Controls
@@ -5716,6 +5720,16 @@ if __name__ == "__main__":
         </label>
         <div id="pp-methods-note" style="font-size:12px;color:var(--text-muted);margin-top:0.4rem;"></div>
       </div>
+    </div>
+
+    <!-- AI agent detection (docs/specs/agent-impersonation-defense.md, rev 8):
+         the page itself is static/agent-detection-ui.js. -->
+    <div id="tab-agent-detection" class="tab-pane hidden">
+      <div class="page-header">
+        <div class="page-title">AI Agent Detection</div>
+        <div class="page-desc">Find AI agents posing as your customers, and the fleets one controller runs, from a small tag on your pages. Your own firewall or CDN stops them.</div>
+      </div>
+      <div id="agent-detection-root"></div>
     </div>
 
     <!-- Webhook inbox (docs/specs/webhook-inbox.md): this tenant's inboxes
@@ -18267,6 +18281,7 @@ document.addEventListener('click', (e) => {
     }
     if (tab === 'siem') loadSIEMData();
     if (tab === 'inbound-webhooks') loadTenantInboxes();
+    if (tab === 'agent-detection') loadAgentDetection();
     if (tab === 'people') loadPeople();
     if (tab === 'cross-app-flow') xfLoad();
     if (tab === 'runtime-profiles') { rpLoad(); ccLoad(); }
@@ -19447,6 +19462,16 @@ async function saveChangePassword() {
     showToast('Password changed. You were signed out everywhere else.', 'success');
   } catch (e) { showError('pwc-msg', e.message); }
   finally { btn.disabled = false; }
+}
+
+// ── AI agent detection (docs/specs/agent-impersonation-defense.md, R7) ──
+let AGENT_DETECTION_UI = null;
+function loadAgentDetection() {
+  if (!AGENT_DETECTION_UI) {
+    AGENT_DETECTION_UI = window.AgentDetectionUI.mount({ root: document.getElementById('agent-detection-root'),
+      api: apiCall, apiBase: BASE_URL || location.origin, toast: showToast });
+  }
+  AGENT_DETECTION_UI.load();
 }
 
 // ── Inbound webhooks (docs/specs/webhook-inbox.md, task 3) ───────────
@@ -22503,5 +22528,6 @@ async function exDecide(id, approve) {
 }
 </script>
 <script src="/static/inbox-ui.js"></script>
+<script src="/static/agent-detection-ui.js"></script>
 </body>
 </html>

@@ -18,7 +18,7 @@ GROUPS = {
     "Runtime Protection": ["policies", "mcp-gateway", "model-routing", "runtime-profiles",
                            "device-dlp", "cross-app-flow", "embodied-guard"],
     "Security Operations": ["workflow-controls", "activity", "telemetry", "guardrail-metrics",
-                            "kill-switch"],
+                            "agent-detection", "kill-switch"],
     "Governance & Reporting": ["governance", "exception-requests", "board-report"],
     "Developer Tools": ["apis", "webhooks", "inbound-webhooks", "siem", "usage"],
     "Votal AI Platform": ["system-health"],
@@ -44,7 +44,7 @@ def test_the_groups_in_order():
 
 def test_every_page_is_listed_exactly_once_and_has_a_pane():
     tabs = re.findall(r'data-tab="([^"]+)"', SIDEBAR)
-    assert len(tabs) == len(set(tabs)) == 29
+    assert len(tabs) == len(set(tabs)) == 30
     for tab in tabs:
         assert f'id="tab-{tab}"' in HTML, tab
 
