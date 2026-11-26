@@ -5585,6 +5585,7 @@ if __name__ == "__main__":
       <div class="card">
         <div class="card-header"><div><div class="card-title">DLP policy</div>
           <div class="card-desc">What every laptop enforces, signed into its bundle. <code>mode</code> is monitor or enforce, per fleet in <code>fleet_modes</code>. <code>enforcement</code> sets which categories the model may act on; source code, financial data and exfiltration intent are monitor-only by default because Tev1 0.8B misses too many of them. Rules come from your Data Policies.</div></div></div>
+        <div id="dd-detectors" style="margin-bottom:0.75rem;"></div>
         <textarea id="dd-policy" spellcheck="false" style="width:100%;min-height:320px;"></textarea>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
           <button class="small" onclick="ddValidate()">Validate</button>
@@ -7100,7 +7101,7 @@ const CUSTOM_POLICY_GUARDRAIL_KEYS = {
 const INPUT_GUARDRAILS = [
   'adversarial_detection', 'keyword_blocklist', 'topic_restriction',
   'language_detection', 'adversarial_rate_limiting', 'system_prompt_leak',
-  'toxicity', 'regex_pattern'
+  'toxicity', 'regex_pattern', 'sensitive_identifiers'
 ];
 const OUTPUT_GUARDRAILS = [
   'hallucinated_links', 'tone_enforcement', 'bias_detection',
@@ -7115,6 +7116,7 @@ const GUARDRAIL_META = {
   system_prompt_leak:        { label: 'System Prompt Leak',                desc: 'Detect attempts to extract or reveal the system prompt',                            icon: '🔒', color: '#f59e0b' },
   toxicity:                  { label: 'Toxicity',                          desc: 'Classify input for toxicity, hate speech, harassment, and self-harm',               icon: '⚠', color: '#ef4444' },
   regex_pattern:             { label: 'Custom Regex',                      desc: 'Block or flag inputs matching custom regex patterns',                               icon: '✏', color: '#eab308' },
+  sensitive_identifiers:     { label: 'Financial Identifiers & SSNs',      desc: 'Validated card numbers, IBANs, routing and account numbers and SSNs, also when encoded', icon: '💳', color: '#0ea5e9' },
   hallucinated_links:        { label: 'Hallucinated Weblink Detection',    desc: 'Detect fake or non-existent URLs in model outputs',                                 icon: '🔍', color: '#6366f1' },
   tone_enforcement:          { label: 'Tone Enforcement',                  desc: 'Enforce brand voice and block sarcastic, aggressive, or off-brand tone',            icon: '🎤', color: '#10b981' },
   bias_detection:            { label: 'Bias Detection',                    desc: 'Detect and mitigate gender, racial, age, and political bias',                       icon: '⚖', color: '#eab308' },
@@ -7130,6 +7132,14 @@ const GUARDRAIL_META = {
 };
 
 const GUARDRAIL_SETTINGS_EXAMPLES = {
+  sensitive_identifiers: {
+    _desc: "Validated financial identifiers and SSNs (Luhn, mod-97, checksums), also when spaced out or base64, hex or URL encoded. Regex only, no model call. Set action to redact to send the masked text instead.",
+    example: {
+      detectors: ["card_number", "iban", "aba_routing", "swift_bic", "bank_account", "us_ssn"],
+      decode: true,
+      ignore_test_values: false
+    }
+  },
   pii_detection: {
     _desc: "Detect PII in user inputs — SSNs, emails, phone numbers, credit cards, addresses",
     example: {
@@ -22138,6 +22148,7 @@ async function ddPolicy() {
   try {
     const p = await ddApi('/dlp-policy');
     document.getElementById('dd-policy').value = JSON.stringify(p.policy, null, 2);
+    ddRenderDetectors();
     xfMsg('dd-msg', p.stored ? `Saved policy ${xfEsc(p.hash.slice(0, 12))}, updated by ${xfEsc(p.updated_by || '?')}.`
                              : 'Defaults (nothing saved yet). These are the values the task 1 benchmark chose for Tev1 0.8B.');
   } catch (e) { xfMsg('dd-msg', xfErrors(e), 'error'); }
@@ -22271,6 +22282,46 @@ async function ddRevoke(id, host) {
   try { await ddApi(`/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }); ddDevices(); }
   catch (e) { xfMsg('dd-list', xfErrors(e), 'error'); }
 }
+// Built-in financial detectors (docs/specs/builtin-financial-patterns-decoded-pii.md).
+// Controls over the policy's optional `builtin_detectors` section: a change
+// writes the section into the JSON below; Save applies it. An untouched policy
+// gets no section, so its hash and every laptop's bundle stay as they are.
+const DD_DETECTORS = [['card_number', 'Card numbers (Luhn checked)'], ['iban', 'IBAN'],
+  ['aba_routing', 'US routing numbers (with "routing" nearby)'], ['swift_bic', 'SWIFT / BIC (after its label)'],
+  ['bank_account', 'Bank account numbers (with "account number" nearby)'], ['us_ssn', 'US Social Security numbers']];
+const DD_DET_DEFAULT = Object.assign({ decode: true, ignore_test_values: false },
+  ...DD_DETECTORS.map(([id]) => ({ [id]: 'monitor' })));
+function ddDetectorSettings() {
+  let pol = {};
+  try { pol = JSON.parse(document.getElementById('dd-policy').value || '{}'); } catch (e) { return null; }
+  return Object.assign({}, DD_DET_DEFAULT, pol.builtin_detectors || {});
+}
+function ddRenderDetectors() {
+  const st = ddDetectorSettings();
+  const box = document.getElementById('dd-detectors');
+  if (!st) { box.innerHTML = ''; return; }
+  const opt = (id) => ['off', 'monitor', 'redact', 'block'].map(a =>
+    `<option value="${a}" ${st[id] === a ? 'selected' : ''}>${a}</option>`).join('');
+  box.innerHTML = `<div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;">
+    <div style="font-weight:600;margin-bottom:0.25rem;">Built-in detectors</div>
+    <div class="muted" style="font-size:12px;margin-bottom:0.5rem;">Validated financial identifiers and SSNs, also when spaced out or base64, hex or URL encoded. Monitor records findings and changes nothing; block and redact act in fleets set to enforce. For a POC, set card numbers and IBAN to block. The web gateway cannot rewrite requests, so redact there needs block.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0.4rem 1rem;">
+      ${DD_DETECTORS.map(([id, label]) => `<label style="display:flex;justify-content:space-between;gap:0.5rem;align-items:center;font-size:13px;">
+        <span>${xfEsc(label)}</span><select data-config-write onchange="ddSetDetector('${id}', this.value)">${opt(id)}</select></label>`).join('')}
+    </div>
+    <div style="display:flex;gap:1.25rem;flex-wrap:wrap;margin-top:0.5rem;font-size:13px;">
+      <label><input type="checkbox" data-config-write ${st.decode ? 'checked' : ''} onchange="ddSetDetector('decode', this.checked)"> Decode base64, hex and URL encoding first</label>
+      <label><input type="checkbox" data-config-write ${st.ignore_test_values ? 'checked' : ''} onchange="ddSetDetector('ignore_test_values', this.checked)"> Ignore published test values (4111..., 123-45-6789)</label>
+    </div></div>`;
+}
+function ddSetDetector(key, value) {
+  let pol;
+  try { pol = JSON.parse(document.getElementById('dd-policy').value || '{}'); }
+  catch (e) { return xfMsg('dd-msg', 'Fix the policy JSON first: ' + xfEsc(e.message), 'error'); }
+  pol.builtin_detectors = Object.assign({}, DD_DET_DEFAULT, pol.builtin_detectors || {}, { [key]: value });
+  document.getElementById('dd-policy').value = JSON.stringify(pol, null, 2);
+  xfMsg('dd-msg', 'Changed built-in detectors. Save the policy to apply it.');
+}
 function ddEditor() {
   try { return JSON.parse(document.getElementById('dd-policy').value); }
   catch (e) { throw Object.assign(new Error('Policy is not valid JSON: ' + e.message), { errors: [] }); }
@@ -22286,6 +22337,7 @@ async function ddSave() {
   try {
     const r = await ddApi('/dlp-policy', { method: 'PUT', body: JSON.stringify(ddEditor()) });
     document.getElementById('dd-policy').value = JSON.stringify(r.policy, null, 2);
+    ddRenderDetectors();
     xfMsg('dd-msg', `Saved (${xfEsc(r.hash.slice(0, 12))}). Laptops pick it up on their next bundle poll.`, 'ok');
   } catch (e) { xfMsg('dd-msg', xfErrors(e), 'error'); }
 }

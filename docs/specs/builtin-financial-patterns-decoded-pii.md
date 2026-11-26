@@ -279,6 +279,39 @@ back to the original.
    on Input & Output Guardrails, a POC note (set `card_number` / `iban` to
    block), and a docs page listing detectors and limits.
 
+## As built (tasks 1 to 4, 2026-11-26)
+
+- **Corpus.** 373 labelled rows (194 positives computed valid by
+  `tests/fixtures/make_sensitive_identifiers_corpus.py`, independently of the
+  detectors): 100% recall, 0 false positives. Of the 178 benign dlp-bench
+  prompts (all `sensitive: false` rows, not only the 115 test-split ones), none
+  fire. None of the 28 dlp-bench "financial" prompts fire either: they are
+  business figures, not identifiers, which this spec does not cover.
+- **Latency** (local, Apple Silicon): p95 0.7 ms at 4 KB and 11 to 13 ms at
+  64 KB (ASCII and with Unicode plus base64), inside the 3 / 15 ms budget. The
+  URL-encoding scan walks from each `%` instead of a token regex, which was
+  the 64 KB hot spot.
+- **BIC context** is stricter than "near": the code must follow its label
+  (`SWIFT: X`, `BIC X`, `SWIFT/BIC code is X`), so an all-caps word near the
+  word SWIFT does not fire.
+- **Card windows.** A digit run that is not a card as a whole is split only at
+  real group boundaries of 3 or more digits, so a list of small numbers is
+  never stitched into a card.
+- **Device verdict.** Monitor hits are recorded with verdict `monitor` (action
+  `allow`), the engine's existing meaning for "allowed and recorded". Verdict
+  `allow`, as section 4 says, is not recorded by an enforce-mode engine.
+- **ICAP redact** resolves through `redact_fallback`: `block`, or `monitor`
+  (still observed and logged) when the fallback is `pass`.
+- **Overlap.** The same value reached two ways (base64 found directly and again
+  after URL decoding) counts once; the merged span is the widest.
+- **Portal.** A Built-in detectors panel on Endpoint DLP > Policy writes the
+  `builtin_detectors` section (only when changed); the guardrail card is
+  "Financial Identifiers & SSNs"; the Devices table flags agents without
+  `detectors_schema`. Docs: `docs/builtin-financial-detectors.md`.
+- **Server guardrail deadline** is `SHIELD_SENSITIVE_IDENTIFIERS_DEADLINE_MS`
+  (default 25, clamped 1 to 1000); timeouts are counted in
+  `guardrails.input.sensitive_identifiers.TIMEOUTS`.
+
 ## Follow-ups (not in this spec)
 
 - Reuse the validators in `guardrails/output/pii_leakage.py` (`credit_card`,
