@@ -81,6 +81,7 @@ class KitRequest:
     platforms: tuple = ()
     include_proxy: bool = True
     include_firefox: bool = True      # Firefox policy: its own proxy and trust store
+    terminal_coverage: bool = False   # CLIs and SDKs through the agent (agent's terminal.py)
     extension_ids: list = field(default_factory=list)
     extension_update_url: str = VOTAL_EXTENSION_UPDATE_URL
     root_pem: str = ""                # the tenant root (macOS)
@@ -165,6 +166,7 @@ def _values(req: KitRequest) -> dict:
         "profile_contents": _profile_contents(req),
         "windows_scripts_step": _windows_scripts_step(req),
         "firefox_policy_ps": _firefox_policy_ps(req),
+        "terminal_property": " TERMINALCOVERAGE=1" if req.terminal_coverage else "",
     }
 
 
@@ -283,6 +285,8 @@ def mac_profile(req: KitRequest) -> bytes:
                 "CAMode": "tenant"}
     if req.extension_ids:
         settings["ExtensionIDs"] = list(req.extension_ids)
+    if req.terminal_coverage:
+        settings["TerminalCoverage"] = True
     content = [payload("ai.votal.device-agent", "settings", settings)]
     der = x509.load_pem_x509_certificate(req.root_pem.encode()).public_bytes(
         serialization.Encoding.DER)
@@ -374,6 +378,8 @@ def readme(req: KitRequest, v: dict) -> str:
             parts.append(render("common/README-own-pac-firefox.md", v))
     if req.include_firefox:
         parts.append(render("common/README-firefox.md", v))
+    if req.terminal_coverage:
+        parts.append(render("common/README-terminal.md", v))
     if not req.extension_ids:
         parts.append(render("common/README-no-extension.md", v))
     parts.append(render("common/README-tail.md", v))
@@ -385,7 +391,7 @@ def manifest(req: KitRequest) -> dict:
     return {"kit_id": req.kit_id, "tenant_id": req.tenant_id, "fleet": req.fleet,
             "mdm": req.mdm, "platforms": list(req.resolved_platforms()),
             "agent_version": req.agent_version, "include_proxy": req.include_proxy,
-            "include_firefox": req.include_firefox,
+            "include_firefox": req.include_firefox, "terminal_coverage": req.terminal_coverage,
             "extension_ids": list(req.extension_ids),
             "extension_update_url": req.extension_update_url, "shield_url": req.shield_url,
             "root_fingerprint_sha256": req.root_fingerprint, "token_id": req.token_id,

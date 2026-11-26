@@ -516,6 +516,32 @@ def test_firefox_can_be_left_out(root_pem):
     assert json.loads(files["kit.json"])["include_firefox"] is False
 
 
+# ── R1 task 3: terminal coverage in the kit ───────────────────────────
+
+def test_terminal_coverage_is_off_unless_asked(root_pem):
+    files = rk.files(kit_req(root_pem, mdm="intune"))
+    doc = plistlib.loads(files["macos/Votal-Device-Agent.mobileconfig"])
+    settings = next(p for p in doc["PayloadContent"] if p["PayloadType"] == "ai.votal.device-agent")
+    assert "TerminalCoverage" not in settings
+    assert "TERMINALCOVERAGE" not in files["windows/install-command.txt"].decode()
+    assert "## Terminals and SDKs" not in files["README.md"].decode()
+    assert json.loads(files["kit.json"])["terminal_coverage"] is False
+
+
+def test_terminal_coverage_reaches_both_platforms(root_pem):
+    files = rk.files(kit_req(root_pem, mdm="intune", terminal_coverage=True))
+    doc = plistlib.loads(files["macos/Votal-Device-Agent.mobileconfig"])
+    settings = {k: v for k, v in next(p for p in doc["PayloadContent"]
+                                      if p["PayloadType"] == "ai.votal.device-agent").items()
+                if not k.startswith("Payload")}
+    assert settings["TerminalCoverage"] is True
+    assert managed.terminal_coverage(managed.validate(settings)) is True      # the agent accepts it
+    cmd = files["windows/install-command.txt"].decode()
+    assert cmd.count("TERMINALCOVERAGE=1") == 2                              # Intune line and msiexec line
+    readme = files["README.md"].decode()
+    assert "## Terminals and SDKs" in readme and "VOTAL_TERMINAL_PROXY=off" in readme
+
+
 def test_set_pac_writes_the_firefox_policy(root_pem):
     ps = rk.files(kit_req(root_pem, mdm="intune"))["windows/set-pac.ps1"].decode()
     for needle in ('HKLM:\\SOFTWARE\\Policies\\Mozilla\\Firefox', '"ImportEnterpriseRoots" -Type DWord -Value 1',
@@ -657,6 +683,13 @@ def test_include_firefox_is_recorded_in_the_kit_list_and_audit(api):
     assert '"include_firefox": false' in json.dumps(logged, default=str)
     _r, files = _kit(api)
     assert json.loads(files["kit.json"])["include_firefox"] is True        # on by default
+    assert json.loads(files["kit.json"])["terminal_coverage"] is False     # off by default
+    with patch("api.routes_devices.log_admin_action") as audit:
+        r, files = _kit(api, terminal_coverage=True)
+    assert "TERMINALCOVERAGE=1" in files["windows/install-command.txt"].decode()
+    kit = next(k for k in api.get(KITS).json()["kits"] if k["kit_id"] == r.headers["X-Votal-Kit-Id"])
+    assert kit["terminal_coverage"] is True
+    assert '"terminal_coverage": true' in json.dumps([c.kwargs for c in audit.call_args_list], default=str)
 
 
 def test_the_audit_never_carries_the_token(api):
@@ -672,6 +705,7 @@ def test_the_audit_never_carries_the_token(api):
     ({"expires_in_days": 400}, "1 to 365"), ({"uses": 0}, "uses"),
     ({"extension_ids": ["bad"]}, "extension id"), ({"turbo": True}, "unknown field"),
     ({"include_proxy": "yes"}, "include_proxy"), ({"include_firefox": 1}, "include_firefox"),
+    ({"terminal_coverage": "on"}, "terminal_coverage"),
 ])
 def test_a_bad_request_mints_no_token(api, body, needle):
     from core.dlp import devices as dv
