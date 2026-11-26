@@ -212,6 +212,8 @@ reason for any failure:
 | device CA trusted | On a Mac, the profile with the root certificate is missing or out of date: upload the one from a current kit. |
 | browser extension host | The extension ids in the kit do not match the installed extension. |
 | audit chain | The local decision log was altered. Report it: this is a tamper signal. |
+| Firefox policy | Firefox is installed but its policy is missing, so prompts typed in Firefox are not checked. Build a kit with Firefox included and upload the new profile (Mac) or `set-pac.ps1` (Windows). |
+| terminal coverage | Only checked when the kit turns terminal coverage on. "no CA bundle": the system root store could not be exported, so the CA bundle variables are not set (proxy and Node still work). "no block": a shell startup file could not be written. "set by another tool": a variable was already set and the agent left it alone. |
 
 ## Privacy
 

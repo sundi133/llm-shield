@@ -16,6 +16,7 @@ Keys (the same names on both):
   Capture           optional  proxy (default) or off
   ModelInline       optional  auto (default), always or never
   FallbackRulesPath optional  path to a secrets-only rules file
+  TerminalCoverage  optional  true: CLIs and SDKs through the agent (terminal.py)
 
 The pinned key arrives here and nowhere else: never from the network.
 """
@@ -34,7 +35,7 @@ from votal_device_agent.platform import Paths
 MAC_PLIST = Path("/Library/Managed Preferences/ai.votal.device-agent.plist")
 WIN_KEY = r"SOFTWARE\Policies\Votal\DeviceAgent"
 KEYS = ("ShieldURL", "TenantID", "Fleet", "PinnedPublicKey", "EnrollmentToken", "ExtensionIDs",
-        "Capture", "ModelInline", "FallbackRulesPath", "CAMode")
+        "Capture", "ModelInline", "FallbackRulesPath", "CAMode", "TerminalCoverage")
 #: macOS trusts a certificate silently only through MDM, so Macs use the tenant
 #: root (in the MDM profile) with a 7-day intermediate per laptop; Windows
 #: trusts the laptop's own CA silently.
@@ -115,9 +116,28 @@ def validate(m: dict) -> dict:
         errors.append("ModelInline: auto, always or never")
     if m.get("CAMode", "device") not in ("device", "tenant"):
         errors.append("CAMode: device or tenant")
+    tc = terminal_coverage(m)
+    if tc is None:
+        errors.append("TerminalCoverage: true or false")
     if errors:
         raise ManagedError(errors)
-    return {**m, "PinnedPublicKey": key, "ShieldURL": url.rstrip("/")}
+    out = {**m, "PinnedPublicKey": key, "ShieldURL": url.rstrip("/")}
+    if "TerminalCoverage" in m:
+        out["TerminalCoverage"] = tc
+    return out
+
+
+def terminal_coverage(m: dict) -> Optional[bool]:
+    """The TerminalCoverage setting as a bool (absent is False): a plist boolean
+    on macOS, the MSI property's string on Windows. None when unreadable."""
+    v = m.get("TerminalCoverage", False)
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, int) and v in (0, 1):
+        return bool(v)
+    if isinstance(v, str) and v.strip().lower() in ("1", "true", "yes", "0", "false", "no"):
+        return v.strip().lower() in ("1", "true", "yes")
+    return None
 
 
 def agent_json(m: dict, p: Paths, os_name: str = "") -> dict:
