@@ -452,6 +452,7 @@ _CRITICAL_GUARDRAILS = {
     "adversarial_detection",
     "system_prompt_leak",
     "custom_policy_input",
+    "sensitive_identifiers",
 }
 _CRITICAL_PREFIXES = ("pii",)
 
