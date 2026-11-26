@@ -332,7 +332,7 @@ async def create_rollout_kit(request: Request, body: dict = Body(...)):
                 "kit_id": rec["kit_id"]})
     _audit(request, "tenant_create_rollout_kit", tenant_id, actor,
            {k: rec[k] for k in ("kit_id", "fleet", "mdm", "platforms", "token_id",
-                                "expires_at", "uses", "include_proxy")}
+                                "expires_at", "uses", "include_proxy", "include_firefox")}
            | {"revoked_previous": out["revoked"]})
     name = f"votal-rollout-kit-{rec['fleet']}-{rec['mdm']}.zip"
     return Response(content=out["zip"], media_type="application/zip", headers={

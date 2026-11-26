@@ -1,0 +1,7 @@
+# Intune platform script (run as system, 64-bit): make Firefox trust the root
+# certificates in the Windows store, where the Votal device agent puts its
+# certificate. Firefox keeps its own certificate store otherwise. Your PAC file
+# already decides which traffic reaches the agent; point Firefox at it too
+# (see the README).
+$ErrorActionPreference = "Stop"
+{{firefox_policy_ps}}

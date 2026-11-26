@@ -5539,6 +5539,7 @@ if __name__ == "__main__":
         </div>
         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;margin-top:0.5rem;font-size:13px;">
           <label title="Leave off if your laptops already have a proxy (PAC) configuration; the kit then includes the lines to add to it."><input type="checkbox" id="dk-proxy" checked> Include the proxy setting</label>
+          <label title="Firefox keeps its own proxy setting and certificate store, so it needs its own policy to send AI services to the agent and trust its certificate."><input type="checkbox" id="dk-firefox" checked> Include Firefox</label>
           <label title="Chrome and Edge install it from the location shown under Rollout kits">Extension ids <input id="dk-ext" type="text" placeholder="none" style="width:260px;"></label>
           <label>Days <input id="dk-days" type="number" value="180" min="1" max="365" style="width:70px;"></label>
           <label>Laptops <input id="dk-uses" type="number" value="5000" min="1" max="100000" style="width:90px;"></label>
@@ -22057,6 +22058,7 @@ async function dkCreate() {
   const body = {
     fleet: document.getElementById('dk-fleet').value.trim(), mdm, platforms,
     include_proxy: document.getElementById('dk-proxy').checked,
+    include_firefox: document.getElementById('dk-firefox').checked,
     extension_ids: document.getElementById('dk-ext').value.split(',').map(s => s.trim()).filter(Boolean),
     expires_in_days: parseInt(document.getElementById('dk-days').value, 10),
     uses: parseInt(document.getElementById('dk-uses').value, 10),
