@@ -22227,7 +22227,7 @@ async function ddDevices() {
         <td style="${DD_TD}"><b>${xfEsc(r.hostname)}</b><div class="muted" style="font-size:11px;"><code>${xfEsc(r.device_id)}</code></div></td>
         <td style="${DD_TD}">${xfEsc(r.fleet)}</td>
         <td style="${DD_TD}">${xfEsc(r.os)} ${xfEsc(r.os_version)}</td>
-        <td style="${DD_TD}">${xfEsc(r.agent_version)}</td>
+        <td style="${DD_TD}">${xfEsc(r.agent_version)}${r.detectors_schema == null && r.last_seen ? '<div class="muted" style="font-size:11px;" title="This agent build does not run the built-in financial detectors. Upgrade the agent.">no built-in detectors</div>' : ''}</td>
         <td style="${DD_TD}">${r.stale ? '<span class="badge badge-danger">stale</span> ' : ''}${xfEsc(ddAgo(r.last_seen))}</td>
         <td style="${DD_TD}"><span class="badge ${r.state === 'ok' ? '' : 'badge-warn'}">${xfEsc(r.state)}</span></td>
         <td style="${DD_TD}">${xfEsc(r.mode || '-')}</td>

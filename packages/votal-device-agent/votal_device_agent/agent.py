@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Optional
 
 from votal_device_agent import model as model_mod
+from votal_device_agent._deps import DETECTORS_SCHEMA
 from votal_device_agent import sync
 from votal_device_agent.agent_hooks import AgentHooks, HookPaths, default_paths
 from votal_device_agent.audit import AuditLog
@@ -396,7 +397,10 @@ class Agent:
         out = {"bundle_version": self.engine.trust.bundle_version,
                "model_digest": digest, "mode": self.engine.policy.get("mode", ""),
                "state": self.state(), "agent_version": sync.AGENT_VERSION,
-               "counters": dict(list(self.engine.counters.items())[:20])}
+               "counters": dict(list(self.engine.counters.items())[:20]),
+               # the built-in detector schema this build runs, so the fleet view
+               # can show laptops that do not run detectors yet
+               "detectors_schema": DETECTORS_SCHEMA}
         if self.hooks.report:
             out["agent_hooks"] = self.hooks.report
         inventory = self.ai_inventory()

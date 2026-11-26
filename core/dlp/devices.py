@@ -713,6 +713,12 @@ def heartbeat(tenant_id: str, device_id: str, body: dict, record: Optional[dict]
     av = body.get("agent_version")
     if isinstance(av, str) and 0 < len(av) <= 40:
         seen["agent_version"] = av
+    ds = body.get("detectors_schema")
+    # The built-in detector schema the agent runs (docs/specs/builtin-financial-
+    # patterns-decoded-pii.md). Optional: older agents omit it; a bad value is
+    # dropped, never a reason to refuse the heartbeat.
+    if isinstance(ds, int) and not isinstance(ds, bool) and 0 <= ds <= 1000:
+        seen["detectors_schema"] = ds
     # The previous heartbeat, read only when the index needs the state it
     # moves the device from.
     prev = _hget(_seen_key(tenant_id), device_id) if device_index.enabled() else None
@@ -753,6 +759,8 @@ def _row(did: str, d: dict, s: Optional[dict], now: int, limit: int,
            "counters": s.get("counters", {})}
     if s.get("agent_version"):
         row["agent_version"] = s["agent_version"]
+    if "detectors_schema" in s:
+        row["detectors_schema"] = s["detectors_schema"]
     if s.get("agent_hooks"):
         row["agent_hooks"] = s["agent_hooks"]
     if s.get("os_events"):
