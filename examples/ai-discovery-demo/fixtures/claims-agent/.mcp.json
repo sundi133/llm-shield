@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {"GITHUB_TOKEN": "set-at-runtime"}
+    },
+    "claims-db": {
+      "url": "https://mcp.claims-internal.example.com/sse"
+    }
+  }
+}

@@ -1,0 +1,3 @@
+#!/bin/sh
+# demo fixture: an empty stand-in for the claude CLI
+exit 0
