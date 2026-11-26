@@ -1,6 +1,6 @@
 # Spec: alerts for device blocks and stopped agents
 
-Status: **draft, awaiting approval.** Branch `spec/poc-phase1-quick-wins`.
+Status: **approved 2026-11-26** (open questions resolved with the spec's defaults). Branch `spec/poc-phase1-quick-wins`.
 
 Roadmap item R2 from the "Test Cases G" POC gap analysis. Lifts AG-47 (real-time
 alerts for blocked activity) and AG-31 (agent tampering detected and reported).

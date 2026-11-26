@@ -1,6 +1,6 @@
 # Spec: built-in financial patterns and decoded PII
 
-Status: **draft, awaiting approval.** Branch `spec/poc-phase1-quick-wins`.
+Status: **approved 2026-11-26** (open questions resolved with the spec's defaults). Branch `spec/poc-phase1-quick-wins`.
 
 Roadmap item R3 (POC "Test Cases G": AG-12 financial information, AG-21
 obfuscated / encoded PII). Builds on `icap/rules.py` (the rule engine shared by

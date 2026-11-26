@@ -1,6 +1,6 @@
 # Spec: device agent under VPN (capture self-check and validation matrix)
 
-Status: **draft, awaiting approval.** Branch `spec/poc-phase1-quick-wins`.
+Status: **approved 2026-11-26** (open questions resolved with the spec's defaults). Branch `spec/poc-phase1-quick-wins`.
 
 Roadmap item R5 of the POC gap roadmap (`Test Cases G - Shield coverage v2.xlsx`),
 lifting **AG-33**: "Test guardrail functionality when users connect through VPN.

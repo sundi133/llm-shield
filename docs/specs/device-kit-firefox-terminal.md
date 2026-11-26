@@ -1,6 +1,6 @@
 # Spec: Firefox and terminal coverage in the device rollout kit
 
-Status: **draft, awaiting approval.** Branch `spec/poc-phase1-quick-wins`.
+Status: **approved 2026-11-26** (open questions resolved with the spec's defaults). Branch `spec/poc-phase1-quick-wins`.
 
 Roadmap item R1 (POC "Test Cases G": AG-03 Firefox, AG-54 CLIs, SDKs and
 desktop clients). Builds on `docs/specs/device-rollout-kit.md` (the kit,

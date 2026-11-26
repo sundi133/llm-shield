@@ -1,6 +1,6 @@
 # Spec: device agent load test (POC AG-60)
 
-Status: **draft, awaiting approval.** Branch `spec/poc-phase1-quick-wins`.
+Status: **approved 2026-11-26** (open questions resolved with the spec's defaults). Branch `spec/poc-phase1-quick-wins`.
 
 Roadmap item R6 from the POC gap analysis. Builds on `docs/specs/device-dlp-agent.md`
 (§2.6 the latency gates, §4 the capture budget), `dlp-bench/` (the model benchmark)
