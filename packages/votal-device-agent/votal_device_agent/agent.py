@@ -27,8 +27,11 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from votal_device_agent import capture_check, upstream_trust
 from votal_device_agent import model as model_mod
 from votal_device_agent import sync
+from votal_device_agent.platform import proxy_settings
+from votal_device_agent.platform import system as os_system
 from votal_device_agent.agent_hooks import AgentHooks, HookPaths, default_paths
 from votal_device_agent.audit import AuditLog
 from votal_device_agent.engine import Engine
@@ -125,6 +128,10 @@ class Agent:
         self.ca_dir = Path(cfg.state_dir) / "ca"
         self.ca_trust_pending = False
         self.ca_error = ""
+        # Capture self-check (docs/specs/device-agent-vpn-validation.md): is the
+        # system proxy still our PAC? proxy_reader is injected by tests.
+        self.capture = capture_check.CaptureState()
+        self.proxy_reader = None
         # Called with the CA certificate path when a new CA is issued; the
         # installer (task 6) sets it to add the CA to the system trust store.
         self.on_ca_rotated = None
@@ -277,8 +284,14 @@ class Agent:
             # Never let mitmproxy start without our CA: it would invent its own,
             # unconstrained and trusted by nobody.
             return None
+        upstream, note = upstream_trust.build(self.cfg.state_dir, os_system(),
+                                              trust=self.cfg.upstream_trust,
+                                              ca_path=self.cfg.upstream_ca)
+        if note:
+            print(f"votal-device-agent: {note}", flush=True)
         self.proxy = LocalProxy(self.engine, port=self.cfg.proxy_port, confdir=self.ca_dir,
-                                justify_base=base, intercept_ok=self.ca_valid)
+                                justify_base=base, intercept_ok=self.ca_valid,
+                                upstream_ca=upstream)
         self.proxy_port = self.proxy.start()
         return self.proxy_port
 
@@ -347,7 +360,19 @@ class Agent:
         self.last = {**out, "at": int(time.time())}
         return out
 
-    def start(self, *, sync_every_s: float = 300.0, model_every_s: float = 3600.0) -> int:
+    def check_capture(self) -> dict:
+        """Classify the effective system proxy; keep `since` across checks."""
+        try:
+            settings = (self.proxy_reader or (lambda: proxy_settings.read_effective(os_system())))()
+        except Exception:
+            settings = None
+        allowed = (self.engine.policy.get("capture") or {}).get("allowed_pac_urls") or []
+        own = f"http://127.0.0.1:{self.cfg.local_port}/proxy.pac"
+        verdict = capture_check.classify(settings, own, allowed, self.cfg.capture)
+        return self.capture.update(verdict, time.time())
+
+    def start(self, *, sync_every_s: float = 300.0, model_every_s: float = 3600.0,
+              capture_every_s: float = 60.0) -> int:
         """Loopback API and background sync. Returns the loopback port."""
         self.local_api = LocalApi(self, load_or_create_secret(self.cfg.state_dir),
                                   port=self.cfg.local_port)
@@ -364,7 +389,8 @@ class Agent:
                     pass
                 self._stop.wait(every)
 
-        for every, fn in ((sync_every_s, self.sync_once), (model_every_s, self.check_model)):
+        for every, fn in ((sync_every_s, self.sync_once), (model_every_s, self.check_model),
+                          (capture_every_s, self.check_capture)):
             t = threading.Thread(target=loop, args=(every, fn), daemon=True)
             t.start()
             self._threads.append(t)
@@ -397,6 +423,9 @@ class Agent:
                "model_digest": digest, "mode": self.engine.policy.get("mode", ""),
                "state": self.state(), "agent_version": sync.AGENT_VERSION,
                "counters": dict(list(self.engine.counters.items())[:20])}
+        # Optional top-level key: an older server ignores it (a new `state`
+        # value would be refused and break the heartbeat).
+        out["capture"] = dict(self.capture.current or self.check_capture())
         if self.hooks.report:
             out["agent_hooks"] = self.hooks.report
         inventory = self.ai_inventory()
@@ -446,5 +475,6 @@ class Agent:
                 "capture": {"proxy_port": self.proxy_port, "ca_trust_pending": self.ca_trust_pending,
                             "ca_mode": self.cfg.ca_mode, "ca_valid": self.ca_valid(),
                             "ca_not_after": self._ca_not_after(), "ca_error": self.ca_error,
-                            "ai_hosts": list(self.engine.ai_hosts)},
+                            "ai_hosts": list(self.engine.ai_hosts),
+                            "self_check": self.capture.current},
                 "audit": self.audit.verify().detail}

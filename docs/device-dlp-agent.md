@@ -209,6 +209,7 @@ reason for any failure:
 | policy bundle | "fallback": the laptop cannot reach Shield, or the pinned key does not match this Shield. The laptop still redacts known secrets. |
 | decision model | "model_unavailable": the local model is still downloading, or failed to; see `ollama.log` in the log folder. "model_mismatch": the model was not the one your policy pins; the agent removed it and downloads the right one when the service next starts. |
 | local proxy | On a Mac it starts once the Mac has its certificate, so check "enrolled" first. |
+| capture | Whether the system proxy setting still points at the agent. "overridden": another PAC file or a proxy is in effect, usually pushed by a VPN client; see the VPN guide for the fix per client. "missing": no proxy setting at all (the profile or script is missing, or capture is off). "unknown": the settings could not be read. |
 | device CA trusted | On a Mac, the profile with the root certificate is missing or out of date: upload the one from a current kit. |
 | browser extension host | The extension ids in the kit do not match the installed extension. |
 | audit chain | The local decision log was altered. Report it: this is a tamper signal. |

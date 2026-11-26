@@ -243,6 +243,9 @@ def verify(*, os_name: Optional[str] = None, p: Optional[Paths] = None, run: Run
         f"{model.get('state', '?')}, p95 {model.get('p95_ms')} ms, inline {model.get('inline')}")
     cap = status.get("capture") or {}
     add("local proxy", bool(cap.get("proxy_port")), f"127.0.0.1:{cap.get('proxy_port')}")
+    sc = cap.get("self_check") or {}
+    add("capture", sc.get("state") == "ok",
+        (sc.get("state") or "not reported") + (f" ({sc['effective']})" if sc.get("effective") else ""))
     cert = p.state_dir / "ca" / "mitmproxy-ca-cert.pem"
     trusted = cert.exists() and trust_store.is_trusted(cert, os_name=os_name, run=run)
     add("device CA trusted", trusted, str(cert) if cert.exists() else "no CA yet")
