@@ -113,6 +113,9 @@ def summarize(samples: list[dict]) -> dict:
     for s in samples:
         o = s.get("outcome") or ("error" if s.get("error") else "ok")
         out["outcomes"][o] = out["outcomes"].get(o, 0) + 1
+    examples = list(dict.fromkeys(s["error"] for s in samples if s.get("error")))[:3]
+    if examples:
+        out["error_examples"] = examples
     ttfb = added((s.get("ttfb_proxied_ms"), s.get("ttfb_direct_ms")) for s in ok)
     if ttfb:
         out["ttfb_delta_p95_ms"] = _r(percentile(ttfb, 95))

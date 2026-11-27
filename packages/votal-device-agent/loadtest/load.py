@@ -33,8 +33,9 @@ DATASET = REPO / "dlp-bench" / "dlp_eval.jsonl"
 TIMEOUT_S = 30.0
 
 
-def load_prompts(path: Path = DATASET) -> list[str]:
-    return [json.loads(line)["text"] for line in path.read_text().splitlines() if line.strip()]
+def load_prompts(path: Path = DATASET, *, benign_only: bool = False) -> list[str]:
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return [r["text"] for r in rows if not (benign_only and r.get("sensitive"))]
 
 
 def sample_prompt(rng: random.Random, prompts: list[str], lo: int, hi: int) -> str:
@@ -72,8 +73,14 @@ def _chat(text: str) -> bytes:
 
 
 class Tab:
-    def __init__(self, ep: Endpoints, rng: random.Random, prompts: list[str]):
+    def __init__(self, ep: Endpoints, rng: random.Random, prompts: list[str],
+                 benign: Optional[list[str]] = None):
         self.ep, self.rng, self.prompts = ep, rng, prompts
+        # WebSocket frames use benign prompts only: the agent does not send the
+        # 4403 close for a frame it blocks (the client waits until its own
+        # timeout; a follow-up), so a sensitive frame would make the latency
+        # class measure that bug at random instead of frame delay.
+        self.benign = benign or prompts
         self._c: dict = {}
         self._ws: dict = {}
 
@@ -146,7 +153,7 @@ class Tab:
                 s["ttfb_proxied_ms"], s["ttfb_direct_ms"] = res["proxied"][1], res["direct"][1]
             return s
         if cls == "ws":
-            frame = _chat(sample_prompt(r, self.prompts, 200, 2000)).decode()
+            frame = _chat(sample_prompt(r, self.benign, 200, 2000)).decode()
             res = self._pair(lambda via: self._ws_round(via, frame))
             return _http_sample({k: (v if isinstance(v, Exception) else (v, 200, b""))
                                  for k, v in res.items()})
@@ -243,6 +250,7 @@ def run_workload(profile: dict, ep: Endpoints, *, seed: int = 7, stop: Optional[
                  prompts: Optional[list[str]] = None) -> dict:
     """{class: [samples]}, {achieved_rps, t_start, t_end}. Samples in warm-up are dropped."""
     prompts = prompts or load_prompts()
+    benign = load_prompts(benign_only=True)
     stop = stop or threading.Event()
     mix = profile["mix"]
     classes, weights = list(mix), [mix[c] for c in mix]
@@ -258,7 +266,7 @@ def run_workload(profile: dict, ep: Endpoints, *, seed: int = 7, stop: Optional[
         start_at = t_start + profile.get("ramp_s", 0) * i / max(1, profile["tabs"])
         while time.time() < start_at and not stop.is_set():
             time.sleep(0.05)
-        t = Tab(ep, rng, prompts)
+        t = Tab(ep, rng, prompts, benign)
         try:
             while time.time() < t_end and not stop.is_set():
                 cls = rng.choices(classes, weights)[0]
