@@ -6,6 +6,7 @@ RBAC, quota, plan, or API keys — those are admin-only.
 """
 
 from typing import Optional, Union
+import copy
 import re
 import uuid
 from datetime import datetime
@@ -16,7 +17,7 @@ from pydantic import BaseModel, Field, model_validator, validator
 from storage.tenant_store import get_tenant, update_tenant, set_tenant_policies, _get_redis
 from storage.tenant_models import GuardrailPolicy, effective_quota
 from storage.rate_limiter import get_usage
-from storage.admin_audit import log_admin_action
+from storage.admin_audit import guardrail_audit, log_admin_action
 from storage.audit_log import audit_logger
 from core.policy_mode import ENFORCE, MONITOR, resolve_mode
 from storage.custom_policies import (
@@ -373,6 +374,9 @@ async def update_my_policies(request: Request, body: TenantSelfUpdateRequest):
     existing = get_tenant(tenant_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Tenant not found")
+    # get_tenant returns the cached dict and set_tenant_policies edits that
+    # same object, so without a copy the audit's "before" is the new config.
+    existing = copy.deepcopy(existing)
 
     updates = body.model_dump(exclude_none=True)
     if not updates:
@@ -394,7 +398,8 @@ async def update_my_policies(request: Request, body: TenantSelfUpdateRequest):
                 "output_guardrails": list((existing.get("output_guardrails") or {}).keys())},
         after={"input_guardrails": list((config.get("input_guardrails") or {}).keys()),
                "output_guardrails": list((config.get("output_guardrails") or {}).keys())},
-        metadata={"updated_fields": list(updates.keys())},
+        metadata={"updated_fields": list(updates.keys()),
+                  **guardrail_audit(existing, config)},
     )
 
     return {

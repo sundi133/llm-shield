@@ -197,9 +197,9 @@ def decide(
         return base
 
     sentence = (
-        f"Prompt contained data matching policy: {hit.rule_id}"
-        if hit.kind == "rule"
-        else f"Prompt contained a blocked term: {hit.rule_id}"
+        f"Prompt contained a blocked term: {hit.rule_id}"
+        if hit.kind == "blocklist"
+        else f"Prompt contained data matching policy: {hit.rule_id}"
     )
     base.rule_id, base.severity, base.reason = hit.rule_id, hit.severity, sentence
     base.action = BLOCK if enforcing else WOULD_BLOCK

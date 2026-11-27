@@ -1,0 +1,27 @@
+{
+  "name": "poc",
+  "duration_s": 600,
+  "warmup_s": 60,
+  "tabs": 8,
+  "ramp_s": 120,
+  "think_ms": 200,
+  "model": "real",
+  "model_latency_ms": 50,
+  "mix": {"prompt_s": 45, "prompt_l": 15, "ws": 10, "sse": 10, "tunnel": 5, "upload": 12, "upload_over": 3},
+  "budgets": [
+    {"name": "short_prompt_added_p95_ms", "max": 50},
+    {"name": "short_prompt_added_p99_ms", "max": 150},
+    {"name": "large_body_added_p95_ms", "max": 250},
+    {"name": "stream_ttfb_delta_p95_ms", "max": 100},
+    {"name": "ws_frame_added_p95_ms", "max": 50},
+    {"name": "tunnel_added_p95_ms", "max": 10},
+    {"name": "tunnel_bytes_identical", "equals": true},
+    {"name": "proxy_failures", "equals": 0},
+    {"name": "agent_cpu_mean_pct", "max": 15},
+    {"name": "agent_cpu_p95_pct", "max": 50},
+    {"name": "agent_rss_peak_mb", "max": 250},
+    {"name": "agent_rss_growth_mb", "max": 20},
+    {"name": "ollama_rss_peak_mb", "max": 1200},
+    {"name": "audit_headroom_pct", "max": 50}
+  ]
+}

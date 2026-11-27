@@ -130,6 +130,8 @@ def bundle_policy(tenant_id: str, fleet: str) -> dict:
     rules = _build_bundle(tenant_id)
     out = {**for_fleet(policy, fleet), "rules": rules["rules"],
            "blocklists": rules["blocklists"], "rules_version": rules["version"]}
+    if rules.get("detectors"):
+        out["detectors"] = rules["detectors"]
     if (policy.get("discovery") or {}).get("enabled"):
         # What the agent's collector matches against, locally
         # (docs/specs/ai-discovery.md, task 2). Only when discovery is on.
