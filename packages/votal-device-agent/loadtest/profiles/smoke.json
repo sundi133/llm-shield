@@ -1,0 +1,22 @@
+{
+  "name": "smoke",
+  "duration_s": 60,
+  "warmup_s": 5,
+  "tabs": 4,
+  "ramp_s": 2,
+  "think_ms": 200,
+  "model": "fake",
+  "model_latency_ms": 50,
+  "mix": {"prompt_s": 60, "prompt_l": 15, "ws": 10, "sse": 10, "tunnel": 5},
+  "budgets": [
+    {"name": "proxy_failures", "equals": 0},
+    {"name": "tunnel_bytes_identical", "equals": true},
+    {"name": "short_prompt_added_p95_ms", "max": 200},
+    {"name": "short_prompt_added_p99_ms", "max": 150, "enforce": false},
+    {"name": "stream_ttfb_delta_p95_ms", "max": 100, "enforce": false},
+    {"name": "ws_frame_added_p95_ms", "max": 50, "enforce": false},
+    {"name": "tunnel_added_p95_ms", "max": 10, "enforce": false},
+    {"name": "agent_cpu_mean_pct", "max": 15, "enforce": false},
+    {"name": "agent_rss_peak_mb", "max": 250, "enforce": false}
+  ]
+}

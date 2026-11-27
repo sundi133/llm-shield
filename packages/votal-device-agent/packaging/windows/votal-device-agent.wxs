@@ -9,7 +9,7 @@
 
     msiexec /i votal-device-agent.msi /qn SHIELDURL=https://... TENANTID=acme
       FLEET=sales PINNEDPUBLICKEY=<64 hex> ENROLLMENTTOKEN=vde....
-      EXTENSIONIDS=<id>[,<id>]
+      EXTENSIONIDS=<id>[,<id>] TERMINALCOVERAGE=1
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Votal Device Agent" Manufacturer="Votal AI" Version="$(Version)"
@@ -25,6 +25,7 @@
     <Property Id="EXTENSIONIDS" Secure="yes" />
     <Property Id="CAPTURE" Secure="yes" />
     <Property Id="MODELINLINE" Secure="yes" />
+    <Property Id="TERMINALCOVERAGE" Secure="yes" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="VotalDir" Name="Votal">
@@ -70,6 +71,7 @@
         <RegistryValue Name="ExtensionIDs" Type="string" Value="[EXTENSIONIDS]" />
         <RegistryValue Name="Capture" Type="string" Value="[CAPTURE]" />
         <RegistryValue Name="ModelInline" Type="string" Value="[MODELINLINE]" />
+        <RegistryValue Name="TerminalCoverage" Type="string" Value="[TERMINALCOVERAGE]" />
       </RegistryKey>
     </Component>
 

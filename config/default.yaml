@@ -59,6 +59,18 @@ guardrails:
     settings:
       extra_patterns: []
 
+  # Validated card numbers (Luhn), IBAN (mod-97), ABA routing, SWIFT/BIC, bank
+  # account numbers and US SSNs, also when spaced out or base64 / hex / URL
+  # encoded. Regex only, no model call. Off by default.
+  # docs/specs/builtin-financial-patterns-decoded-pii.md
+  sensitive_identifiers:
+    enabled: false
+    action: block
+    settings:
+      detectors: [card_number, iban, aba_routing, swift_bic, bank_account, us_ssn]
+      decode: true
+      ignore_test_values: false
+
   toxicity:
     enabled: true
     action: block

@@ -56,6 +56,43 @@ jobs:
       - name: Run the browser tests
         run: python -m pytest tests/test_agent_detection_tag_browser.py tests/test_agent_detection_portal_browser.py -q -rs
 
+  device-agent-load-smoke:
+    # The device agent under load (docs/specs/device-agent-load-test.md, POC
+    # AG-60): the real proxy and engine against a local fake AI service, fake
+    # model. Shared runners are noisy, so only zero proxy failures, an untouched
+    # non-AI tunnel and short-prompt added p95 <= 200 ms fail the job; every
+    # other budget is reported. mitmproxy is not in requirements-test.txt, so
+    # the pytest job above cannot run this.
+    name: device agent load (smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements-test.txt
+            requirements-ws.txt
+            packages/votal-device-agent/loadtest/requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt -r requirements-ws.txt \
+            -r packages/votal-device-agent/loadtest/requirements.txt
+      - name: Smoke run (fake model, 50 ms)
+        run: python packages/votal-device-agent/loadtest/run_load.py --profile smoke --model fake --out load-reports
+      - name: A slow model stays off the send path (fake model, 2000 ms)
+        # The gate must end after_send and the proxy budgets must still pass.
+        run: >-
+          python packages/votal-device-agent/loadtest/run_load.py --profile smoke --model fake
+          --model-latency-ms 2000 --duration-s 30 --expect-gate after_send --out load-reports/slow-model
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: device-agent-load-reports
+          path: load-reports/
+
   redis-clients:
     # The cloud runs on the upstash_redis REST client, on-prem on redis-py over
     # TCP, and their pipelines differ. The suite above uses the in-process

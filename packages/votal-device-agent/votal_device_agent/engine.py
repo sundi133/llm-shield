@@ -30,7 +30,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field, replace
 from typing import Optional
 
-from votal_device_agent._deps import compile_bundle, evaluate, redact
+from votal_device_agent._deps import compile_bundle, evaluate, observe, redact
 from votal_device_agent.model import DecisionModel, ModelUnavailable, model_verdict
 from votal_device_agent.trust import Trust
 
@@ -133,7 +133,8 @@ class Engine:
     def set_trust(self, trust: Trust) -> None:
         p = trust.policy
         compiled = compile_bundle({"rules": p.get("rules") or [],
-                                   "blocklists": p.get("blocklists") or []}, keep_redact=True)
+                                   "blocklists": p.get("blocklists") or [],
+                                   "detectors": p.get("detectors")}, keep_redact=True)
         with self._lock:
             self.trust, self.policy, self.rules = trust, p, compiled
             self.ai_hosts = tuple(h.lower() for h in p.get("ai_hosts") or ())
@@ -282,12 +283,21 @@ class Engine:
 
         if hit is not None:
             d.verdict, d.rule_ids = "block", [hit.rule_id]
-            d.reason = f"matched {'blocked term' if hit.kind == 'blocklist' else 'rule'} {hit.rule_id}"
+            kind = {"blocklist": "blocked term", "detector": "built-in detector"}.get(hit.kind, "rule")
+            d.reason = f"matched {kind} {hit.rule_id}"
             return self._finish(d, t0)
         if red_hits:
             d.verdict, d.text = "redact", redacted
             d.rule_ids = [h.rule_id for h in red_hits]
             d.reason = "redacted " + ", ".join(d.rule_ids)
+        # Built-in detectors set to monitor (docs/specs/builtin-financial-patterns-
+        # decoded-pii.md): recorded with verdict monitor, the action stays allow.
+        seen = observe(self.rules, text, timeout_s=RULES_BUDGET_S)
+        if seen:
+            d.rule_ids += [h.rule_id for h in seen if h.rule_id not in d.rule_ids]
+            if d.verdict == "allow":
+                d.verdict = "monitor"
+                d.reason = "built-in detector (monitor only): " + ", ".join(h.rule_id for h in seen)
 
         # 2. the model, on the rule-redacted text
         if not self._model_configured():
