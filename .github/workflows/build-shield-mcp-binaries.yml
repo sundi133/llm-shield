@@ -45,7 +45,9 @@ jobs:
       - name: Install package + PyInstaller
         run: |
           python -m pip install --upgrade pip pyinstaller
-          pip install .
+          # mcp[cli]: --collect-all mcp imports mcp.cli, which exits when
+          # typer is missing, and that fails the freeze. Build-time only.
+          pip install . "mcp[cli]"
 
       - name: Freeze single-file binary
         run: |
