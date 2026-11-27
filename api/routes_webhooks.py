@@ -69,6 +69,9 @@ VALID_EVENTS = [
     # once per target per 10 minutes per process.
     # Spec: docs/specs/gateway-routing-failover.md
     "gateway_target_down",
+    # A device DLP agent blocked a prompt. At most one per device and category
+    # per 5 minutes; never the prompt. Spec: docs/specs/device-block-and-stop-alerts.md
+    "device_dlp_blocked",
 ]
 
 
