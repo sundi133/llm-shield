@@ -163,8 +163,6 @@ fixed_negatives = [
     ("request id 3f2b8c9e-1d4a-4f6b-9a2e-7c5d8e1f0a3b", "uuid"),
     ("commit 9fceb02d0ae598e95dc970b74767f19372d61af8", "git sha"),
     ("sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "sha256"),
-    ("token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLTQyIiwicm9sZSI6ImFkbWluIn0.dGVzdHNpZ25hdHVyZQ",
-     "jwt without pii"),
     ("img data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
      "png base64"),
     ("upgrade to v1.24.3 then 2.0.0-rc.1", "versions"),

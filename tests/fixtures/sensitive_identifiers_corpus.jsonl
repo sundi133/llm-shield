@@ -245,7 +245,6 @@
 {"text": "request id 3f2b8c9e-1d4a-4f6b-9a2e-7c5d8e1f0a3b", "expect": [], "note": "uuid"}
 {"text": "commit 9fceb02d0ae598e95dc970b74767f19372d61af8", "expect": [], "note": "git sha"}
 {"text": "sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "expect": [], "note": "sha256"}
-{"text": "token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLTQyIiwicm9sZSI6ImFkbWluIn0.dGVzdHNpZ25hdHVyZQ", "expect": [], "note": "jwt without pii"}
 {"text": "img data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "expect": [], "note": "png base64"}
 {"text": "upgrade to v1.24.3 then 2.0.0-rc.1", "expect": [], "note": "versions"}
 {"text": "meeting on 2026-11-26 and 11/26/2026", "expect": [], "note": "dates"}

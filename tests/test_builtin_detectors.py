@@ -51,6 +51,17 @@ def test_corpus_full_recall_no_false_positives():
     assert wrong == []
 
 
+def test_jwt_without_pii_is_not_flagged():
+    """A JWT whose claims hold no PII is not a finding. Built here rather than
+    kept as a literal in the corpus, so secret scanners do not flag a fake token."""
+    def seg(obj):
+        raw = obj if isinstance(obj, bytes) else json.dumps(obj, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    token = ".".join([seg({"alg": "HS256", "typ": "JWT"}), seg({"sub": "user-42", "role": "admin"}),
+                      seg(b"testsignature")])
+    assert found("token " + token) == []
+
+
 def test_dlp_bench_benign_prompts_at_most_one_false_positive():
     rows = [json.loads(line) for line in BENCH.read_text().splitlines() if line.strip()]
     benign = [r for r in rows if not r["sensitive"]]
