@@ -51,7 +51,7 @@ jobs:
           # a module: PyInstaller does not collect data files).
           GOT=$("$BIN" claude-code-hook | python3 -c "import json,sys; print(json.load(sys.stdin)['sh_sha256'])")
           test "$GOT" = "$(shasum -a 256 core/runtime_policy/hook_scripts/claude_code_hook.sh | cut -d' ' -f1)"
-          # Built on a newer runner than the oldest macOS we support (13).
+          # Built on a newer runner than the oldest macOS we support (14).
           packages/votal-device-agent/packaging/macos/check_minos.sh "/tmp/pkg/Payload/Library/Application Support/Votal/DeviceAgent"
       - uses: actions/upload-artifact@v4
         with:
