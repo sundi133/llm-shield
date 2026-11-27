@@ -9,3 +9,5 @@ Set-ItemProperty -Path $Policy -Name "ProxySettingsPerUser" -Type DWord -Value 0
 $Machine = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings"
 Set-ItemProperty -Path $Machine -Name "AutoConfigURL" -Value "{{pac_url}}"
 Write-Output "PAC set to {{pac_url}}"
+# Firefox has its own proxy setting and trust store, so it needs its policy too.
+{{firefox_policy_ps}}

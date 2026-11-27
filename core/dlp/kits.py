@@ -29,8 +29,8 @@ DEFAULT_RELEASE_BASE = "https://github.com/sundi133/llm-shield/releases/download
 #: packages/votal-device-agent/votal_device_agent/_version.py (a test holds
 #: them equal; the server images do not ship the agent package).
 DEFAULT_AGENT_VERSION = "0.2.0"
-BODY_KEYS = ("fleet", "mdm", "platforms", "include_proxy", "extension_ids", "expires_in_days",
-             "uses", "revoke_previous")
+BODY_KEYS = ("fleet", "mdm", "platforms", "include_proxy", "include_firefox", "terminal_coverage",
+             "extension_ids", "expires_in_days", "uses", "revoke_previous")
 
 
 class KitAPIError(Exception):
@@ -87,10 +87,12 @@ def parse_body(body: dict) -> dict:
         errors.append("extension_ids: a list")
         ids = []
     out = {"fleet": body.get("fleet"), "mdm": mdm, "platforms": tuple(dict.fromkeys(platforms)),
-           "include_proxy": body.get("include_proxy", True), "extension_ids": ids,
+           "include_proxy": body.get("include_proxy", True),
+           "include_firefox": body.get("include_firefox", True),
+           "terminal_coverage": body.get("terminal_coverage", False), "extension_ids": ids,
            "expires_in_days": body.get("expires_in_days", 180), "uses": body.get("uses", 5000),
            "revoke_previous": body.get("revoke_previous", False)}
-    for k in ("include_proxy", "revoke_previous"):
+    for k in ("include_proxy", "include_firefox", "terminal_coverage", "revoke_previous"):
         if not isinstance(out[k], bool):
             errors.append(f"{k}: true or false")
     for k, hi in (("expires_in_days", dv.KIT_MAX_DAYS), ("uses", dv.KIT_MAX_USES)):
@@ -124,6 +126,7 @@ def create_kit(tenant_id: str, body: dict, *, shield_url: str, actor: str) -> di
         pinned_public_key=pinned, agent_version=s["agent_version"],
         release_base=s["release_base"], ai_hosts=list(hosts),
         platforms=req_in["platforms"], include_proxy=req_in["include_proxy"],
+        include_firefox=req_in["include_firefox"], terminal_coverage=req_in["terminal_coverage"],
         extension_ids=req_in["extension_ids"], extension_update_url=s["extension_update_url"],
         apple_team_id=s["apple_team_id"],
         windows_signer=s["windows_signer"], root_pem="-----BEGIN CERTIFICATE-----" if

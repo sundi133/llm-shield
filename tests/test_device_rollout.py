@@ -259,7 +259,7 @@ def test_the_profile_is_everything_a_mac_needs(root_pem):
     doc = plistlib.loads(rk.files(kit_req(root_pem))["macos/Votal-Device-Agent.mobileconfig"])
     by = {p["PayloadType"]: p for p in doc["PayloadContent"]}
     assert set(by) == {"ai.votal.device-agent", "com.apple.security.root",
-                       "com.apple.SystemConfiguration", "com.google.Chrome",
+                       "com.apple.SystemConfiguration", "org.mozilla.firefox", "com.google.Chrome",
                        "com.microsoft.Edge", "com.apple.servicemanagement"}
     uuids = [doc["PayloadUUID"]] + [p["PayloadUUID"] for p in doc["PayloadContent"]]
     assert len(uuids) == len(set(uuids))
@@ -384,6 +384,10 @@ def test_platform_and_root_rules(root_pem):
 
 def test_scripts_parse(root_pem):
     files = rk.files(kit_req(root_pem, mdm="intune"))
+    # An own-PAC kit has windows/firefox-policy.ps1 instead of set-pac.ps1.
+    files.update({k: v for k, v in rk.files(kit_req(root_pem, mdm="intune", include_proxy=False)).items()
+                  if k == "windows/firefox-policy.ps1"})
+    assert "windows/firefox-policy.ps1" in files
     for name, data in files.items():
         if name.endswith(".sh"):
             assert subprocess.run(["bash", "-n"], input=data).returncode == 0, name
@@ -464,7 +468,8 @@ def test_templates_ship_in_both_images():
     (False, [EXT], ["browser-extensions.ps1", "It install the browser extension"[:9]],
      ["the AI proxy setting", "set-pac.ps1"]),
     (True, [], ["set-pac.ps1"], ["the browser extension and", "browser-extensions.ps1"]),
-    (False, [], ["None needed"], ["the AI proxy setting", "set-pac.ps1", "browser-extensions.ps1"]),
+    (False, [], ["firefox-policy.ps1", "## Firefox"],
+     ["the AI proxy setting", "set-pac.ps1", "browser-extensions.ps1", "None needed"]),
 ])
 def test_the_readme_describes_this_kit_not_every_kit(root_pem, include_proxy, ext, says, not_says):
     readme = rk.files(kit_req(root_pem, mdm="intune", include_proxy=include_proxy,
@@ -474,6 +479,77 @@ def test_the_readme_describes_this_kit_not_every_kit(root_pem, include_proxy, ex
     for s in not_says:
         assert s not in readme, s
     assert readme.count("## Your existing proxy (PAC) file") == (0 if include_proxy else 1)
+
+
+# ── R1 task 1: Firefox (docs/specs/device-kit-firefox-terminal.md) ────
+
+def _firefox_payload(files):
+    doc = plistlib.loads(files["macos/Votal-Device-Agent.mobileconfig"])
+    return next((p for p in doc["PayloadContent"] if p["PayloadType"] == "org.mozilla.firefox"), None)
+
+
+def test_firefox_policy_in_the_mac_profile(root_pem):
+    ff = _firefox_payload(rk.files(kit_req(root_pem)))
+    assert ff["EnterprisePoliciesEnabled"] is True
+    assert ff["Certificates"] == {"ImportEnterpriseRoots": True}
+    assert ff["Proxy"] == {"Mode": "autoConfig", "AutoConfigURL": "http://127.0.0.1:47823/proxy.pac",
+                           "Locked": True}
+    assert ff["Preferences"] == {"network.http.http3.enable": {"Value": False, "Status": "locked"}}
+
+
+def test_own_pac_keeps_firefox_trust_but_not_its_proxy(root_pem):
+    files = rk.files(kit_req(root_pem, mdm="intune", include_proxy=False))
+    ff = _firefox_payload(files)
+    assert "Proxy" not in ff and ff["Certificates"]["ImportEnterpriseRoots"] is True
+    ps = files["windows/firefox-policy.ps1"].decode()
+    assert "ImportEnterpriseRoots" in ps and "AutoConfigURL" not in ps
+    readme = files["README.md"].decode()
+    assert "Point it at your PAC file" in readme and "windows/firefox-policy.ps1" in readme
+
+
+def test_firefox_can_be_left_out(root_pem):
+    files = rk.files(kit_req(root_pem, mdm="intune", include_firefox=False))
+    assert _firefox_payload(files) is None
+    assert "Mozilla" not in files["windows/set-pac.ps1"].decode()
+    assert "windows/firefox-policy.ps1" not in files
+    assert "## Firefox" not in files["README.md"].decode()
+    assert json.loads(files["kit.json"])["include_firefox"] is False
+
+
+# ── R1 task 3: terminal coverage in the kit ───────────────────────────
+
+def test_terminal_coverage_is_off_unless_asked(root_pem):
+    files = rk.files(kit_req(root_pem, mdm="intune"))
+    doc = plistlib.loads(files["macos/Votal-Device-Agent.mobileconfig"])
+    settings = next(p for p in doc["PayloadContent"] if p["PayloadType"] == "ai.votal.device-agent")
+    assert "TerminalCoverage" not in settings
+    assert "TERMINALCOVERAGE" not in files["windows/install-command.txt"].decode()
+    assert "## Terminals and SDKs" not in files["README.md"].decode()
+    assert json.loads(files["kit.json"])["terminal_coverage"] is False
+
+
+def test_terminal_coverage_reaches_both_platforms(root_pem):
+    files = rk.files(kit_req(root_pem, mdm="intune", terminal_coverage=True))
+    doc = plistlib.loads(files["macos/Votal-Device-Agent.mobileconfig"])
+    settings = {k: v for k, v in next(p for p in doc["PayloadContent"]
+                                      if p["PayloadType"] == "ai.votal.device-agent").items()
+                if not k.startswith("Payload")}
+    assert settings["TerminalCoverage"] is True
+    assert managed.terminal_coverage(managed.validate(settings)) is True      # the agent accepts it
+    cmd = files["windows/install-command.txt"].decode()
+    assert cmd.count("TERMINALCOVERAGE=1") == 2                              # Intune line and msiexec line
+    readme = files["README.md"].decode()
+    assert "## Terminals and SDKs" in readme and "VOTAL_TERMINAL_PROXY=off" in readme
+
+
+def test_set_pac_writes_the_firefox_policy(root_pem):
+    ps = rk.files(kit_req(root_pem, mdm="intune"))["windows/set-pac.ps1"].decode()
+    for needle in ('HKLM:\\SOFTWARE\\Policies\\Mozilla\\Firefox', '"ImportEnterpriseRoots" -Type DWord -Value 1',
+                   '"Mode" -Value "autoConfig"', '"AutoConfigURL" -Value "http://127.0.0.1:47823/proxy.pac"',
+                   '"Locked" -Type DWord -Value 1', '-Name "Preferences" -Type MultiString',
+                   '"network.http.http3.enable"'):
+        assert needle in ps, needle
+    assert "{{" not in ps
 
 
 # ── task 3: the kit API ──────────────────────────────────────────────
@@ -597,6 +673,25 @@ def test_a_kit_reissues_a_root_that_no_longer_covers_the_policy(api):
     assert not kits_now[new.headers["X-Votal-Kit-Id"]]["stale"]
 
 
+def test_include_firefox_is_recorded_in_the_kit_list_and_audit(api):
+    with patch("api.routes_devices.log_admin_action") as audit:
+        r, files = _kit(api, include_firefox=False)
+    kit_id = r.headers["X-Votal-Kit-Id"]
+    kit = next(k for k in api.get(KITS).json()["kits"] if k["kit_id"] == kit_id)
+    assert kit["include_firefox"] is False and json.loads(files["kit.json"])["include_firefox"] is False
+    logged = [c.kwargs for c in audit.call_args_list if "tenant_create_rollout_kit" in str(c)]
+    assert '"include_firefox": false' in json.dumps(logged, default=str)
+    _r, files = _kit(api)
+    assert json.loads(files["kit.json"])["include_firefox"] is True        # on by default
+    assert json.loads(files["kit.json"])["terminal_coverage"] is False     # off by default
+    with patch("api.routes_devices.log_admin_action") as audit:
+        r, files = _kit(api, terminal_coverage=True)
+    assert "TERMINALCOVERAGE=1" in files["windows/install-command.txt"].decode()
+    kit = next(k for k in api.get(KITS).json()["kits"] if k["kit_id"] == r.headers["X-Votal-Kit-Id"])
+    assert kit["terminal_coverage"] is True
+    assert '"terminal_coverage": true' in json.dumps([c.kwargs for c in audit.call_args_list], default=str)
+
+
 def test_the_audit_never_carries_the_token(api):
     with patch("api.routes_devices.log_admin_action") as audit:
         _r, files = _kit(api)
@@ -609,7 +704,8 @@ def test_the_audit_never_carries_the_token(api):
     ({"mdm": "jamf", "platforms": ["windows"]}, "jamf manages macos"),
     ({"expires_in_days": 400}, "1 to 365"), ({"uses": 0}, "uses"),
     ({"extension_ids": ["bad"]}, "extension id"), ({"turbo": True}, "unknown field"),
-    ({"include_proxy": "yes"}, "include_proxy"),
+    ({"include_proxy": "yes"}, "include_proxy"), ({"include_firefox": 1}, "include_firefox"),
+    ({"terminal_coverage": "on"}, "terminal_coverage"),
 ])
 def test_a_bad_request_mints_no_token(api, body, needle):
     from core.dlp import devices as dv
