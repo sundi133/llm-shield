@@ -29,6 +29,7 @@ from typing import Optional
 
 from votal_device_agent import capture_check, upstream_trust
 from votal_device_agent import model as model_mod
+from votal_device_agent._deps import DETECTORS_SCHEMA
 from votal_device_agent import sync
 from votal_device_agent.platform import proxy_settings
 from votal_device_agent.platform import system as os_system
@@ -422,7 +423,10 @@ class Agent:
         out = {"bundle_version": self.engine.trust.bundle_version,
                "model_digest": digest, "mode": self.engine.policy.get("mode", ""),
                "state": self.state(), "agent_version": sync.AGENT_VERSION,
-               "counters": dict(list(self.engine.counters.items())[:20])}
+               "counters": dict(list(self.engine.counters.items())[:20]),
+               # the built-in detector schema this build runs, so the fleet view
+               # can show laptops that do not run detectors yet
+               "detectors_schema": DETECTORS_SCHEMA}
         # Optional top-level key: an older server ignores it (a new `state`
         # value would be refused and break the heartbeat).
         out["capture"] = dict(self.capture.current or self.check_capture())

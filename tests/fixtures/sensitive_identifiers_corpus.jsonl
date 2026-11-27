@@ -1,0 +1,372 @@
+{"text": "my card is 4770914534165388", "expect": ["card_number"], "note": "card visa"}
+{"text": "Card: 4896 6553 7193 1593", "expect": ["card_number"], "note": "card visa"}
+{"text": "use 4485406402752229 expiring 09/29 please", "expect": ["card_number"], "note": "card visa"}
+{"text": "charge the corporate card 4957 9569 9761 6808 today", "expect": ["card_number"], "note": "card visa"}
+{"text": "my card is 4299-0838-8164-3", "expect": ["card_number"], "note": "card visa13"}
+{"text": "Card: 4971 7695 6914 4", "expect": ["card_number"], "note": "card visa13"}
+{"text": "use 4425-4899-2353-7 expiring 09/29 please", "expect": ["card_number"], "note": "card visa13"}
+{"text": "charge the corporate card 4983-6407-2756-9 today", "expect": ["card_number"], "note": "card visa13"}
+{"text": "my card is 5364 1069 9085 2620", "expect": ["card_number"], "note": "card mastercard"}
+{"text": "Card: 5331124900097087", "expect": ["card_number"], "note": "card mastercard"}
+{"text": "use 5324283821774544 expiring 09/29 please", "expect": ["card_number"], "note": "card mastercard"}
+{"text": "charge the corporate card 5305 8840 8754 1411 today", "expect": ["card_number"], "note": "card mastercard"}
+{"text": "my card is 2720672151798395", "expect": ["card_number"], "note": "card mastercard2"}
+{"text": "Card: 2720 0480 7288 6132", "expect": ["card_number"], "note": "card mastercard2"}
+{"text": "use 2720274838246748 expiring 09/29 please", "expect": ["card_number"], "note": "card mastercard2"}
+{"text": "charge the corporate card 2720 8592 9344 2384 today", "expect": ["card_number"], "note": "card mastercard2"}
+{"text": "my card is 3776 2593 6330 553", "expect": ["card_number"], "note": "card amex"}
+{"text": "Card: 375262016007299", "expect": ["card_number"], "note": "card amex"}
+{"text": "use 3771 4766 2211 287 expiring 09/29 please", "expect": ["card_number"], "note": "card amex"}
+{"text": "charge the corporate card 3730-9715-9879-928 today", "expect": ["card_number"], "note": "card amex"}
+{"text": "my card is 6011-6798-6795-7016", "expect": ["card_number"], "note": "card discover"}
+{"text": "Card: 6011 3347 1912 0401", "expect": ["card_number"], "note": "card discover"}
+{"text": "use 6011 5238 4646 3409 expiring 09/29 please", "expect": ["card_number"], "note": "card discover"}
+{"text": "charge the corporate card 6011 6915 0148 8779 today", "expect": ["card_number"], "note": "card discover"}
+{"text": "my card is 3530916020833471", "expect": ["card_number"], "note": "card jcb"}
+{"text": "Card: 3530-1911-1788-8081", "expect": ["card_number"], "note": "card jcb"}
+{"text": "use 3530 5485 5727 8950 expiring 09/29 please", "expect": ["card_number"], "note": "card jcb"}
+{"text": "charge the corporate card 3530-2790-2618-0094 today", "expect": ["card_number"], "note": "card jcb"}
+{"text": "my card is 3698 7025 8565 72", "expect": ["card_number"], "note": "card diners"}
+{"text": "Card: 3647 4118 1878 84", "expect": ["card_number"], "note": "card diners"}
+{"text": "use 3653 3047 3776 17 expiring 09/29 please", "expect": ["card_number"], "note": "card diners"}
+{"text": "charge the corporate card 3630 0471 4589 11 today", "expect": ["card_number"], "note": "card diners"}
+{"text": "my card is 6232 4378 8695 0758", "expect": ["card_number"], "note": "card unionpay"}
+{"text": "Card: 6279126420722971", "expect": ["card_number"], "note": "card unionpay"}
+{"text": "use 6248-3265-8161-8988 expiring 09/29 please", "expect": ["card_number"], "note": "card unionpay"}
+{"text": "charge the corporate card 6288510896698808 today", "expect": ["card_number"], "note": "card unionpay"}
+{"text": "my card is 6233-4404-7573-4803-961", "expect": ["card_number"], "note": "card unionpay19"}
+{"text": "Card: 6241-9392-6340-7461-296", "expect": ["card_number"], "note": "card unionpay19"}
+{"text": "use 6245488510239900230 expiring 09/29 please", "expect": ["card_number"], "note": "card unionpay19"}
+{"text": "charge the corporate card 6270949804382845446 today", "expect": ["card_number"], "note": "card unionpay19"}
+{"text": "Please wire it to IBAN DE06821758473757393574", "expect": ["iban"], "note": "iban DE compact"}
+{"text": "Beneficiary account: DE06 8217 5847 3757 3935 74 (Acme GmbH)", "expect": ["iban"], "note": "iban DE grouped"}
+{"text": "Please wire it to IBAN GB37603604538051993340", "expect": ["iban"], "note": "iban GB compact"}
+{"text": "Beneficiary account: GB37 6036 0453 8051 9933 40 (Acme GmbH)", "expect": ["iban"], "note": "iban GB grouped"}
+{"text": "Please wire it to IBAN FR7243003018179896275836155", "expect": ["iban"], "note": "iban FR compact"}
+{"text": "Beneficiary account: FR72 4300 3018 1798 9627 5836 155 (Acme GmbH)", "expect": ["iban"], "note": "iban FR grouped"}
+{"text": "Please wire it to IBAN NL9387385994367955", "expect": ["iban"], "note": "iban NL compact"}
+{"text": "Beneficiary account: NL93 8738 5994 3679 55 (Acme GmbH)", "expect": ["iban"], "note": "iban NL grouped"}
+{"text": "Please wire it to IBAN ES1379844528828573005809", "expect": ["iban"], "note": "iban ES compact"}
+{"text": "Beneficiary account: ES13 7984 4528 8285 7300 5809 (Acme GmbH)", "expect": ["iban"], "note": "iban ES grouped"}
+{"text": "Please wire it to IBAN IT8870944283708918905940491", "expect": ["iban"], "note": "iban IT compact"}
+{"text": "Beneficiary account: IT88 7094 4283 7089 1890 5940 491 (Acme GmbH)", "expect": ["iban"], "note": "iban IT grouped"}
+{"text": "Please wire it to IBAN BE16698889176340", "expect": ["iban"], "note": "iban BE compact"}
+{"text": "Beneficiary account: BE16 6988 8917 6340 (Acme GmbH)", "expect": ["iban"], "note": "iban BE grouped"}
+{"text": "Please wire it to IBAN CH8880534286010059747", "expect": ["iban"], "note": "iban CH compact"}
+{"text": "Beneficiary account: CH88 8053 4286 0100 5974 7 (Acme GmbH)", "expect": ["iban"], "note": "iban CH grouped"}
+{"text": "Please wire it to IBAN AT748464868230746750", "expect": ["iban"], "note": "iban AT compact"}
+{"text": "Beneficiary account: AT74 8464 8682 3074 6750 (Acme GmbH)", "expect": ["iban"], "note": "iban AT grouped"}
+{"text": "Please wire it to IBAN IE93822219309218976000", "expect": ["iban"], "note": "iban IE compact"}
+{"text": "Beneficiary account: IE93 8222 1930 9218 9760 00 (Acme GmbH)", "expect": ["iban"], "note": "iban IE grouped"}
+{"text": "Please wire it to IBAN PL12308183123011741334928992", "expect": ["iban"], "note": "iban PL compact"}
+{"text": "Beneficiary account: PL12 3081 8312 3011 7413 3492 8992 (Acme GmbH)", "expect": ["iban"], "note": "iban PL grouped"}
+{"text": "Please wire it to IBAN SE8863765321812287158462", "expect": ["iban"], "note": "iban SE compact"}
+{"text": "Beneficiary account: SE88 6376 5321 8122 8715 8462 (Acme GmbH)", "expect": ["iban"], "note": "iban SE grouped"}
+{"text": "Please wire it to IBAN NO1661935349084", "expect": ["iban"], "note": "iban NO compact"}
+{"text": "Beneficiary account: NO16 6193 5349 084 (Acme GmbH)", "expect": ["iban"], "note": "iban NO grouped"}
+{"text": "Please wire it to IBAN DK5435949869725827", "expect": ["iban"], "note": "iban DK compact"}
+{"text": "Beneficiary account: DK54 3594 9869 7258 27 (Acme GmbH)", "expect": ["iban"], "note": "iban DK grouped"}
+{"text": "Please wire it to IBAN FI3427665197013576", "expect": ["iban"], "note": "iban FI compact"}
+{"text": "Beneficiary account: FI34 2766 5197 0135 76 (Acme GmbH)", "expect": ["iban"], "note": "iban FI grouped"}
+{"text": "Please wire it to IBAN PT26139003012327936011853", "expect": ["iban"], "note": "iban PT compact"}
+{"text": "Beneficiary account: PT26 1390 0301 2327 9360 1185 3 (Acme GmbH)", "expect": ["iban"], "note": "iban PT grouped"}
+{"text": "Please wire it to IBAN CZ7041275595432531261177", "expect": ["iban"], "note": "iban CZ compact"}
+{"text": "Beneficiary account: CZ70 4127 5595 4325 3126 1177 (Acme GmbH)", "expect": ["iban"], "note": "iban CZ grouped"}
+{"text": "Please wire it to IBAN HU49761379524858775897492513", "expect": ["iban"], "note": "iban HU compact"}
+{"text": "Beneficiary account: HU49 7613 7952 4858 7758 9749 2513 (Acme GmbH)", "expect": ["iban"], "note": "iban HU grouped"}
+{"text": "Please wire it to IBAN RO2048977340537933331017", "expect": ["iban"], "note": "iban RO compact"}
+{"text": "Beneficiary account: RO20 4897 7340 5379 3333 1017 (Acme GmbH)", "expect": ["iban"], "note": "iban RO grouped"}
+{"text": "Please wire it to IBAN AE870475011693912963962", "expect": ["iban"], "note": "iban AE compact"}
+{"text": "Beneficiary account: AE87 0475 0116 9391 2963 962 (Acme GmbH)", "expect": ["iban"], "note": "iban AE grouped"}
+{"text": "IBAN: GB82 WEST 1234 5698 7654 32", "expect": ["iban"], "note": "iban published example"}
+{"text": "IBAN: DE89 3704 0044 0532 0130 00", "expect": ["iban"], "note": "iban published example"}
+{"text": "IBAN: FR14 2004 1010 0505 0001 3M02 606", "expect": ["iban"], "note": "iban published example"}
+{"text": "IBAN: NL91ABNA0417164300", "expect": ["iban"], "note": "iban published example"}
+{"text": "routing number 011118033", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "routing number 683016123", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "routing number 633870746", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "routing number 629953910", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "ABA 236728402 for the payroll account", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "ABA 802705817 for the payroll account", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "ABA 128327377 for the payroll account", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "ABA 313826764 for the payroll account", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "RTN: 693807254", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "RTN: 024604961", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "RTN: 030485514", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "RTN: 669532430", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "bank routing 241539165 ok", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "bank routing 093099387 ok", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "bank routing 645338852 ok", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "bank routing 723780607 ok", "expect": ["aba_routing"], "note": "aba with context"}
+{"text": "SWIFT code DEUTDEFF", "expect": ["swift_bic"], "note": "bic with context"}
+{"text": "SWIFT code BOFAUS3N", "expect": ["swift_bic"], "note": "bic with context"}
+{"text": "SWIFT/BIC: CHASUS33", "expect": ["swift_bic"], "note": "bic with context"}
+{"text": "SWIFT/BIC: NWBKGB2L", "expect": ["swift_bic"], "note": "bic with context"}
+{"text": "BIC HSBCGB2L", "expect": ["swift_bic"], "note": "bic with context"}
+{"text": "BIC BNPAFRPP", "expect": ["swift_bic"], "note": "bic with context"}
+{"text": "SWIFT: COBADEFFXXX", "expect": ["swift_bic"], "note": "bic with context"}
+{"text": "SWIFT/BIC: UBSWCHZH80A", "expect": ["swift_bic"], "note": "bic with context"}
+{"text": "BIC INGBNL2A", "expect": ["swift_bic"], "note": "bic with context"}
+{"text": "SWIFT: CITIUS33", "expect": ["swift_bic"], "note": "bic with context"}
+{"text": "SWIFT code SCBLSGSG", "expect": ["swift_bic"], "note": "bic with context"}
+{"text": "BIC ANZBAU3M", "expect": ["swift_bic"], "note": "bic with context"}
+{"text": "acct 69321903973", "expect": ["bank_account"], "note": "account with context"}
+{"text": "a/c 44549125", "expect": ["bank_account"], "note": "account with context"}
+{"text": "a/c 35904386", "expect": ["bank_account"], "note": "account with context"}
+{"text": "Account no. 787048575", "expect": ["bank_account"], "note": "account with context"}
+{"text": "acct 87269579", "expect": ["bank_account"], "note": "account with context"}
+{"text": "Account no. 74989498803", "expect": ["bank_account"], "note": "account with context"}
+{"text": "account number 595342963927", "expect": ["bank_account"], "note": "account with context"}
+{"text": "acct 2265248579", "expect": ["bank_account"], "note": "account with context"}
+{"text": "acct 743810996", "expect": ["bank_account"], "note": "account with context"}
+{"text": "acct 884315269", "expect": ["bank_account"], "note": "account with context"}
+{"text": "acct 45964478473", "expect": ["bank_account"], "note": "account with context"}
+{"text": "a/c 80577525", "expect": ["bank_account"], "note": "account with context"}
+{"text": "employee SSN 355-19-6292", "expect": ["us_ssn"], "note": "ssn dashed"}
+{"text": "employee SSN 495-11-0964", "expect": ["us_ssn"], "note": "ssn dashed"}
+{"text": "employee SSN 697-03-1890", "expect": ["us_ssn"], "note": "ssn dashed"}
+{"text": "employee SSN 772-37-4076", "expect": ["us_ssn"], "note": "ssn dashed"}
+{"text": "employee SSN 620-25-2516", "expect": ["us_ssn"], "note": "ssn dashed"}
+{"text": "employee SSN 547-28-5028", "expect": ["us_ssn"], "note": "ssn dashed"}
+{"text": "employee SSN 318-38-0491", "expect": ["us_ssn"], "note": "ssn dashed"}
+{"text": "employee SSN 059-09-9463", "expect": ["us_ssn"], "note": "ssn dashed"}
+{"text": "employee SSN 690-59-3700", "expect": ["us_ssn"], "note": "ssn dashed"}
+{"text": "employee SSN 825-38-9249", "expect": ["us_ssn"], "note": "ssn dashed"}
+{"text": "social security number 168513702", "expect": ["us_ssn"], "note": "ssn undashed with context"}
+{"text": "social security number 708441081", "expect": ["us_ssn"], "note": "ssn undashed with context"}
+{"text": "social security number 488230640", "expect": ["us_ssn"], "note": "ssn undashed with context"}
+{"text": "social security number 081883295", "expect": ["us_ssn"], "note": "ssn undashed with context"}
+{"text": "social security number 841770014", "expect": ["us_ssn"], "note": "ssn undashed with context"}
+{"text": "4 7 3 6 9 3 3 6 7 7 1 2 8 2 3 8", "expect": ["card_number"], "note": "spaced digits"}
+{"text": "4736.9336.7712.8238", "expect": ["card_number"], "note": "dotted digits"}
+{"text": "４７３６ ９３３６ ７７１２ ８２３８", "expect": ["card_number"], "note": "fullwidth digits"}
+{"text": "4​7​3​6​9​3​3​6​7​7​1​2​8​2​3​8", "expect": ["card_number"], "note": "zero-width joined"}
+{"text": "data: Y2FyZCA0NzM2OTMzNjc3MTI4MjM4", "expect": ["card_number"], "note": "base64"}
+{"text": "data: Y2FyZCA0NzM2OTMzNjc3MTI4MjM4Pz8-Pg", "expect": ["card_number"], "note": "url-safe base64"}
+{"text": "bytes \\x63\\x61\\x72\\x64\\x20\\x34\\x37\\x33\\x36\\x39\\x33\\x33\\x36\\x37\\x37\\x31\\x32\\x38\\x32\\x33\\x38", "expect": ["card_number"], "note": "hex \\x escapes"}
+{"text": "value 0x636172642034373336393333363737313238323338", "expect": ["card_number"], "note": "hex 0x"}
+{"text": "blob 636172642034373336393333363737313238323338", "expect": ["card_number"], "note": "hex plain"}
+{"text": "q=%63%61%72%64%20%34%37%33%36%39%33%33%36%37%37%31%32%38%32%33%38", "expect": ["card_number"], "note": "percent-encoded"}
+{"text": "text &#99;&#97;&#114;&#100;&#32;&#52;&#55;&#51;&#54;&#57;&#51;&#51;&#54;&#55;&#55;&#49;&#50;&#56;&#50;&#51;&#56;", "expect": ["card_number"], "note": "html entities"}
+{"text": "u=Y2FyZCA0NzM2OTMzNjc3MTI4MjM4", "expect": ["card_number"], "note": "base64 inside url-encoding"}
+{"text": "4 0 1 3 6 1 5 5 8 4 5 7 9 3 9 7", "expect": ["card_number"], "note": "spaced digits"}
+{"text": "4013.6155.8457.9397", "expect": ["card_number"], "note": "dotted digits"}
+{"text": "４０１３ ６１５５ ８４５７ ９３９７", "expect": ["card_number"], "note": "fullwidth digits"}
+{"text": "4​0​1​3​6​1​5​5​8​4​5​7​9​3​9​7", "expect": ["card_number"], "note": "zero-width joined"}
+{"text": "data: Y2FyZCA0MDEzNjE1NTg0NTc5Mzk3", "expect": ["card_number"], "note": "base64"}
+{"text": "data: Y2FyZCA0MDEzNjE1NTg0NTc5Mzk3Pz8-Pg", "expect": ["card_number"], "note": "url-safe base64"}
+{"text": "bytes \\x63\\x61\\x72\\x64\\x20\\x34\\x30\\x31\\x33\\x36\\x31\\x35\\x35\\x38\\x34\\x35\\x37\\x39\\x33\\x39\\x37", "expect": ["card_number"], "note": "hex \\x escapes"}
+{"text": "value 0x636172642034303133363135353834353739333937", "expect": ["card_number"], "note": "hex 0x"}
+{"text": "blob 636172642034303133363135353834353739333937", "expect": ["card_number"], "note": "hex plain"}
+{"text": "q=%63%61%72%64%20%34%30%31%33%36%31%35%35%38%34%35%37%39%33%39%37", "expect": ["card_number"], "note": "percent-encoded"}
+{"text": "text &#99;&#97;&#114;&#100;&#32;&#52;&#48;&#49;&#51;&#54;&#49;&#53;&#53;&#56;&#52;&#53;&#55;&#57;&#51;&#57;&#55;", "expect": ["card_number"], "note": "html entities"}
+{"text": "u=Y2FyZCA0MDEzNjE1NTg0NTc5Mzk3", "expect": ["card_number"], "note": "base64 inside url-encoding"}
+{"text": "4 5 5 1 0 6 7 3 8 4 5 8 2 8 5 8", "expect": ["card_number"], "note": "spaced digits"}
+{"text": "4551.0673.8458.2858", "expect": ["card_number"], "note": "dotted digits"}
+{"text": "４５５１ ０６７３ ８４５８ ２８５８", "expect": ["card_number"], "note": "fullwidth digits"}
+{"text": "4​5​5​1​0​6​7​3​8​4​5​8​2​8​5​8", "expect": ["card_number"], "note": "zero-width joined"}
+{"text": "data: Y2FyZCA0NTUxMDY3Mzg0NTgyODU4", "expect": ["card_number"], "note": "base64"}
+{"text": "data: Y2FyZCA0NTUxMDY3Mzg0NTgyODU4Pz8-Pg", "expect": ["card_number"], "note": "url-safe base64"}
+{"text": "bytes \\x63\\x61\\x72\\x64\\x20\\x34\\x35\\x35\\x31\\x30\\x36\\x37\\x33\\x38\\x34\\x35\\x38\\x32\\x38\\x35\\x38", "expect": ["card_number"], "note": "hex \\x escapes"}
+{"text": "value 0x636172642034353531303637333834353832383538", "expect": ["card_number"], "note": "hex 0x"}
+{"text": "blob 636172642034353531303637333834353832383538", "expect": ["card_number"], "note": "hex plain"}
+{"text": "q=%63%61%72%64%20%34%35%35%31%30%36%37%33%38%34%35%38%32%38%35%38", "expect": ["card_number"], "note": "percent-encoded"}
+{"text": "text &#99;&#97;&#114;&#100;&#32;&#52;&#53;&#53;&#49;&#48;&#54;&#55;&#51;&#56;&#52;&#53;&#56;&#50;&#56;&#53;&#56;", "expect": ["card_number"], "note": "html entities"}
+{"text": "u=Y2FyZCA0NTUxMDY3Mzg0NTgyODU4", "expect": ["card_number"], "note": "base64 inside url-encoding"}
+{"text": "4 8 5 0 6 0 3 5 4 1 3 9 9 1 3 9", "expect": ["card_number"], "note": "spaced digits"}
+{"text": "4850.6035.4139.9139", "expect": ["card_number"], "note": "dotted digits"}
+{"text": "４８５０ ６０３５ ４１３９ ９１３９", "expect": ["card_number"], "note": "fullwidth digits"}
+{"text": "4​8​5​0​6​0​3​5​4​1​3​9​9​1​3​9", "expect": ["card_number"], "note": "zero-width joined"}
+{"text": "data: Y2FyZCA0ODUwNjAzNTQxMzk5MTM5", "expect": ["card_number"], "note": "base64"}
+{"text": "data: Y2FyZCA0ODUwNjAzNTQxMzk5MTM5Pz8-Pg", "expect": ["card_number"], "note": "url-safe base64"}
+{"text": "bytes \\x63\\x61\\x72\\x64\\x20\\x34\\x38\\x35\\x30\\x36\\x30\\x33\\x35\\x34\\x31\\x33\\x39\\x39\\x31\\x33\\x39", "expect": ["card_number"], "note": "hex \\x escapes"}
+{"text": "value 0x636172642034383530363033353431333939313339", "expect": ["card_number"], "note": "hex 0x"}
+{"text": "blob 636172642034383530363033353431333939313339", "expect": ["card_number"], "note": "hex plain"}
+{"text": "q=%63%61%72%64%20%34%38%35%30%36%30%33%35%34%31%33%39%39%31%33%39", "expect": ["card_number"], "note": "percent-encoded"}
+{"text": "text &#99;&#97;&#114;&#100;&#32;&#52;&#56;&#53;&#48;&#54;&#48;&#51;&#53;&#52;&#49;&#51;&#57;&#57;&#49;&#51;&#57;", "expect": ["card_number"], "note": "html entities"}
+{"text": "u=Y2FyZCA0ODUwNjAzNTQxMzk5MTM5", "expect": ["card_number"], "note": "base64 inside url-encoding"}
+{"text": "iban SUJBTiBERTQ1MjAwMTQ2ODI4MjI3OTI2OTIw", "expect": ["iban"], "note": "iban base64"}
+{"text": "x U1NOIDg2NS05Mi05MjU4", "expect": ["us_ssn"], "note": "ssn base64"}
+{"text": "iban SUJBTiBERTE0NjY4MTg3NjIwMzUwNTY1OTAz", "expect": ["iban"], "note": "iban base64"}
+{"text": "x U1NOIDYyOC02NS01NjUx", "expect": ["us_ssn"], "note": "ssn base64"}
+{"text": "iban SUJBTiBERTM3NzU4NTU1MTYxNzc1NzE0NTky", "expect": ["iban"], "note": "iban base64"}
+{"text": "x U1NOIDUzNi00OS0yNzcy", "expect": ["us_ssn"], "note": "ssn base64"}
+{"text": "Order #4992896665934272 shipped", "expect": [], "note": "order number, valid luhn, negative context"}
+{"text": "ticket 4992 8966 6593 4272 closed", "expect": [], "note": "ticket number, negative context"}
+{"text": "my number 4992896665934277", "expect": [], "note": "16 digits, bad luhn"}
+{"text": "Order #4381610955205577 shipped", "expect": [], "note": "order number, valid luhn, negative context"}
+{"text": "ticket 4381 6109 5520 5577 closed", "expect": [], "note": "ticket number, negative context"}
+{"text": "my number 4381610955205572", "expect": [], "note": "16 digits, bad luhn"}
+{"text": "Order #4402209007289302 shipped", "expect": [], "note": "order number, valid luhn, negative context"}
+{"text": "ticket 4402 2090 0728 9302 closed", "expect": [], "note": "ticket number, negative context"}
+{"text": "my number 4402209007289303", "expect": [], "note": "16 digits, bad luhn"}
+{"text": "Order #4367389273230306 shipped", "expect": [], "note": "order number, valid luhn, negative context"}
+{"text": "ticket 4367 3892 7323 0306 closed", "expect": [], "note": "ticket number, negative context"}
+{"text": "my number 4367389273230308", "expect": [], "note": "16 digits, bad luhn"}
+{"text": "Order #4327219666424134 shipped", "expect": [], "note": "order number, valid luhn, negative context"}
+{"text": "ticket 4327 2196 6642 4134 closed", "expect": [], "note": "ticket number, negative context"}
+{"text": "my number 4327219666424132", "expect": [], "note": "16 digits, bad luhn"}
+{"text": "Order #4101530532196009 shipped", "expect": [], "note": "order number, valid luhn, negative context"}
+{"text": "ticket 4101 5305 3219 6009 closed", "expect": [], "note": "ticket number, negative context"}
+{"text": "my number 4101530532196002", "expect": [], "note": "16 digits, bad luhn"}
+{"text": "Order #4461698754167679 shipped", "expect": [], "note": "order number, valid luhn, negative context"}
+{"text": "ticket 4461 6987 5416 7679 closed", "expect": [], "note": "ticket number, negative context"}
+{"text": "my number 4461698754167670", "expect": [], "note": "16 digits, bad luhn"}
+{"text": "Order #4992079658758509 shipped", "expect": [], "note": "order number, valid luhn, negative context"}
+{"text": "ticket 4992 0796 5875 8509 closed", "expect": [], "note": "ticket number, negative context"}
+{"text": "my number 4992079658758502", "expect": [], "note": "16 digits, bad luhn"}
+{"text": "Order #4137271568481456 shipped", "expect": [], "note": "order number, valid luhn, negative context"}
+{"text": "ticket 4137 2715 6848 1456 closed", "expect": [], "note": "ticket number, negative context"}
+{"text": "my number 4137271568481457", "expect": [], "note": "16 digits, bad luhn"}
+{"text": "Order #4369245226248175 shipped", "expect": [], "note": "order number, valid luhn, negative context"}
+{"text": "ticket 4369 2452 2624 8175 closed", "expect": [], "note": "ticket number, negative context"}
+{"text": "my number 4369245226248172", "expect": [], "note": "16 digits, bad luhn"}
+{"text": "id 7132066775091009", "expect": [], "note": "valid luhn, no issuer prefix"}
+{"text": "id 7364213575814763", "expect": [], "note": "valid luhn, no issuer prefix"}
+{"text": "id 1520770239845958", "expect": [], "note": "valid luhn, no issuer prefix"}
+{"text": "id 8194536220661302", "expect": [], "note": "valid luhn, no issuer prefix"}
+{"text": "id 8170856996191781", "expect": [], "note": "valid luhn, no issuer prefix"}
+{"text": "id 1894304700032587", "expect": [], "note": "valid luhn, no issuer prefix"}
+{"text": "id 7770936374038857", "expect": [], "note": "valid luhn, no issuer prefix"}
+{"text": "id 7201904362688686", "expect": [], "note": "valid luhn, no issuer prefix"}
+{"text": "id 7473108369130012", "expect": [], "note": "valid luhn, no issuer prefix"}
+{"text": "id 7774554607855280", "expect": [], "note": "valid luhn, no issuer prefix"}
+{"text": "Invoice INV-2026-000123 is due", "expect": [], "note": "invoice id"}
+{"text": "UPS 1Z999AA10123456784 arrives Friday", "expect": [], "note": "ups tracking"}
+{"text": "Tracking 794644790138 via FedEx", "expect": [], "note": "fedex tracking"}
+{"text": "IMEI 490154203237518 on the device", "expect": [], "note": "imei"}
+{"text": "ISBN 978-0-306-40615-7", "expect": [], "note": "isbn-13"}
+{"text": "ISBN 9780306406157", "expect": [], "note": "isbn-13 compact"}
+{"text": "Call +1 (415) 555-0132 tomorrow", "expect": [], "note": "us phone"}
+{"text": "Call +44 20 7946 0958", "expect": [], "note": "uk phone"}
+{"text": "ring 415-555-0132", "expect": [], "note": "phone dashed"}
+{"text": "created at 1732579200", "expect": [], "note": "unix seconds"}
+{"text": "created at 1732579200123", "expect": [], "note": "unix ms"}
+{"text": "request id 3f2b8c9e-1d4a-4f6b-9a2e-7c5d8e1f0a3b", "expect": [], "note": "uuid"}
+{"text": "commit 9fceb02d0ae598e95dc970b74767f19372d61af8", "expect": [], "note": "git sha"}
+{"text": "sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "expect": [], "note": "sha256"}
+{"text": "img data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "expect": [], "note": "png base64"}
+{"text": "upgrade to v1.24.3 then 2.0.0-rc.1", "expect": [], "note": "versions"}
+{"text": "meeting on 2026-11-26 and 11/26/2026", "expect": [], "note": "dates"}
+{"text": "price $1,299.00 or EUR 1.299,00", "expect": [], "note": "prices"}
+{"text": "Employee ID 123456789 joined", "expect": [], "note": "9 digits, no routing or ssn context"}
+{"text": "ZIP 94105-1234", "expect": [], "note": "zip+4"}
+{"text": "PLEASE CONFIRM BUSINESS TRANSFER TODAY", "expect": [], "note": "all-caps words"}
+{"text": "What is a SWIFT code for BUSINESS accounts", "expect": [], "note": "swift word then all-caps word"}
+{"text": "the BANKCODE field is empty", "expect": [], "note": "all-caps bic-shaped word, no context"}
+{"text": "account balance 12345678 dollars", "expect": [], "note": "account without number context"}
+{"text": "IBAN GB00 WEST 1234 5698 7654 32", "expect": [], "note": "iban bad check digits"}
+{"text": "IBAN XX82 WEST 1234 5698 7654 32", "expect": [], "note": "unknown country"}
+{"text": "SSN 000-12-3456", "expect": [], "note": "ssn area 000"}
+{"text": "SSN 666-12-3456", "expect": [], "note": "ssn area 666"}
+{"text": "SSN 900-12-3456", "expect": [], "note": "ssn area 9xx"}
+{"text": "SSN 123-00-4567", "expect": [], "note": "ssn group 00"}
+{"text": "routing number 123456789", "expect": [], "note": "aba bad checksum"}
+{"text": "base64 aGVsbG8gd29ybGQsIG5vdGhpbmcgc2Vuc2l0aXZlIGluIGhlcmUgYXQgYWxs", "expect": [], "note": "base64 of benign text"}
+{"text": "hex 6a7573742061206861726d6c6573732068657820656e636f6465642073656e74656e6365", "expect": [], "note": "hex of benign text"}
+{"text": "list 1 2 3 4 5 6 7 8 9 10 11 12 13 14", "expect": [], "note": "counting"}
+{"text": "ref 4111111111111111", "expect": [], "note": "test card with ref context"}
+{"text": "aws key AKIAIOSFODNN7EXAMPLE rotated", "expect": [], "note": "aws key id is not a bic"}
+{"text": "Q3 revenue 41200000 down 12 percent", "expect": [], "note": "large number"}
+{"text": "bytes 0x00ff10a0bb", "expect": [], "note": "short hex"}
+{"text": "color #FF5733 and #33FF57", "expect": [], "note": "hex colors"}
+{"text": "Room 18888, floor 3913, building 599", "expect": [], "note": "everyday numbers"}
+{"text": "batch 58703 of 8176, retry 350", "expect": [], "note": "everyday numbers"}
+{"text": "75821 users signed up in 694 days, 3902 churned", "expect": [], "note": "everyday numbers"}
+{"text": "batch 47484 of 889, retry 539", "expect": [], "note": "everyday numbers"}
+{"text": "latency p95 43013 ms over 2436 requests at 245 rps", "expect": [], "note": "everyday numbers"}
+{"text": "50234 users signed up in 986 days, 3324 churned", "expect": [], "note": "everyday numbers"}
+{"text": "Room 41141, floor 9028, building 634", "expect": [], "note": "everyday numbers"}
+{"text": "24003 users signed up in 505 days, 192 churned", "expect": [], "note": "everyday numbers"}
+{"text": "batch 75879 of 3425, retry 754", "expect": [], "note": "everyday numbers"}
+{"text": "batch 68400 of 9026, retry 626", "expect": [], "note": "everyday numbers"}
+{"text": "96057 users signed up in 534 days, 5037 churned", "expect": [], "note": "everyday numbers"}
+{"text": "ticket 69704-2444-286 reopened", "expect": [], "note": "everyday numbers"}
+{"text": "batch 55382 of 5795, retry 892", "expect": [], "note": "everyday numbers"}
+{"text": "ticket 22702-8473-755 reopened", "expect": [], "note": "everyday numbers"}
+{"text": "56290 users signed up in 4 days, 1263 churned", "expect": [], "note": "everyday numbers"}
+{"text": "13537 users signed up in 728 days, 7234 churned", "expect": [], "note": "everyday numbers"}
+{"text": "ticket 3623-459-507 reopened", "expect": [], "note": "everyday numbers"}
+{"text": "Room 22815, floor 9442, building 321", "expect": [], "note": "everyday numbers"}
+{"text": "Room 32139, floor 5635, building 210", "expect": [], "note": "everyday numbers"}
+{"text": "ticket 39456-1030-114 reopened", "expect": [], "note": "everyday numbers"}
+{"text": "Room 21530, floor 5410, building 300", "expect": [], "note": "everyday numbers"}
+{"text": "Room 51643, floor 4452, building 622", "expect": [], "note": "everyday numbers"}
+{"text": "latency p95 20051 ms over 2136 requests at 357 rps", "expect": [], "note": "everyday numbers"}
+{"text": "batch 57442 of 1064, retry 838", "expect": [], "note": "everyday numbers"}
+{"text": "ticket 99998-1637-144 reopened", "expect": [], "note": "everyday numbers"}
+{"text": "reading 145379290664976 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 9987522366743370193 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 463130069339457839 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 8658377345642764519 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 1916494922227835424 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 3774780186665 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 9992014842921879557 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 163002167769803076 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 5372422647100653 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 488803508437810 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 37550842798489312 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 437342904542970842 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 694365017386562955 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 378242784817592 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 769672965959710 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 7454655782929610 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 927354393987858 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 1658790661239520654 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 7217287124635791 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 9844174348083031 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 0312352873389837299 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 9207251684540366 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 1136277673727564735 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 2610732982623376165 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 32495582214121 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 3503340113586957579 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 925580421092163369 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 977432600374811875 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 65598870418483 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 4468305570471437 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 990792623165299512 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 0699136002359835674 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 004346230223983040 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 396609035869919 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 21619671264877579 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 55662455078360059 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 36049264349484085 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 4419661282276421 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 510210384256766957 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 4442365501417476173 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 9134572149295855 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 8390974090060745825 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 0124169862991864 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 36187826958653948 units", "expect": ["card_number"], "note": "random number that is a valid card"}
+{"text": "reading 75038171829141634 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 960017013197429015 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 8361475959663749078 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 856957220731216 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 149451702269025123 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "reading 59468845935835 units", "expect": [], "note": "random long number (filtered below if valid)"}
+{"text": "build 33d2e63c0fbfb65197a6c763509d750b87af1778", "expect": [], "note": "random sha1"}
+{"text": "build a373f4f4982f65a1d339db407c813dee9517f7a9", "expect": [], "note": "random sha1"}
+{"text": "build d009e107e6853fc7bbf128ac9db2335e99aed908", "expect": [], "note": "random sha1"}
+{"text": "build a58cb642c7d64ef0a99f24dc6eb6d04a57d73e0a", "expect": [], "note": "random sha1"}
+{"text": "build 0de5f167f2d6582e5d6fd829ee012330e2701e9e", "expect": [], "note": "random sha1"}
+{"text": "build f7555e61e398088f0c71a8cd9bafb50ed42606b6", "expect": [], "note": "random sha1"}
+{"text": "build 70889f2ecc46e0eaad85df345fd582adb0f0131b", "expect": [], "note": "random sha1"}
+{"text": "build 7daa6d91b56635dfea6e9ddbdbba1af894d56706", "expect": [], "note": "random sha1"}
+{"text": "build 295b7a18b10f7a826b39b44477cf4089e444cb64", "expect": [], "note": "random sha1"}
+{"text": "build b8c6f6aead39784d0513b4be1b2164c31a4cef84", "expect": [], "note": "random sha1"}
+{"text": "build ba1073c775a79047a5c28f2994a48a4afb261755", "expect": [], "note": "random sha1"}
+{"text": "build 2a458688335f8460ae1c2da5e6dc489ba73b5f4d", "expect": [], "note": "random sha1"}
+{"text": "build 6ac530ebeece8268a72ce81f74017eba3802452d", "expect": [], "note": "random sha1"}
+{"text": "build fe66969823073841c06255f3ed0e7fd79d680bc9", "expect": [], "note": "random sha1"}
+{"text": "build 6ef834db0b6600c77c14dbc9fd82c3ef16e10fc5", "expect": [], "note": "random sha1"}
+{"text": "build 5b286f99ad21237f92fda66ab127e725ee89e3a3", "expect": [], "note": "random sha1"}
+{"text": "build 954f5b152b1c8de5afd6812da3dc93119b5f67db", "expect": [], "note": "random sha1"}
+{"text": "build 84f2f1bd7d7d4a6f166ca04b6e483d87c2328c8a", "expect": [], "note": "random sha1"}
+{"text": "build 5bdc4ecbb61f31a7a93b354a628133a5558a90e8", "expect": [], "note": "random sha1"}
+{"text": "build eb3e1757d4d518ec0388d0c121eb263cd2023e0b", "expect": [], "note": "random sha1"}
+{"text": "build d77c3626dfa4c048abf3530c0cf02449893318f8", "expect": [], "note": "random sha1"}
+{"text": "build 6f880ffcf2d20c7228860ed9d3f14be89c0836ab", "expect": [], "note": "random sha1"}
+{"text": "build 95f61a0a2c6565aa4786318f50a0b4a34e972d6c", "expect": [], "note": "random sha1"}
+{"text": "build 1b4b0fa992d375162a2cb7e7f99d8eba6bab0806", "expect": [], "note": "random sha1"}
+{"text": "build 035066e509b6fe9acc0780c18708d350050fb96b", "expect": [], "note": "random sha1"}

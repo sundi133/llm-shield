@@ -803,6 +803,54 @@ def _print_llm_request(endpoint_url: str, payload: dict):
     logger.info("LLM REQUEST | URL: %s | PAYLOAD: %s", endpoint_url, json.dumps(payload, ensure_ascii=False))
 
 
+class LLMResponseError(RuntimeError):
+    """The model server answered without a completion (no ``choices``).
+
+    OpenRouter and other gateways answer some failures (no credits, rate
+    limit, no provider for a pinned route) with an ``{"error": ...}`` body,
+    sometimes with HTTP 200. Callers used to fail later on a bare
+    ``KeyError: 'choices'``, which logged as "LLM evaluation error: 'choices'"
+    and hid the reason. The message carries the provider's own error text and
+    status, never the prompt.
+    """
+
+
+def _provider_error_text(result, status_code: int) -> str:
+    err = result.get("error") if isinstance(result, dict) else None
+    if isinstance(err, dict):
+        parts = [str(err.get(k)) for k in ("code", "message") if err.get(k) not in (None, "")]
+        meta = err.get("metadata") if isinstance(err.get("metadata"), dict) else {}
+        if meta.get("provider_name"):
+            parts.append(f"provider {meta['provider_name']}")
+        detail = ": ".join(parts) or "error object without a message"
+    elif err:
+        detail = str(err)
+    elif isinstance(result, dict):
+        detail = f"no choices in the reply (keys: {', '.join(sorted(result)[:8]) or 'none'})"
+    else:
+        detail = f"reply is {type(result).__name__}, not an object"
+    return f"model server returned no answer (HTTP {status_code}): {detail}"[:300]
+
+
+def _json_or_error(res, endpoint_url: str):
+    """The reply body as JSON, or LLMResponseError naming the status when the
+    body is not JSON (a gateway's HTML 502 page, an empty body)."""
+    try:
+        return res.json()
+    except ValueError:
+        msg = f"model server returned no answer (HTTP {res.status_code}): body is not JSON"
+        logger.warning("LLM backend: %s (%s)", msg, endpoint_url)
+        raise LLMResponseError(msg) from None
+
+
+def _require_choices(result, status_code: int, endpoint_url: str) -> None:
+    if isinstance(result, dict) and isinstance(result.get("choices"), list) and result["choices"]:
+        return
+    msg = _provider_error_text(result, status_code)
+    logger.warning("LLM backend: %s (%s)", msg, endpoint_url)
+    raise LLMResponseError(msg)
+
+
 def _print_llm_response(endpoint_url: str, status_code: int, body: str):
     """Print upstream LLM response details when debugging failures.
 
@@ -856,9 +904,10 @@ def llm_call(
     )
     if res.status_code >= 400:
         _print_llm_response(endpoint_url, res.status_code, res.text)
-    result = res.json()
+    result = _json_or_error(res, endpoint_url)
     if _is_ollama_mode():
         result = _adapt_ollama_response(result)
+    _require_choices(result, res.status_code, endpoint_url)
     return result
 
 
@@ -892,9 +941,10 @@ async def async_llm_call(
     res = await client.post(endpoint_url, **request_kwargs)
     if res.status_code >= 400:
         _print_llm_response(endpoint_url, res.status_code, res.text)
-    result = res.json()
+    result = _json_or_error(res, endpoint_url)
     if _is_ollama_mode():
         result = _adapt_ollama_response(result)
+    _require_choices(result, res.status_code, endpoint_url)
     llm_ms = (time.perf_counter() - llm_start) * 1000
 
     post_start = time.perf_counter()

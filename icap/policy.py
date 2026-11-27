@@ -37,7 +37,7 @@ from icap.config import IcapConfig
 # The rule engine lives in icap/rules.py, shared with the device agent
 # (docs/specs/device-dlp-agent.md). Re-exported so every importer is unchanged.
 from icap.rules import (  # noqa: F401
-    EMPTY, Bundle, Hit, Rule, compile_bundle, evaluate,
+    EMPTY, Bundle, Hit, Rule, compile_bundle, evaluate, observe,
 )
 from icap.server import IcapRequest, Verdict
 
@@ -231,12 +231,20 @@ class Tier1Screener:
             return Verdict()
 
         if hit is None:
+            if bundle.detector_ids("monitor"):
+                # Built-in detectors set to monitor: logged, never blocked
+                # (docs/specs/builtin-financial-patterns-decoded-pii.md). Names
+                # only, never the value.
+                seen = await asyncio.to_thread(observe, bundle, text, budget)
+                if seen:
+                    log.info("icap detector monitor txn=%s detectors=%s", req.txn_id,
+                             ",".join(h.rule_id for h in seen))
             return Verdict()
 
         reason = (
-            f"Prompt contained data matching policy: {hit.rule_id}"
-            if hit.kind == "rule"
-            else f"Prompt contained a blocked term: {hit.rule_id}"
+            f"Prompt contained a blocked term: {hit.rule_id}"
+            if hit.kind == "blocklist"
+            else f"Prompt contained data matching policy: {hit.rule_id}"
         )
         return Verdict(
             block=True,
