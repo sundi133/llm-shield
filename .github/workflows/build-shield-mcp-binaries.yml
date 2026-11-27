@@ -60,7 +60,8 @@ jobs:
         run: |
           BIN="dist/shield-mcp${{ matrix.ext }}"
           "$BIN" scan --help
-          "$BIN" scan "ftp://nope" ; test $? -eq 4  # usage error exit code intact
+          # usage error exit code intact (captured: the shell runs with -e)
+          rc=0; "$BIN" scan "ftp://nope" || rc=$?; test "$rc" -eq 4
 
       - name: Stage asset
         run: |
