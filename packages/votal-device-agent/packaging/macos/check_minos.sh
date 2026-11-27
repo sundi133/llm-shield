@@ -1,13 +1,13 @@
 #!/bin/bash
 # Fail when any Mach-O file under a directory needs a newer macOS than we
-# support (docs/device-dlp-agent.md: macOS 13 or later). CI builds on a newer
+# support (docs/device-dlp-agent.md: macOS 14 or later). CI builds on a newer
 # runner image than the oldest supported release, so a wheel or the frozen
 # Python built for that image would otherwise ship unnoticed.
 #
-#   check_minos.sh <dir> [max_minos]     (default max 13.0)
+#   check_minos.sh <dir> [max_minos]     (default max 14.0)
 set -euo pipefail
 DIR="${1:?usage: check_minos.sh <dir> [max_minos]}"
-MAX="${2:-13.0}"
+MAX="${2:-14.0}"
 
 ver_gt() {   # ver_gt A B: A > B, comparing major.minor numerically
   local a1 a2 b1 b2

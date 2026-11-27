@@ -21,7 +21,7 @@ with sensitive values masked are opt-in.
 ## What you need
 
 - **An MDM:** Jamf Pro or Kandji for Macs, Intune for Windows (and Macs).
-- **Laptops:** macOS 13 or later, or Windows 10 or 11 (x64), with about 1.5 GB
+- **Laptops:** macOS 14 or later, or Windows 10 or 11 (x64), with about 1.5 GB
   free disk and 1 GB free memory for the local model.
 - **Shield set up for devices.** Your Shield administrator (Votal, if Votal
   hosts your Shield) sets these on Shield:
