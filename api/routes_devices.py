@@ -115,9 +115,16 @@ async def device_heartbeat(request: Request, body: dict = Body(...)):
         if caller is None:
             raise dv.DeviceError("heartbeats come from a device key", status=403)
         tenant_id, device_id, record = caller
-        dv.heartbeat(tenant_id, device_id, body, record)
+        seen = dv.heartbeat(tenant_id, device_id, body, record)
     except dv.DeviceError as e:
         raise _http(e)
+    if seen and seen.get("_alerts"):
+        # Agent health alerts (docs/specs/device-block-and-stop-alerts.md),
+        # delivered without holding the heartbeat's response.
+        import asyncio
+        from core.dlp import device_alerts
+        asyncio.get_running_loop().create_task(
+            device_alerts.deliver(tenant_id, device_alerts.EVENT_HEALTH, seen["_alerts"]))
     events = _ai_inventory(tenant_id, device_id, record, body.get("ai_inventory"))
     if events:
         try:
@@ -332,7 +339,8 @@ async def create_rollout_kit(request: Request, body: dict = Body(...)):
                 "kit_id": rec["kit_id"]})
     _audit(request, "tenant_create_rollout_kit", tenant_id, actor,
            {k: rec[k] for k in ("kit_id", "fleet", "mdm", "platforms", "token_id",
-                                "expires_at", "uses", "include_proxy")}
+                                "expires_at", "uses", "include_proxy", "include_firefox",
+                                "terminal_coverage")}
            | {"revoked_previous": out["revoked"]})
     name = f"votal-rollout-kit-{rec['fleet']}-{rec['mdm']}.zip"
     return Response(content=out["zip"], media_type="application/zip", headers={
@@ -354,7 +362,7 @@ async def revoke_rollout_kit(kit_id: str, request: Request):
     return {"tenant_id": tenant_id, "kit_id": kit_id, "revoked": True}
 
 
-_PAGE_PARAMS = ("limit", "cursor", "fleet", "state", "stale", "q")
+_PAGE_PARAMS = ("limit", "cursor", "fleet", "state", "stale", "q", "capture")
 
 
 @tenant_router.get("")

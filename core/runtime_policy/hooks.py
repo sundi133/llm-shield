@@ -22,6 +22,7 @@ What a laptop adds over a sandbox:
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import posixpath
 import re
 import shlex
@@ -169,6 +170,67 @@ def _tokens(segment: str) -> list[str]:
     return toks[:MAX_TOKENS]
 
 
+#: Where a redirect target ends when quoting is unknown. With the
+#: quote-aware tokenizer only a backtick is ambiguous (quoted or a command
+#: substitution closing); after the str.split fallback, any shell
+#: metacharacter, quote or comma may be the text around the path.
+_TARGET_END_EXACT = re.compile(r"`")
+_TARGET_END_LOOSE = re.compile(r"[();|&<>`'\",]")
+
+
+def _write_paths(target: str, exact: bool) -> list[str]:
+    """The paths one redirect target may write; [] for a harmless device.
+
+    When the target is cut, the cut-off part has no "/", so the uncut text is
+    a name in the same folder: both are checked, and a quoted name like
+    /tmp)x (a file in /, not /tmp) cannot pass as /tmp. A cut down to
+    /dev/null and the like writes nothing, so it is not checked."""
+    if not exact:
+        target = target.lstrip("\"'")
+    m = (_TARGET_END_EXACT if exact else _TARGET_END_LOOSE).search(target)
+    if m and "/" not in target[m.start():]:
+        head = target[:m.start()]
+        if _HARMLESS_TARGETS.match(head):
+            return []
+        return [p for p in (head, target) if p]
+    if not target or _HARMLESS_TARGETS.match(target):
+        return []
+    return [target]
+
+
+def _redirect_targets(segment: str) -> list[list[str]]:
+    """The files a segment's output redirects write, one list per redirect.
+
+    Quote-aware: punctuation_chars splits unquoted ( ) ; | & < > into their
+    own tokens, so V=$(cmd 2>/dev/null) gives the target /dev/null, not
+    /dev/null), while > "out file.txt" stays one path. On a parse error
+    (heredoc bodies, stray quotes) the words are split on whitespace and each
+    target is cut at the first metacharacter instead (_write_paths)."""
+    try:
+        lx = shlex.shlex(segment, posix=True, punctuation_chars=True)
+        lx.whitespace_split = True
+        lx.commenters = ""
+        # Finer tokens than shlex.split (2>/dev/null) is 3), so a wider cap.
+        toks, exact = list(itertools.islice(lx, MAX_TOKENS * 4)), True
+    except ValueError:
+        toks, exact = segment.split()[:MAX_TOKENS], False
+    out = []
+    for i, tok in enumerate(toks):
+        target = None
+        if _REDIRECT.match(tok) and i + 1 < len(toks):
+            target = toks[i + 1]
+        elif not exact:
+            # Quote-aware tokens never join an operator to its target; a
+            # token like ">/etc/x" there came from quotes and redirects nothing.
+            m = _REDIRECT_JOINED.match(tok)
+            target = m.group("target") if m else None
+        if target:
+            paths = _write_paths(target, exact)
+            if paths:
+                out.append(paths)
+    return out
+
+
 def _pathlike(tok: str) -> bool:
     return tok.startswith(("/", "~", "./", "../")) or ("/" in tok and "://" not in tok)
 
@@ -184,22 +246,16 @@ def _bash(view: rc.CompiledProfile, command: str, shield_hosts: set,
     # Original case for paths and URLs: rc._norm_cmd lower-cases.
     segments = [s for s in rc._SEGMENT_SPLIT.split(command) if s.strip()]
     for seg in segments:
-        toks = _tokens(seg)
-        method, urls = "GET", []
-        prog = posixpath.basename(toks[0]) if toks else ""
-        for i, tok in enumerate(toks):
-            target = None
-            if _REDIRECT.match(tok) and i + 1 < len(toks):
-                target = toks[i + 1]
-            else:
-                m = _REDIRECT_JOINED.match(tok)
-                if m:
-                    target = m.group("target")
-            if target and not _HARMLESS_TARGETS.match(target):
+        for paths in _redirect_targets(seg):
+            for target in paths:
                 path = session_path(target, view.workdir, home)
                 why = _check_write(view, path)
                 if why:
                     return Decision("deny", "file", path, why, op="write")
+        toks = _tokens(seg)
+        method, urls = "GET", []
+        prog = posixpath.basename(toks[0]) if toks else ""
+        for i, tok in enumerate(toks):
             word = tok.split("=", 1)[1] if tok.startswith("-") and "=" in tok else tok
             if _pathlike(word):
                 path = session_path(word, view.workdir, home)
@@ -348,13 +404,8 @@ def file_changes(payload: dict) -> tuple[int, int]:
         return 0, 0
     writes = deletes = 0
     for seg in rc._SEGMENT_SPLIT.split(ti["command"][:rc.MAX_VALUE]):
+        writes += len(_redirect_targets(seg))
         toks = _tokens(seg)
-        for i, tok in enumerate(toks):
-            target = toks[i + 1] if _REDIRECT.match(tok) and i + 1 < len(toks) else None
-            m = None if target else _REDIRECT_JOINED.match(tok)
-            target = target or (m.group("target") if m else None)
-            if target and not _HARMLESS_TARGETS.match(target):
-                writes += 1
         prog, args = _program(toks)
         if prog in _DELETE_PROGS or (prog == "find" and ("-delete" in args or any(
                 posixpath.basename(a) in _DELETE_PROGS for a in args))) or \

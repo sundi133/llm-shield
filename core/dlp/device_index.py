@@ -567,18 +567,23 @@ def parse_page_params(params) -> dict:
     q = (params.get("q") or "").strip().lower()
     if len(q) > Q_MAX:
         raise dv.DeviceError(f"q: at most {Q_MAX} characters")
+    capture = params.get("capture") or ""
+    if capture and capture not in dv.CAPTURE_FILTERS:
+        raise dv.DeviceError(f"capture: one of {', '.join(dv.CAPTURE_FILTERS)}")
     cursor = params.get("cursor") or ""
     if len(cursor) > CURSOR_MAX:
         raise dv.DeviceError("cursor: not one this listing issued")
     return {"limit": limit, "cursor": cursor, "fleet": fleet, "state": state,
-            "stale": stale_raw in ("true", "1"), "q": q}
+            "stale": stale_raw in ("true", "1"), "q": q, "capture": capture}
 
 
-def _walk(fleet: str, state: str, stale: bool, q: str) -> str:
+def _walk(fleet: str, state: str, stale: bool, q: str, capture: str = "") -> str:
     """What a cursor is a position in. Every filter is part of it, so a cursor
-    is only accepted back with the filters it was issued for."""
-    return json.dumps(["stale" if stale else "state" if state else "fleet" if fleet else "all",
-                       fleet, state, stale, q], separators=(",", ":"))
+    is only accepted back with the filters it was issued for. `capture` is
+    appended only when set, so cursors without it are unchanged."""
+    parts = ["stale" if stale else "state" if state else "fleet" if fleet else "all",
+             fleet, state, stale, q] + ([capture] if capture else [])
+    return json.dumps(parts, separators=(",", ":"))
 
 
 def _encode_cursor(walk: str, anchor) -> str:
@@ -601,11 +606,12 @@ def _decode_cursor(cursor: str, walk: str, stale: bool):
     return a
 
 
-def _matches(row: dict, fleet: str, state: str, stale: bool, q: str) -> bool:
+def _matches(row: dict, fleet: str, state: str, stale: bool, q: str, capture: str = "") -> bool:
     return ((not fleet or row.get("fleet") == fleet)
             and (not state or row.get("state") == state)
             and (not stale or row.get("stale"))
-            and (not q or (row.get("hostname") or "").strip().lower().startswith(q)))
+            and (not q or (row.get("hostname") or "").strip().lower().startswith(q))
+            and (not capture or dv.capture_filter_value(row) == capture))
 
 
 def summary(tenant_id: str, cutoff: int, stale_after: int) -> dict:
@@ -619,7 +625,7 @@ def summary(tenant_id: str, cutoff: int, stale_after: int) -> dict:
 
 
 def page(tenant_id: str, *, limit: int, cursor: str = "", fleet: str = "", state: str = "",
-         stale: bool = False, q: str = "", expected_digest: str = "") -> dict:
+         stale: bool = False, q: str = "", capture: str = "", expected_digest: str = "") -> dict:
     """One page of the fleet view, and a summary of the whole tenant.
 
     Walks one index: stale devices oldest first when `stale`, else the state,
@@ -630,26 +636,28 @@ def page(tenant_id: str, *, limit: int, cursor: str = "", fleet: str = "", state
     answer comes from the full read, with the same cursors."""
     stale_after = dv.stale_after_s()
     cutoff = int(time.time()) - stale_after
-    walk = _walk(fleet, state, stale, q)
+    walk = _walk(fleet, state, stale, q, capture)
     anchor = _decode_cursor(cursor, walk, stale) if cursor else None
-    filters = {k: v for k, v in (("fleet", fleet), ("state", state), ("stale", stale), ("q", q)) if v}
+    filters = {k: v for k, v in (("fleet", fleet), ("state", state), ("stale", stale), ("q", q),
+                                 ("capture", capture)) if v}
     if _usable(tenant_id):
         try:
             rows, nxt = _page_indexed(tenant_id, limit, anchor, fleet, state, stale, q,
-                                      cutoff, expected_digest)
+                                      cutoff, expected_digest, capture)
             return {"summary": summary(tenant_id, cutoff, stale_after), "devices": rows,
                     "next_cursor": None if nxt is None else _encode_cursor(walk, nxt),
                     "filtered": filters, "indexed": True}
         except Exception:
             logger.exception("indexed device page failed for %s; reading the whole fleet", tenant_id)
     data = dv.list_devices(tenant_id, expected_digest)
-    rows, nxt = _page_scan(data["devices"], limit, anchor, fleet, state, stale, q)
+    rows, nxt = _page_scan(data["devices"], limit, anchor, fleet, state, stale, q, capture)
     return {"summary": data["summary"], "devices": rows,
             "next_cursor": None if nxt is None else _encode_cursor(walk, nxt),
             "filtered": filters, "indexed": False}
 
 
-def _page_indexed(tenant_id, limit, anchor, fleet, state, stale, q, cutoff, expected_digest):
+def _page_indexed(tenant_id, limit, anchor, fleet, state, stale, q, cutoff, expected_digest,
+                  capture=""):
     budget, read, rows = PAGE_BUDGET * limit, 0, []
     if stale:
         offset, done = anchor or 0, False
@@ -661,7 +669,7 @@ def _page_indexed(tenant_id, limit, anchor, fleet, state, stale, q, cutoff, expe
             for did in ids:
                 consumed += 1
                 row = got.get(did)
-                if row and _matches(row, fleet, state, stale, q):
+                if row and _matches(row, fleet, state, stale, q, capture):
                     rows.append(row)
                     if len(rows) == limit:
                         break
@@ -683,7 +691,7 @@ def _page_indexed(tenant_id, limit, anchor, fleet, state, stale, q, cutoff, expe
             consumed += 1
             last = m
             row = got.get(member_id(m))
-            if row and _matches(row, fleet, state, stale, q):
+            if row and _matches(row, fleet, state, stale, q, capture):
                 rows.append(row)
                 if len(rows) == limit:
                     break
@@ -695,7 +703,7 @@ def _page_indexed(tenant_id, limit, anchor, fleet, state, stale, q, cutoff, expe
     return rows, (None if done else last)
 
 
-def _page_scan(all_rows: list[dict], limit, anchor, fleet, state, stale, q):
+def _page_scan(all_rows: list[dict], limit, anchor, fleet, state, stale, q, capture=""):
     """The same page, from the full read: same order, same cursors."""
     if stale:
         base = sorted((r for r in all_rows if r["stale"]),
@@ -704,11 +712,11 @@ def _page_scan(all_rows: list[dict], limit, anchor, fleet, state, stale, q):
         while offset < len(base) and len(rows) < limit:
             r = base[offset]
             offset += 1
-            if _matches(r, fleet, state, stale, q):
+            if _matches(r, fleet, state, stale, q, capture):
                 rows.append(r)
         return rows, (offset if offset < len(base) else None)
     base = sorted(((member(r, r["device_id"]), r) for r in all_rows
-                   if _matches(r, fleet, state, stale, q)), key=lambda mr: mr[0])
+                   if _matches(r, fleet, state, stale, q, capture)), key=lambda mr: mr[0])
     if anchor is not None:
         base = [mr for mr in base if mr[0] > anchor]
     page_ = base[:limit]

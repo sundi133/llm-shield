@@ -102,6 +102,11 @@ async def ingest_runtime_events(request: Request, background: BackgroundTasks,
         source_ip = request.client.host if request.client else ""
         background.add_task(rt_events.ingest, tenant_id, accepted, source_ip=source_ip,
                             trusted=_admin_key(request))
+        if device:
+            # Webhook alerts for the laptop's blocks (docs/specs/device-block-
+            # and-stop-alerts.md), after the response, like the ingest itself.
+            from core.dlp import device_alerts
+            background.add_task(device_alerts.on_device_events, tenant_id, device[1], accepted)
     return {"accepted": len(accepted), "rejected": rejected}
 
 

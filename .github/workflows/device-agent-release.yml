@@ -51,7 +51,7 @@ jobs:
   macos:
     name: macOS pkg
     needs: version
-    runs-on: macos-14
+    runs-on: macos-15
     outputs:
       signed: ${{ steps.sign.outputs.signed || 'false' }}
     env:
@@ -120,6 +120,8 @@ jobs:
           # The Claude Code hook scripts are in the frozen binary (agent_hooks.py).
           GOT=$("$BASE/bin/votal-device-agent" claude-code-hook | python3 -c "import json,sys; print(json.load(sys.stdin)['sh_sha256'])")
           test "$GOT" = "$(shasum -a 256 core/runtime_policy/hook_scripts/claude_code_hook.sh | cut -d' ' -f1)"
+          # Built on a newer runner than the oldest macOS we support (14).
+          packages/votal-device-agent/packaging/macos/check_minos.sh "$BASE"
           if [ "${{ steps.sign.outputs.signed }}" = "true" ]; then
             pkgutil --check-signature "$PKG" | grep -q "Developer ID Installer"
             spctl -a -vv -t install "$PKG"

@@ -110,3 +110,46 @@ def query_admin_audit(
     except Exception as e:
         logger.error(f"Admin audit query failed: {e}")
         return []
+
+
+def guardrail_states(config: Optional[dict]) -> dict:
+    """{stage: {guardrail: {enabled, action[, enabled_policies]}}} for the
+    audit. Names alone could not answer "was it switched on?": a save that
+    turned custom_policy_input on or off logged identical before/after lists."""
+    out: dict = {}
+    for stage in ("input_guardrails", "output_guardrails"):
+        states = {}
+        for name, g in ((config or {}).get(stage) or {}).items():
+            if not isinstance(g, dict):
+                continue
+            st = {"enabled": bool(g.get("enabled", True)), "action": g.get("action")}
+            policies = (g.get("settings") or {}).get("policies")
+            if isinstance(policies, list):
+                st["enabled_policies"] = sum(1 for p in policies
+                                             if isinstance(p, dict) and p.get("enabled", True))
+            states[name] = st
+        out[stage] = states
+    return out
+
+
+def guardrail_changes(before: dict, after: dict) -> list:
+    """What a save changed: added, removed, or a different enabled / action /
+    enabled-policy count, per guardrail."""
+    changes = []
+    for stage in ("input_guardrails", "output_guardrails"):
+        b, a = before.get(stage) or {}, after.get(stage) or {}
+        for name in sorted(set(b) | set(a)):
+            if name not in a:
+                changes.append({"stage": stage, "guardrail": name, "change": "removed"})
+            elif name not in b:
+                changes.append({"stage": stage, "guardrail": name, "change": "added", **a[name]})
+            elif a[name] != b[name]:
+                changes.append({"stage": stage, "guardrail": name, "change": "updated",
+                                "before": b[name], "after": a[name]})
+    return changes
+
+def guardrail_audit(before_config: Optional[dict], after_config: Optional[dict]) -> dict:
+    """Audit metadata for a policy save: each guardrail's state before and
+    after, and what changed. Merge into ``metadata``."""
+    b, a = guardrail_states(before_config), guardrail_states(after_config)
+    return {"guardrails_before": b, "guardrails_after": a, "changes": guardrail_changes(b, a)}

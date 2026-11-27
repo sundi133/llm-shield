@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, Request, Query
 from typing import Optional
+import copy
 
 from storage.tenant_store import (
     create_tenant,
@@ -17,7 +18,7 @@ from storage.tenant_store import (
     get_tenant_ancestors,
 )
 from storage.tenant_models import TenantCreateRequest, TenantUpdateRequest, effective_quota
-from storage.admin_audit import log_admin_action, query_admin_audit
+from storage.admin_audit import guardrail_audit, log_admin_action, query_admin_audit
 from storage.rate_limiter import get_usage
 from core.policy_inheritance import get_effective_policies
 
@@ -128,6 +129,9 @@ async def update_tenant_config(tenant_id: str, body: TenantUpdateRequest, reques
     before = get_tenant(tenant_id)
     if not before:
         raise HTTPException(status_code=404, detail=f"Tenant '{tenant_id}' not found")
+    # update_tenant edits the cached dict get_tenant returned: copy it first
+    # or the audit's "before" is already the new config.
+    before = copy.deepcopy(before)
 
     updates = body.model_dump(exclude_none=True)
     config = update_tenant(tenant_id, updates)
@@ -139,7 +143,7 @@ async def update_tenant_config(tenant_id: str, body: TenantUpdateRequest, reques
         source_ip=_source_ip(request),
         before={"plan": before.get("plan"), "input_guardrails": list(before.get("input_guardrails", {}).keys())},
         after={"plan": config.get("plan"), "input_guardrails": list(config.get("input_guardrails", {}).keys())},
-        metadata={"updated_fields": list(updates.keys())},
+        metadata={"updated_fields": list(updates.keys()), **guardrail_audit(before, config)},
     )
 
     return {"status": "updated", "tenant_id": tenant_id, "config": config}

@@ -20,8 +20,9 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
-from typing import Any
+from typing import Any, Optional
 
 CATEGORIES = ("credentials", "personal_data", "customer_data", "source_code", "financial",
               "health")
@@ -112,6 +113,14 @@ DEFAULT_POLICY = {
     "privacy": {"capture_excerpt": False, "server_screen": False},
     "grace_s": 604800,
 }
+
+# Built-in financial detectors (docs/specs/builtin-financial-patterns-decoded-pii.md).
+# The ids mirror core/dlp/detectors.DETECTORS (kept equal by a test) so this
+# module validates without importing the detector code.
+BUILTIN_DETECTOR_IDS = ("card_number", "iban", "aba_routing", "swift_bic", "bank_account", "us_ssn")
+DETECTOR_ACTIONS = ("off", "monitor", "redact", "block")
+DEFAULT_BUILTIN_DETECTORS = {**{d: "monitor" for d in BUILTIN_DETECTOR_IDS},
+                             "decode": True, "ignore_test_values": False}
 
 _HOST = re.compile(r"^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 _FLEET = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -228,6 +237,94 @@ def _questions(q: Any, errors: list[str]) -> dict:
     return out
 
 
+def _builtin_detectors(raw: Any, errors: list[str]) -> dict:
+    out = dict(DEFAULT_BUILTIN_DETECTORS)
+    if not isinstance(raw, dict):
+        errors.append("builtin_detectors: an object")
+        return out
+    _unknown(raw, DEFAULT_BUILTIN_DETECTORS, "builtin_detectors.", errors)
+    for did in BUILTIN_DETECTOR_IDS:
+        if did in raw:
+            out[did] = _one_of(raw[did], DETECTOR_ACTIONS, f"builtin_detectors.{did}", errors)
+    for flag in ("decode", "ignore_test_values"):
+        if flag in raw:
+            if not isinstance(raw[flag], bool):
+                errors.append(f"builtin_detectors.{flag}: true or false")
+            else:
+                out[flag] = raw[flag]
+    return out
+
+
+def detectors_enabled() -> bool:
+    """SHIELD_BUILTIN_DETECTORS=off removes the `detectors` key from every
+    bundle, which returns agents and ICAP to rules-only on their next sync."""
+    return (os.environ.get("SHIELD_BUILTIN_DETECTORS", "on") or "on").strip().lower() not in (
+        "off", "0", "false", "no")
+
+
+def detectors_bundle(policy: Optional[dict]) -> Optional[dict]:
+    """The bundle's `detectors` key for a tenant's device DLP policy (defaults
+    when the section is absent), or None when the switch is off."""
+    if not detectors_enabled():
+        return None
+    from core.dlp.detectors import SCHEMA, SEVERITY
+    st = {**DEFAULT_BUILTIN_DETECTORS, **((policy or {}).get("builtin_detectors") or {})}
+    items = [{"id": d, "action": st[d], "severity": SEVERITY[d]}
+             for d in BUILTIN_DETECTOR_IDS if st.get(d, "off") != "off"]
+    return {"schema": SCHEMA, "decode": bool(st["decode"]),
+            "ignore_test_values": bool(st["ignore_test_values"]), "items": items}
+
+
+SILENT_MIN_S, SILENT_MAX_S = 900, 30 * 86400
+
+
+def _alerts(raw: Any, errors: list[str]) -> dict:
+    """Device alerts: dlp_blocks and tamper (default on), silent_after_s (0 =
+    no silence alerts, the default: laptops sleep every night)."""
+    out = {"dlp_blocks": True, "tamper": True, "silent_after_s": 0}
+    if not isinstance(raw, dict):
+        errors.append("alerts: an object")
+        return out
+    _unknown(raw, set(out), "alerts.", errors)
+    for k in ("dlp_blocks", "tamper"):
+        if k in raw:
+            if not isinstance(raw[k], bool):
+                errors.append(f"alerts.{k}: true or false")
+            else:
+                out[k] = raw[k]
+    s = raw.get("silent_after_s", 0)
+    if isinstance(s, bool) or not isinstance(s, int) or not (s == 0 or SILENT_MIN_S <= s <= SILENT_MAX_S):
+        errors.append(f"alerts.silent_after_s: 0, or {SILENT_MIN_S} to {SILENT_MAX_S} seconds")
+    else:
+        out["silent_after_s"] = s
+    return out
+
+
+MAX_ALLOWED_PACS = 10
+_PAC_URL = re.compile(r"^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\s?#]*)?$")
+
+
+def _capture(raw: Any, errors: list[str]) -> dict:
+    """`capture.allowed_pac_urls`: PAC files that count as the agent's own for
+    the capture self-check, typically a VPN's PAC that chains AI hosts to the
+    agent. At most 10 http(s) URLs, no query."""
+    if not isinstance(raw, dict):
+        errors.append("capture: an object")
+        return {"allowed_pac_urls": []}
+    _unknown(raw, {"allowed_pac_urls"}, "capture.", errors)
+    urls = raw.get("allowed_pac_urls") or []
+    if not isinstance(urls, list) or len(urls) > MAX_ALLOWED_PACS:
+        errors.append(f"capture.allowed_pac_urls: a list of at most {MAX_ALLOWED_PACS} URLs")
+        return {"allowed_pac_urls": []}
+    clean = []
+    for i, u in enumerate(urls):
+        if not isinstance(u, str) or not _PAC_URL.match(u.strip()):
+            errors.append(f"capture.allowed_pac_urls[{i}]: an http(s) URL without a query")
+            continue
+        clean.append(u.strip())
+    return {"allowed_pac_urls": clean}
+
+
 def validate_policy(raw: Any) -> dict:
     """The normalized policy, with every omitted field at its default. Raises
     PolicyError listing every problem, not just the first."""
@@ -236,7 +333,8 @@ def validate_policy(raw: Any) -> dict:
     errors: list[str] = []
     # agent_hooks is optional and stored only when set (core/dlp/agent_hooks.py),
     # so tenants that never use it keep their policy hash and bundles.
-    _unknown(raw, {*DEFAULT_POLICY, "agent_hooks", "agent_os_events", "discovery"}, "", errors)
+    _unknown(raw, {*DEFAULT_POLICY, "agent_hooks", "agent_os_events", "discovery",
+                   "builtin_detectors", "capture", "alerts"}, "", errors)
     p = {**default_policy(), **copy.deepcopy(raw)}
     if "agent_hooks" in p:
         from core.dlp import agent_hooks
@@ -248,10 +346,22 @@ def validate_policy(raw: Any) -> dict:
         p["agent_os_events"] = agent_os_events.validate(
             p["agent_os_events"], errors, valid_fleet=valid_fleet, max_fleets=MAX_FLEETS)
 
+    if "capture" in p:
+        # Optional, stored only when set (docs/specs/device-agent-vpn-validation.md).
+        p["capture"] = _capture(p["capture"], errors)
+
+    if "alerts" in p:
+        # Optional, stored only when set (docs/specs/device-block-and-stop-alerts.md).
+        p["alerts"] = _alerts(p["alerts"], errors)
+
     if "discovery" in p:
         # Optional, stored only when set (core/discovery/policy.py).
         from core.discovery import policy as discovery_policy
         p["discovery"] = discovery_policy.validate(p["discovery"], errors)
+
+    if "builtin_detectors" in p:
+        # Optional, stored only when set, so an untouched policy keeps its hash.
+        p["builtin_detectors"] = _builtin_detectors(p["builtin_detectors"], errors)
 
     _one_of(p["mode"], MODES, "mode", errors)
 

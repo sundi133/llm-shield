@@ -59,6 +59,17 @@ def _build_bundle(tenant_id: str) -> dict:
         pass
 
     bundle = {"rules": rules, "blocklists": blocklists}
+    # Built-in financial detectors: ids and actions only, the code ships with
+    # the agent and ICAP (docs/specs/builtin-financial-patterns-decoded-pii.md).
+    # Older consumers ignore the key. Defaults if the policy can't be read.
+    from core.dlp.device_policy import detectors_bundle
+    try:
+        from core.dlp import device_store
+        detectors = detectors_bundle(device_store.get_policy(tenant_id))
+    except Exception:
+        detectors = detectors_bundle(None)
+    if detectors:
+        bundle["detectors"] = detectors
     version = hashlib.sha256(
         json.dumps(bundle, sort_keys=True).encode()).hexdigest()[:16]
     bundle["version"] = version

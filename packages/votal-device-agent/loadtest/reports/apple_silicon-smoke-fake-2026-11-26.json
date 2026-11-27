@@ -1,0 +1,174 @@
+{
+  "meta": {
+    "profile": "smoke",
+    "model": "fake",
+    "model_latency_ms": 50.0,
+    "hardware": "apple_silicon",
+    "cpu": "Apple M3",
+    "ram_gb": 16.0,
+    "os": "Darwin 27.0.0",
+    "power": "ac",
+    "agent_version": "0.2.0",
+    "git": "767f925",
+    "date": "2026-11-26 21:09",
+    "gate": "inline",
+    "gate_p95_ms": 55.2,
+    "tabs": 4,
+    "duration_s": 60
+  },
+  "classes": {
+    "prompt_s": {
+      "count": 314,
+      "errors": 0,
+      "added_p50_ms": 57.85,
+      "added_p95_ms": 64.83,
+      "added_p99_ms": 193.15,
+      "outcomes": {
+        "ok": 305,
+        "blocked": 9
+      }
+    },
+    "prompt_l": {
+      "count": 79,
+      "errors": 0,
+      "added_p50_ms": 220.44,
+      "added_p95_ms": 234.72,
+      "added_p99_ms": 251.67,
+      "outcomes": {
+        "ok": 44,
+        "blocked": 35
+      }
+    },
+    "ws": {
+      "count": 64,
+      "errors": 0,
+      "added_p50_ms": 57.18,
+      "added_p95_ms": 63.6,
+      "added_p99_ms": 85.79,
+      "outcomes": {
+        "ok": 64
+      }
+    },
+    "sse": {
+      "count": 68,
+      "errors": 0,
+      "added_p50_ms": 21.89,
+      "added_p95_ms": 78.41,
+      "added_p99_ms": 198.41,
+      "outcomes": {
+        "ok": 68
+      },
+      "ttfb_delta_p95_ms": 633.7
+    },
+    "tunnel": {
+      "count": 34,
+      "errors": 0,
+      "added_p50_ms": 0.63,
+      "added_p95_ms": 11.7,
+      "added_p99_ms": 24.31,
+      "outcomes": {
+        "ok": 34
+      },
+      "bytes_identical": true
+    }
+  },
+  "resources": {
+    "agent_cpu_mean_pct": 5.96,
+    "agent_cpu_p95_pct": 8.71,
+    "agent_rss_start_mb": 59.97,
+    "agent_rss_peak_mb": 68.6,
+    "agent_rss_end_mb": 56.75,
+    "agent_threads_peak": 7,
+    "agent_rss_growth_mb": -3.21
+  },
+  "queues": {
+    "after_send_max": 0,
+    "after_send_end": 0,
+    "backlog_drained_s": 0.0,
+    "audit_records": 100,
+    "audit_headroom_pct": 246.73
+  },
+  "failures": {
+    "proxy": 0,
+    "direct": 0
+  },
+  "load": {
+    "achieved_rps": 9.87,
+    "generator_cpu_mean_pct": 1.7
+  },
+  "valid": true,
+  "budgets": [
+    {
+      "name": "proxy_failures",
+      "limit": 0,
+      "kind": "equals",
+      "measured": 0,
+      "pass": true,
+      "enforce": true
+    },
+    {
+      "name": "tunnel_bytes_identical",
+      "limit": true,
+      "kind": "equals",
+      "measured": true,
+      "pass": true,
+      "enforce": true
+    },
+    {
+      "name": "short_prompt_added_p95_ms",
+      "limit": 200,
+      "kind": "max",
+      "measured": 64.83,
+      "pass": true,
+      "enforce": true
+    },
+    {
+      "name": "short_prompt_added_p99_ms",
+      "limit": 150,
+      "kind": "max",
+      "measured": 193.15,
+      "pass": false,
+      "enforce": false
+    },
+    {
+      "name": "stream_ttfb_delta_p95_ms",
+      "limit": 100,
+      "kind": "max",
+      "measured": 633.7,
+      "pass": false,
+      "enforce": false
+    },
+    {
+      "name": "ws_frame_added_p95_ms",
+      "limit": 50,
+      "kind": "max",
+      "measured": 63.6,
+      "pass": false,
+      "enforce": false
+    },
+    {
+      "name": "tunnel_added_p95_ms",
+      "limit": 10,
+      "kind": "max",
+      "measured": 11.7,
+      "pass": false,
+      "enforce": false
+    },
+    {
+      "name": "agent_cpu_mean_pct",
+      "limit": 15,
+      "kind": "max",
+      "measured": 5.96,
+      "pass": true,
+      "enforce": false
+    },
+    {
+      "name": "agent_rss_peak_mb",
+      "limit": 250,
+      "kind": "max",
+      "measured": 68.6,
+      "pass": true,
+      "enforce": false
+    }
+  ]
+}

@@ -199,8 +199,24 @@ def _rand_text(rng):
     return " ".join(words)
 
 
+FUZZ_SEED = 1234
+# This test is about verdict parity, not latency. The default stage budget
+# (500 ms) includes compiling all 300 rules on the first, cold call, so on a
+# loaded machine a timeout used to surface as "matched=False" and read like a
+# prefilter bug (2026-11-27: the first text, the one with the ligature). Budget
+# overflow has its own test below.
+_GENEROUS = {"rule_timeout_s": 30.0, "stage_budget_s": 120.0}
+
+
+def _assert_parity(rules, ev, on, off, where):
+    for rule, a, b in zip(rules, on, off):
+        assert not a.error and not b.error, (where, rule["title"], a.error or b.error)
+        assert a.matched == b.matched, (where, rule["title"], rule["detection"],
+                                        f"prefilter={a.matched} full={b.matched}")
+
+
 def test_prefilter_never_changes_a_verdict_randomized():
-    rng = random.Random(1234)
+    rng = random.Random(FUZZ_SEED)
     rules = [_rand_rule(rng, i) for i in range(300)]
     texts = [_rand_text(rng) for _ in range(40)]
     skipped = 0
@@ -208,12 +224,27 @@ def test_prefilter_never_changes_a_verdict_randomized():
         ctx = {"user_role": rng.choice(["admin", "contractor", "analyst"]),
                "tool_name": rng.choice([None, "db.query"])}
         ev = policy_event(text, ctx, "input")
-        on = evaluate_rules(rules, ev, use_prefilter=True)
-        off = evaluate_rules(rules, ev, use_prefilter=False)
-        assert [o.matched for o in on] == [o.matched for o in off], text
-        assert not any(o.error for o in on + off)
+        on = evaluate_rules(rules, ev, use_prefilter=True, **_GENEROUS)
+        off = evaluate_rules(rules, ev, use_prefilter=False, **_GENEROUS)
+        _assert_parity(rules, ev, on, off, f"seed={FUZZ_SEED} text={text!r} ctx={ctx}")
         skipped += sum(o.skipped for o in on)
     assert skipped > 1000, f"prefilter is barely active ({skipped} skips)"
+
+
+def test_prefilter_ligature_input_regression():
+    # The input reported on 2026-11-27, against the same 300 seeded rules, in
+    # every context and with and without NFKC normalization.
+    text = "café TOKEN please Y ﬁle admin AKIA ﬁle café world ﬁle world"
+    rng = random.Random(FUZZ_SEED)
+    rules = [_rand_rule(rng, i) for i in range(300)]
+    for normalize in (True, False):
+        for role in ("admin", "contractor", "analyst"):
+            for tool in (None, "db.query"):
+                ctx = {"user_role": role, "tool_name": tool}
+                ev = policy_event(text, ctx, "input", normalize=normalize)
+                on = evaluate_rules(rules, ev, use_prefilter=True, **_GENEROUS)
+                off = evaluate_rules(rules, ev, use_prefilter=False, **_GENEROUS)
+                _assert_parity(rules, ev, on, off, f"normalize={normalize} ctx={ctx}")
 
 
 def test_prefilter_absent_library_falls_back_to_full_evaluation(monkeypatch):

@@ -16,7 +16,7 @@ import threading
 from pathlib import Path
 from typing import Callable, Optional
 
-from votal_device_agent import sync
+from votal_device_agent import sync, terminal
 from votal_device_agent.platform import Paths, Run, paths as os_paths, run as _run, system
 from votal_device_agent.platform import credentials, managed, native_messaging, trust_store
 
@@ -62,6 +62,7 @@ def uninstall_hooks(*, os_name: Optional[str] = None, p: Optional[Paths] = None,
     os_name = os_name or system()
     p = p or os_paths(os_name)
     native_messaging.uninstall(os_name=os_name, manifest_dir=p.install_dir, run=run)
+    terminal.remove(p, os_name)               # shell block / machine variables, if any
     meta = p.state_dir / "ca" / "votal-ca.json"
     cert = p.state_dir / "ca" / "mitmproxy-ca-cert.pem"
     if cert.exists():
@@ -96,6 +97,9 @@ def build_agent(os_name: Optional[str] = None, p: Optional[Paths] = None, *, run
         result = trust_store.trust(cert_path, previous=previous.get("thumbprint"),
                                    os_name=os_name, run=run)
         previous["thumbprint"] = trust_store.sha1_thumbprint(cert_path)
+        if managed.terminal_coverage(m):
+            # A new CA: rewrite the trust files terminals read.
+            terminal.write_trust(p, os_name, run)
         if result != "trusted":
             raise RuntimeError(result)          # keeps ca_trust_pending set
 
@@ -183,11 +187,54 @@ def run_installed(os_name: Optional[str] = None, stop: Optional[threading.Event]
     port = agent.start()
     print(f"votal-device-agent: running, loopback API 127.0.0.1:{port}, state {agent.state()}",
           flush=True)
+    coverage = _terminal_coverage(os_name, p, agent)
     done.wait()
+    if coverage and os_name == "windows":
+        # Machine variables are not probed like the macOS block: take them away
+        # on a clean stop so new terminals go direct (terminals fail open).
+        terminal.remove(p, os_name)
     agent.stop()
     if supervisor:
         supervisor.stop()
     return 0
+
+
+def _terminal_coverage(os_name: str, p: Paths, agent, run: Run = _run) -> bool:
+    """Apply or remove terminal coverage from the MDM setting, once the proxy
+    listens (docs/specs/device-kit-firefox-terminal.md). Never fatal."""
+    on = bool(managed.terminal_coverage(managed.read(os_name)))
+    try:
+        if on:
+            port = getattr(agent, "proxy_port", None) or agent.cfg.proxy_port
+            out = terminal.apply(p, os_name, int(port), run=run)
+            if out["trust"].get("reason"):
+                print(f"votal-device-agent: terminal coverage: {out['trust']['reason']}", flush=True)
+        else:
+            terminal.remove(p, os_name)
+    except Exception as e:                    # a shell file must never stop DLP
+        print(f"votal-device-agent: terminal coverage failed: {e}", flush=True)
+    return on
+
+
+FIREFOX_APPS = {"macos": (Path("/Applications/Firefox.app"),),
+                "windows": (Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Mozilla Firefox",)}
+FIREFOX_MAC_POLICY = Path("/Library/Managed Preferences/org.mozilla.firefox.plist")
+
+
+def firefox_policy_check(os_name: str, run: Run = _run, apps=None,
+                         mac_policy: Path = FIREFOX_MAC_POLICY) -> tuple[bool, str]:
+    """(ok, detail): ok when Firefox is not installed, or its policy is present."""
+    apps = FIREFOX_APPS.get(os_name, ()) if apps is None else apps
+    if not any(Path(a).exists() for a in apps):
+        return True, "Firefox not installed"
+    if os_name == "macos":
+        present = mac_policy.exists()
+    else:
+        code, out, _ = run(["reg", "query", r"HKLM\SOFTWARE\Policies\Mozilla\Firefox\Certificates",
+                            "/v", "ImportEnterpriseRoots"])
+        present = code == 0 and b"0x1" in (out or b"")
+    return present, ("policy present" if present else
+                     "Firefox is installed without the Votal policy: prompts in Firefox are not checked")
 
 
 # ── verify ───────────────────────────────────────────────────────────
@@ -243,6 +290,9 @@ def verify(*, os_name: Optional[str] = None, p: Optional[Paths] = None, run: Run
         f"{model.get('state', '?')}, p95 {model.get('p95_ms')} ms, inline {model.get('inline')}")
     cap = status.get("capture") or {}
     add("local proxy", bool(cap.get("proxy_port")), f"127.0.0.1:{cap.get('proxy_port')}")
+    sc = cap.get("self_check") or {}
+    add("capture", sc.get("state") == "ok",
+        (sc.get("state") or "not reported") + (f" ({sc['effective']})" if sc.get("effective") else ""))
     cert = p.state_dir / "ca" / "mitmproxy-ca-cert.pem"
     trusted = cert.exists() and trust_store.is_trusted(cert, os_name=os_name, run=run)
     add("device CA trusted", trusted, str(cert) if cert.exists() else "no CA yet")
@@ -252,6 +302,9 @@ def verify(*, os_name: Optional[str] = None, p: Optional[Paths] = None, run: Run
         add("browser extension host", present, ", ".join(m["ExtensionIDs"]))
     audit = status.get("audit") or ""
     add("audit chain", "intact" in audit, audit or "unknown")
+    add("Firefox policy", *firefox_policy_check(os_name, run))
+    if managed.terminal_coverage(m):
+        add("terminal coverage", *terminal.status(p, os_name))
     critical = {"MDM settings", "agent.json", "enrolled", "agent running", "policy bundle",
                 "local proxy", "device CA trusted", "audit chain"}
     return all(ok for name, ok, _ in checks if name in critical), checks

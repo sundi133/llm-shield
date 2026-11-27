@@ -21,7 +21,7 @@ with sensitive values masked are opt-in.
 ## What you need
 
 - **An MDM:** Jamf Pro or Kandji for Macs, Intune for Windows (and Macs).
-- **Laptops:** macOS 13 or later, or Windows 10 or 11 (x64), with about 1.5 GB
+- **Laptops:** macOS 14 or later, or Windows 10 or 11 (x64), with about 1.5 GB
   free disk and 1 GB free memory for the local model.
 - **Shield set up for devices.** Your Shield administrator (Votal, if Votal
   hosts your Shield) sets these on Shield:
@@ -123,6 +123,45 @@ By default, even in enforce mode:
 | Blocked | The AI tool shows an error: "Blocked by your company's AI data policy", with the reason. |
 | Reason needed | The browser extension asks for a reason. Other apps show a link to a page on the laptop where the user gives one. The same prompt is then allowed once, within a minute. |
 
+## Alerts
+
+Shield can tell your webhooks, and through them your SOC, when a laptop blocks
+a prompt or when its agent is stopped. Subscribe a webhook (Settings, Webhooks)
+to:
+
+- **`device_dlp_blocked`**: a laptop blocked a prompt. It arrives within about a
+  minute when the laptop is online, or when it reconnects (marked `delayed`). At
+  most one per laptop and category every 5 minutes; the rest are counted. It
+  names the laptop, the AI service, the category and the rules, never the prompt.
+- **`device_agent_alert`**, with a `reason`:
+  - `restarted_without_reboot`: the agent started again without saying it was
+    stopping, and the machine did not reboot (it was killed and relaunched);
+  - `stopped`: the agent was stopped while the machine kept running, for more
+    than 15 minutes (reported when it comes back);
+  - `capture_disabled`: the laptop's proxy setting no longer points at the agent;
+  - `silent`: no heartbeat for longer than you chose (off unless you set it);
+  - `returned`: healthy again.
+
+Sleep, reboots, shutdowns and agent upgrades never raise an alert.
+
+Settings, in the device DLP policy's optional `alerts` section:
+
+```json
+"alerts": {"dlp_blocks": true, "tamper": true, "silent_after_s": 0}
+```
+
+`silent_after_s` is off (0) by default because laptops sleep every night. Set
+it to 900 seconds or more to be told when a laptop stops reporting.
+
+**For a POC fleet:** subscribe a webhook to both events, set `fail_mode` to
+`block` (so AI services are not reached directly when the agent is down), and
+test with users who are not local administrators.
+
+**What this cannot catch:** an administrator who stops the agent and never
+lets it run again. That laptop shows as stale in the fleet view, and as
+`silent` if you turned silence alerts on. Making the agent impossible to stop
+is an operating system and MDM control, not something the agent can do.
+
 ## Keeping it current
 
 - **A new kit:** download one whenever you need it, for example when the token
@@ -170,17 +209,46 @@ Windows needs none of this: the agent trusts its own certificate on the laptop.
 Apps that refuse the certificate are handled by the policy's
 `pinned_host_action`: logged and passed through (the default), or blocked.
 
+## Firefox
+
+Firefox keeps its own proxy setting and its own certificate store, so the
+system proxy setting and the root certificate do not reach it. Rollout kits
+include Firefox's enterprise policy by default (**Include Firefox** in the
+portal, `include_firefox` in the API). It sends AI services to the agent,
+trusts the root certificate from the system store, and turns off HTTP/3, which
+would go around the proxy. On a Mac it is part of the profile; on Windows it is
+in `set-pac.ps1` (or `firefox-policy.ps1` when the kit leaves out the proxy
+setting). `verify` reports "Firefox policy".
+
 ## Command-line tools and SDKs
 
-CLIs and SDKs honour `HTTPS_PROXY` rather than the PAC file, and many use their
-own certificate list. To cover them:
+CLIs, SDKs and command-line agents (curl, Python, Node, the OpenAI and
+Anthropic SDKs, Codex) cannot read the PAC file and mostly keep their own
+certificate list. Build the kit with **Cover terminals and SDKs**
+(`terminal_coverage: true`). It sets the `TerminalCoverage` setting (in the Mac
+profile, or `TERMINALCOVERAGE=1` in the Windows install command), and the agent
+then:
 
-- Set `HTTPS_PROXY=http://127.0.0.1:47824`.
-- Point `NODE_EXTRA_CA_CERTS` (Node, including Claude Code) or `SSL_CERT_FILE`
-  (Python) at a bundle that includes the agent's certificate.
+- writes `trust/ca-bundle.pem` (the system's own roots plus the agent's
+  certificate) and `trust/device-ca.pem` next to its state folder;
+- points `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` and `CURL_CA_BUNDLE` at the
+  bundle, and `NODE_EXTRA_CA_CERTS` at the agent's certificate. Those first
+  three replace a program's own certificate list, so they never point at the
+  agent's certificate alone, and are left unset if the system roots cannot be
+  exported;
+- sets `HTTPS_PROXY` and `HTTP_PROXY` to `http://127.0.0.1:47824` for new
+  terminals.
+
+Terminals never wait on the agent. On a Mac the settings are a marked block in
+`/etc/zshenv` and `/etc/profile` that applies only while the agent answers, so
+a terminal opened while it is down goes direct. On Windows they are machine
+environment variables, removed when the service stops. A proxy or certificate
+bundle your company already sets is kept, and `verify` reports it. An employee
+can opt out in a terminal with `export VOTAL_TERMINAL_PROXY=off` (Mac): this is
+a default, not a control. Only egress rules make the agent unavoidable.
 
 Traffic to other sites goes through the agent untouched and is never
-decrypted.
+decrypted. Java, WSL, Docker containers and the fish shell are not covered.
 
 ## Uninstall
 
@@ -209,9 +277,12 @@ reason for any failure:
 | policy bundle | "fallback": the laptop cannot reach Shield, or the pinned key does not match this Shield. The laptop still redacts known secrets. |
 | decision model | "model_unavailable": the local model is still downloading, or failed to; see `ollama.log` in the log folder. "model_mismatch": the model was not the one your policy pins; the agent removed it and downloads the right one when the service next starts. |
 | local proxy | On a Mac it starts once the Mac has its certificate, so check "enrolled" first. |
+| capture | Whether the system proxy setting still points at the agent. "overridden": another PAC file or a proxy is in effect, often pushed by a VPN client or changed by hand. Remove it, or add the agent's lines to that PAC file and list it in the policy's `capture.allowed_pac_urls`. "missing": no proxy setting at all (the profile or script is missing, or capture is off). "unknown": the settings could not be read. |
 | device CA trusted | On a Mac, the profile with the root certificate is missing or out of date: upload the one from a current kit. |
 | browser extension host | The extension ids in the kit do not match the installed extension. |
 | audit chain | The local decision log was altered. Report it: this is a tamper signal. |
+| Firefox policy | Firefox is installed but its policy is missing, so prompts typed in Firefox are not checked. Build a kit with Firefox included and upload the new profile (Mac) or `set-pac.ps1` (Windows). |
+| terminal coverage | Only checked when the kit turns terminal coverage on. "no CA bundle": the system root store could not be exported, so the CA bundle variables are not set (proxy and Node still work). "no block": a shell startup file could not be written. "set by another tool": a variable was already set and the agent left it alone. |
 
 ## Privacy
 

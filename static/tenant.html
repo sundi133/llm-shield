@@ -3492,6 +3492,7 @@
               <span id="custom-input-count" class="badge badge-basic" style="font-size: 10px;">0 policies</span>
             </div>
           </div>
+          <div id="custom-input-guardrail-off" class="hidden" role="alert"></div>
           <div id="custom-input-policies" class="policy-grid">
             <div style="text-align: center; padding: 1rem; color: var(--text-muted); background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius-sm);">
               <p style="font-size: 12px;">No custom input policies configured.</p>
@@ -3527,6 +3528,7 @@
               <span id="custom-output-count" class="badge badge-basic" style="font-size: 10px;">0 policies</span>
             </div>
           </div>
+          <div id="custom-output-guardrail-off" class="hidden" role="alert"></div>
           <div id="custom-output-policies" class="policy-grid">
             <div style="text-align: center; padding: 1rem; color: var(--text-muted); background: var(--bg); border: 1px dashed var(--border); border-radius: var(--radius-sm);">
               <p style="font-size: 12px;">No custom output policies configured.</p>
@@ -5513,6 +5515,14 @@ if __name__ == "__main__":
             <option value="model_mismatch">model_mismatch</option>
             <option value="degraded">degraded</option>
           </select>
+          <select id="dd-f-capture" style="width:auto;" title="Whether the laptop's proxy setting still points at the agent (a VPN can override it)" onchange="ddSetFilter({capture: this.value})">
+            <option value="">All capture</option>
+            <option value="ok">capture ok</option>
+            <option value="overridden">overridden</option>
+            <option value="missing">missing</option>
+            <option value="unknown">unknown</option>
+            <option value="not_reported">not reported</option>
+          </select>
           <label title="No heartbeat within the stale window, oldest first"><input type="checkbox" id="dd-f-stale" onchange="ddSetFilter({stale: this.checked})"> Stale only</label>
           <button class="small" onclick="ddClearFilters()">Clear filters</button>
         </div>
@@ -5539,6 +5549,8 @@ if __name__ == "__main__":
         </div>
         <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;margin-top:0.5rem;font-size:13px;">
           <label title="Leave off if your laptops already have a proxy (PAC) configuration; the kit then includes the lines to add to it."><input type="checkbox" id="dk-proxy" checked> Include the proxy setting</label>
+          <label title="Firefox keeps its own proxy setting and certificate store, so it needs its own policy to send AI services to the agent and trust its certificate."><input type="checkbox" id="dk-firefox" checked> Include Firefox</label>
+          <label title="Command-line tools, SDKs and CLI agents (curl, Python, Node, Codex) send AI traffic through the agent. Changes how every terminal reaches the network; other sites are never decrypted, and terminals go direct while the agent is down."><input type="checkbox" id="dk-terminal"> Cover terminals and SDKs</label>
           <label title="Chrome and Edge install it from the location shown under Rollout kits">Extension ids <input id="dk-ext" type="text" placeholder="none" style="width:260px;"></label>
           <label>Days <input id="dk-days" type="number" value="180" min="1" max="365" style="width:70px;"></label>
           <label>Laptops <input id="dk-uses" type="number" value="5000" min="1" max="100000" style="width:90px;"></label>
@@ -5585,6 +5597,7 @@ if __name__ == "__main__":
       <div class="card">
         <div class="card-header"><div><div class="card-title">DLP policy</div>
           <div class="card-desc">What every laptop enforces, signed into its bundle. <code>mode</code> is monitor or enforce, per fleet in <code>fleet_modes</code>. <code>enforcement</code> sets which categories the model may act on; source code, financial data and exfiltration intent are monitor-only by default because Tev1 0.8B misses too many of them. Rules come from your Data Policies.</div></div></div>
+        <div id="dd-detectors" style="margin-bottom:0.75rem;"></div>
         <textarea id="dd-policy" spellcheck="false" style="width:100%;min-height:320px;"></textarea>
         <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
           <button class="small" onclick="ddValidate()">Validate</button>
@@ -5766,6 +5779,8 @@ if __name__ == "__main__":
           <label style="font-size:12px;margin-right:0.75rem;color:var(--text-dim);"><input type="checkbox" class="wh-event" value="budget_exceeded"> budget_exceeded</label>
           <label style="font-size:12px;margin-right:0.75rem;color:var(--text-dim);"><input type="checkbox" class="wh-event" value="shadow_agent_detected" checked> shadow_agent_detected</label>
           <label style="font-size:12px;margin-right:0.75rem;color:var(--text-dim);" title="A tool policy check could not run (model error or timeout). At most one alert per 5 minutes, with a count."><input type="checkbox" class="wh-event" value="check_unavailable"> check_unavailable</label>
+          <label style="font-size:12px;margin-right:0.75rem;color:var(--text-dim);" title="A laptop's device agent blocked a prompt. At most one alert per laptop and category per 5 minutes; never the prompt."><input type="checkbox" class="wh-event" value="device_dlp_blocked"> device_dlp_blocked</label>
+          <label style="font-size:12px;margin-right:0.75rem;color:var(--text-dim);" title="A laptop's agent was stopped, restarted without a reboot, lost the proxy setting, or went silent; and when it is healthy again."><input type="checkbox" class="wh-event" value="device_agent_alert"> device_agent_alert</label>
         </div>
       </div>
       <div class="card">
@@ -7091,6 +7106,11 @@ const BASE_URL = window.location.origin;
 let TENANT_INFO = null;
 let POLICIES = { input_guardrails: {}, output_guardrails: {} };
 let POLICIES_DIRTY = false;
+// What the server has stored, i.e. what the data plane enforces. null when
+// the tenant has no stored guardrails and the page shows DEFAULT_POLICIES.
+// Cards, Config and Copy compare against it so an edit that was never saved
+// cannot pass for the live config.
+let SAVED_POLICIES = null;
 let ADD_POLICY_STAGE = 'input';
 const CUSTOM_POLICY_GUARDRAIL_KEYS = {
   input: 'custom_policy_input',
@@ -7100,7 +7120,7 @@ const CUSTOM_POLICY_GUARDRAIL_KEYS = {
 const INPUT_GUARDRAILS = [
   'adversarial_detection', 'keyword_blocklist', 'topic_restriction',
   'language_detection', 'adversarial_rate_limiting', 'system_prompt_leak',
-  'toxicity', 'regex_pattern'
+  'toxicity', 'regex_pattern', 'sensitive_identifiers'
 ];
 const OUTPUT_GUARDRAILS = [
   'hallucinated_links', 'tone_enforcement', 'bias_detection',
@@ -7115,6 +7135,7 @@ const GUARDRAIL_META = {
   system_prompt_leak:        { label: 'System Prompt Leak',                desc: 'Detect attempts to extract or reveal the system prompt',                            icon: '🔒', color: '#f59e0b' },
   toxicity:                  { label: 'Toxicity',                          desc: 'Classify input for toxicity, hate speech, harassment, and self-harm',               icon: '⚠', color: '#ef4444' },
   regex_pattern:             { label: 'Custom Regex',                      desc: 'Block or flag inputs matching custom regex patterns',                               icon: '✏', color: '#eab308' },
+  sensitive_identifiers:     { label: 'Financial Identifiers & SSNs',      desc: 'Validated card numbers, IBANs, routing and account numbers and SSNs, also when encoded', icon: '💳', color: '#0ea5e9' },
   hallucinated_links:        { label: 'Hallucinated Weblink Detection',    desc: 'Detect fake or non-existent URLs in model outputs',                                 icon: '🔍', color: '#6366f1' },
   tone_enforcement:          { label: 'Tone Enforcement',                  desc: 'Enforce brand voice and block sarcastic, aggressive, or off-brand tone',            icon: '🎤', color: '#10b981' },
   bias_detection:            { label: 'Bias Detection',                    desc: 'Detect and mitigate gender, racial, age, and political bias',                       icon: '⚖', color: '#eab308' },
@@ -7130,6 +7151,14 @@ const GUARDRAIL_META = {
 };
 
 const GUARDRAIL_SETTINGS_EXAMPLES = {
+  sensitive_identifiers: {
+    _desc: "Validated financial identifiers and SSNs (Luhn, mod-97, checksums), also when spaced out or base64, hex or URL encoded. Regex only, no model call. Set action to redact to send the masked text instead.",
+    example: {
+      detectors: ["card_number", "iban", "aba_routing", "swift_bic", "bank_account", "us_ssn"],
+      decode: true,
+      ignore_test_values: false
+    }
+  },
   pii_detection: {
     _desc: "Detect PII in user inputs — SSNs, emails, phone numbers, credit cards, addresses",
     example: {
@@ -8637,6 +8666,7 @@ async function loadPolicies() {
     POLICIES = hasData
       ? { input_guardrails: apiInput, output_guardrails: apiOutput }
       : JSON.parse(JSON.stringify(DEFAULT_POLICIES));
+    SAVED_POLICIES = hasData ? JSON.parse(JSON.stringify(POLICIES)) : null;
     if (data.custom_policies) {
       const customPolicies = [
         ...(data.custom_policies.input || []),
@@ -8644,12 +8674,12 @@ async function loadPolicies() {
       ];
       syncCustomPoliciesIntoPolicyJson(customPolicies);
     }
-    POLICIES_DIRTY = false;
-    document.getElementById('edit-banner').classList.add('hidden');
+    setPoliciesDirty(policiesDifferFromSaved());
     renderPolicies();
     document.getElementById('policies-json').value = JSON.stringify(POLICIES, null, 2);
   } catch (e) {
     POLICIES = JSON.parse(JSON.stringify(DEFAULT_POLICIES));
+    SAVED_POLICIES = null;
     POLICIES_DIRTY = false;
     renderPolicies();
     document.getElementById('policies-json').value = JSON.stringify(POLICIES, null, 2);
@@ -8663,9 +8693,19 @@ function renderPolicies() {
   updateFullJsonPreview();
 }
 
+// The policy list comes from the server, so it is applied to the saved copy
+// too. The guardrail's own enabled flag is NOT derived from the policies: the
+// data plane skips a guardrail with enabled false whatever its policies say,
+// so the card must show the stored flag.
 function syncCustomPoliciesIntoPolicyJson(customPolicies = CUSTOM_POLICIES) {
-  if (!POLICIES.input_guardrails) POLICIES.input_guardrails = {};
-  if (!POLICIES.output_guardrails) POLICIES.output_guardrails = {};
+  applyCustomPoliciesTo(POLICIES, customPolicies);
+  if (SAVED_POLICIES) applyCustomPoliciesTo(SAVED_POLICIES, customPolicies);
+  renderCustomPolicyGuardrailWarnings();
+}
+
+function applyCustomPoliciesTo(cfg, customPolicies) {
+  if (!cfg.input_guardrails) cfg.input_guardrails = {};
+  if (!cfg.output_guardrails) cfg.output_guardrails = {};
 
   ['input', 'output'].forEach(stage => {
     const guardrailsKey = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
@@ -8676,15 +8716,16 @@ function syncCustomPoliciesIntoPolicyJson(customPolicies = CUSTOM_POLICIES) {
       .sort((a, b) => (a.priority || 100) - (b.priority || 100));
 
     if (!stagePolicies.length) {
-      if (POLICIES[guardrailsKey][guardrailName]?.settings?.policies) {
-        delete POLICIES[guardrailsKey][guardrailName];
+      if (cfg[guardrailsKey][guardrailName]?.settings?.policies) {
+        delete cfg[guardrailsKey][guardrailName];
       }
       return;
     }
 
-    const existing = POLICIES[guardrailsKey][guardrailName] || {};
-    POLICIES[guardrailsKey][guardrailName] = {
-      enabled: stagePolicies.some(policy => policy.enabled !== false),
+    const existing = cfg[guardrailsKey][guardrailName] || {};
+    cfg[guardrailsKey][guardrailName] = {
+      enabled: 'enabled' in existing ? existing.enabled !== false
+                                     : stagePolicies.some(policy => policy.enabled !== false),
       action: existing.action || 'pass',
       settings: {
         ...(existing.settings || {}),
@@ -8696,11 +8737,87 @@ function syncCustomPoliciesIntoPolicyJson(customPolicies = CUSTOM_POLICIES) {
 
 function updateFullJsonPreview() {
   const pre = document.getElementById('full-json-pre');
-  if (pre) pre.textContent = JSON.stringify(POLICIES, null, 2);
+  if (pre) pre.textContent = JSON.stringify(SAVED_POLICIES || POLICIES, null, 2);
 }
 
+// Copy what Shield enforces. Unsaved edits are left out, and the toast says so.
 function copyFullPoliciesJSON() {
-  navigator.clipboard.writeText(JSON.stringify(POLICIES, null, 2)).then(() => showToast('Full config copied', 'success'));
+  const unsaved = !SAVED_POLICIES || POLICIES_DIRTY;
+  const msg = !SAVED_POLICIES ? 'Copied the defaults (nothing saved yet)'
+            : POLICIES_DIRTY ? 'Copied the saved config (unsaved changes not included)'
+            : 'Full config copied';
+  navigator.clipboard.writeText(JSON.stringify(SAVED_POLICIES || POLICIES, null, 2))
+    .then(() => showToast(msg, unsaved ? 'warning' : 'success'));
+}
+
+// One guardrail as the data plane reads it, for comparing saved vs edited.
+function normalizedGuardrail(p) {
+  if (!p) return null;
+  return canonicalJson({ enabled: p.enabled !== false, action: p.action || 'block', settings: p.settings || {} });
+}
+
+function canonicalJson(v) {
+  if (Array.isArray(v)) return '[' + v.map(canonicalJson).join(',') + ']';
+  if (v && typeof v === 'object') {
+    return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canonicalJson(v[k])).join(',') + '}';
+  }
+  return JSON.stringify(v === undefined ? null : v);
+}
+
+function savedGuardrail(key, name) {
+  return SAVED_POLICIES ? ((SAVED_POLICIES[key] || {})[name] || null) : undefined;
+}
+
+// true when this card has an edit the data plane doesn't have yet.
+function guardrailUnsaved(key, name) {
+  if (!SAVED_POLICIES) return false;
+  return normalizedGuardrail((POLICIES[key] || {})[name]) !== normalizedGuardrail(savedGuardrail(key, name));
+}
+
+function policiesDifferFromSaved() {
+  if (!SAVED_POLICIES) return false;
+  return ['input_guardrails', 'output_guardrails'].some(key => {
+    const names = new Set([...Object.keys(POLICIES[key] || {}), ...Object.keys(SAVED_POLICIES[key] || {})]);
+    return [...names].some(n => guardrailUnsaved(key, n));
+  });
+}
+
+function setPoliciesDirty(dirty) {
+  POLICIES_DIRTY = dirty;
+  const banner = document.getElementById('edit-banner');
+  if (banner) banner.classList.toggle('hidden', !dirty);
+  renderCustomPolicyGuardrailWarnings();
+}
+
+// Custom Policies page: say so when the policies cannot run because the
+// guardrail that runs them is off in the saved config.
+function renderCustomPolicyGuardrailWarnings() {
+  ['input', 'output'].forEach(stage => {
+    const el = document.getElementById(`custom-${stage}-guardrail-off`);
+    if (!el) return;
+    const key = stage + '_guardrails';
+    const g = savedGuardrail(key, CUSTOM_POLICY_GUARDRAIL_KEYS[stage]);
+    const enabledPolicies = ((g && g.settings && g.settings.policies) || []).filter(p => p.enabled !== false).length;
+    const off = g && g.enabled === false && enabledPolicies > 0;
+    el.classList.toggle('hidden', !off);
+    if (!off) { el.innerHTML = ''; return; }
+    const canFix = !POLICIES_DIRTY && canWriteConfig();
+    el.innerHTML = `
+      <div class="edit-mode-banner" style="margin-bottom:0.75rem;">
+        <span>The ${stage} custom policy guardrail is switched off, so Shield runs none of these ${stage} policies, even the ones marked on.</span>
+        ${canFix
+          ? `<button data-config-write class="primary small" onclick="enableCustomPolicyGuardrail('${stage}')">Turn on</button>`
+          : `<span class="muted" style="font-size:12px;">Turn on the ${CUSTOM_POLICY_GUARDRAIL_KEYS[stage]} guardrail card and click Save Changes.</span>`}
+      </div>`;
+  });
+}
+
+async function enableCustomPolicyGuardrail(stage) {
+  const key = stage + '_guardrails';
+  const name = CUSTOM_POLICY_GUARDRAIL_KEYS[stage];
+  if (POLICIES_DIRTY || !(POLICIES[key] || {})[name]) return;
+  POLICIES[key][name].enabled = true;
+  await savePolicies();
 }
 
 function renderPolicyStage(stage) {
@@ -8732,7 +8849,13 @@ function renderPolicyStage(stage) {
     const ex = GUARDRAIL_SETTINGS_EXAMPLES[name];
     const rowId = `gr-detail-${stage}-${name}`;
 
-    const settingsJson = JSON.stringify({ [name]: { enabled: isEnabled, action, settings: p.settings || {} } }, null, 2);
+    const unsaved = guardrailUnsaved(key, name);
+    const saved = savedGuardrail(key, name);
+    const settingsJson = configJsonFor(name, saved === undefined ? p : saved);
+    const savedEnabled = saved ? saved.enabled !== false : false;
+    const badge = !unsaved
+      ? `<span class="badge ${isEnabled ? 'badge-success' : ''}" style="${isEnabled ? '' : 'background:rgba(113,113,122,0.2);color:#a1a1aa;'}">${isEnabled ? 'Active' : 'Inactive'}</span>`
+      : `<span class="badge badge-warn" title="Shield enforces the saved config until you save: ${saved ? (savedEnabled ? 'Active' : 'Inactive') : 'not configured'}">${isEnabled ? 'Active' : 'Inactive'} after save</span>`;
 
     const configId = `gr-config-${stage}-${name}`;
 
@@ -8742,7 +8865,7 @@ function renderPolicyStage(stage) {
         <div class="guardrail-info">
           <div class="gr-name">
             ${label}
-            <span class="badge ${isEnabled ? 'badge-success' : ''}" style="${isEnabled ? '' : 'background:rgba(113,113,122,0.2);color:#a1a1aa;'}">${isEnabled ? 'Active' : 'Inactive'}</span>
+            ${badge}
           </div>
           ${desc ? `<div class="gr-desc">${desc}</div>` : ''}
         </div>
@@ -8767,6 +8890,7 @@ function renderPolicyStage(stage) {
         </div>
         <div id="${configId}" class="hidden gr-detail">
           <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:0.6rem 0.75rem;">
+            ${unsaved ? `<div class="muted" style="font-size:11px;margin-bottom:0.35rem;">${saved ? 'Saved config (what Shield enforces). Your edits are not saved yet.' : 'Not saved yet. Shield does not run this guardrail until you save.'}</div>` : ''}
             <pre style="font-size:11px;margin:0;padding:0;background:none;border:none;color:var(--text-dim);white-space:pre-wrap;max-height:160px;overflow-y:auto;line-height:1.5;">${escapeHtml(settingsJson)}</pre>
           </div>
         </div>
@@ -8793,23 +8917,33 @@ function getSettingsSummary(name, settings) {
   return '';
 }
 
+function configJsonFor(name, p) {
+  if (!p) return '{}';
+  return JSON.stringify({ [name]: { enabled: p.enabled !== false, action: p.action || 'block', settings: p.settings || {} } }, null, 2);
+}
+
+// Copies the saved config (what Shield enforces), not an unsaved edit.
 function copyGrConfig(stage, name) {
   const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
-  const p = POLICIES[key][name];
-  if (!p) return;
-  const obj = { [name]: { enabled: p.enabled !== false, action: p.action || 'block', settings: p.settings || {} } };
-  navigator.clipboard.writeText(JSON.stringify(obj, null, 2)).then(() => showToast('Copied', 'success'));
+  const saved = savedGuardrail(key, name);
+  const p = saved === undefined ? POLICIES[key][name] : saved;
+  if (!p) return showToast('Not saved yet: nothing to copy', 'warning');
+  const msg = guardrailUnsaved(key, name) ? 'Copied the saved config (unsaved changes not included)' : 'Copied';
+  navigator.clipboard.writeText(configJsonFor(name, p))
+    .then(() => showToast(msg, guardrailUnsaved(key, name) ? 'warning' : 'success'));
 }
 
 function changeAction(stage, name, action) {
   const key = stage === 'input' ? 'input_guardrails' : 'output_guardrails';
   POLICIES[key][name].action = action;
   markDirty();
+  renderPolicyStage(stage);
 }
 
+// An edit was made. Undoing it by hand (toggle off then on) clears the
+// banner again, because dirty means "differs from the saved config".
 function markDirty() {
-  POLICIES_DIRTY = true;
-  document.getElementById('edit-banner').classList.remove('hidden');
+  setPoliciesDirty(SAVED_POLICIES ? policiesDifferFromSaved() : true);
   document.getElementById('policies-json').value = JSON.stringify(POLICIES, null, 2);
   updateFullJsonPreview();
 }
@@ -8908,8 +9042,12 @@ async function savePolicies() {
       }),
     });
     showSuccess('policies-msg', 'Policies saved');
-    POLICIES_DIRTY = false;
-    document.getElementById('edit-banner').classList.add('hidden');
+    SAVED_POLICIES = JSON.parse(JSON.stringify({
+      input_guardrails: POLICIES.input_guardrails || {},
+      output_guardrails: POLICIES.output_guardrails || {},
+    }));
+    setPoliciesDirty(false);
+    renderPolicies();
     // Refresh tenant info to reflect changes
     const info = await apiCall('/v1/tenant/me');
     TENANT_INFO = info;
@@ -22057,6 +22195,8 @@ async function dkCreate() {
   const body = {
     fleet: document.getElementById('dk-fleet').value.trim(), mdm, platforms,
     include_proxy: document.getElementById('dk-proxy').checked,
+    include_firefox: document.getElementById('dk-firefox').checked,
+    terminal_coverage: document.getElementById('dk-terminal').checked,
     extension_ids: document.getElementById('dk-ext').value.split(',').map(s => s.trim()).filter(Boolean),
     expires_in_days: parseInt(document.getElementById('dk-days').value, 10),
     uses: parseInt(document.getElementById('dk-uses').value, 10),
@@ -22138,6 +22278,7 @@ async function ddPolicy() {
   try {
     const p = await ddApi('/dlp-policy');
     document.getElementById('dd-policy').value = JSON.stringify(p.policy, null, 2);
+    ddRenderDetectors();
     xfMsg('dd-msg', p.stored ? `Saved policy ${xfEsc(p.hash.slice(0, 12))}, updated by ${xfEsc(p.updated_by || '?')}.`
                              : 'Defaults (nothing saved yet). These are the values the task 1 benchmark chose for Tev1 0.8B.');
   } catch (e) { xfMsg('dd-msg', xfErrors(e), 'error'); }
@@ -22149,7 +22290,7 @@ async function ddPolicy() {
 const DD_PAGE = 50;
 const DD_STATES = ['ok', 'never_seen', 'no_bundle', 'stale_bundle', 'model_unavailable',
                    'model_unsupported', 'model_mismatch', 'degraded'];
-let ddView = { fleet: '', state: '', stale: false, q: '', cursors: [''], page: 0 };
+let ddView = { fleet: '', state: '', capture: '', stale: false, q: '', cursors: [''], page: 0 };
 let ddSeq = 0;
 let ddQTimer = null;
 function ddSetFilter(change) {
@@ -22158,7 +22299,7 @@ function ddSetFilter(change) {
 }
 function ddClearFilters() {
   document.getElementById('dd-q').value = '';
-  ddSetFilter({ fleet: '', state: '', stale: false, q: '' });
+  ddSetFilter({ fleet: '', state: '', capture: '', stale: false, q: '' });
 }
 function ddSearch() {
   clearTimeout(ddQTimer);
@@ -22172,6 +22313,7 @@ function ddQuery() {
   const p = new URLSearchParams({ limit: String(DD_PAGE) });
   if (ddView.fleet) p.set('fleet', ddView.fleet);
   if (ddView.state) p.set('state', ddView.state);
+  if (ddView.capture) p.set('capture', ddView.capture);
   if (ddView.stale) p.set('stale', 'true');
   if (ddView.q) p.set('q', ddView.q);
   const c = ddView.cursors[ddView.page];
@@ -22185,8 +22327,16 @@ function ddCard(label, value, active, onclick, tone) {
     <div class="stat-label" title="${xfEsc(label)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${xfEsc(label)}</div>
     <div class="stat-value" style="color:${color};">${value}</div></div>`;
 }
+// Capture self-check (docs/specs/device-agent-vpn-validation.md): is the
+// laptop's proxy setting still the agent's PAC file?
+function ddCapture(c) {
+  if (!c) return '<span class="muted" title="This agent build does not report it">not reported</span>';
+  const cls = c.state === 'ok' ? '' : c.state === 'overridden' || c.state === 'missing' ? 'badge-warn' : '';
+  const tip = c.effective ? `In effect: ${c.effective}` : '';
+  return `<span class="badge ${cls}" title="${xfEsc(tip)}">${xfEsc(c.state)}</span>`;
+}
 function ddRenderControls(s) {
-  const any = ddView.fleet || ddView.state || ddView.stale || ddView.q;
+  const any = ddView.fleet || ddView.state || ddView.capture || ddView.stale || ddView.q;
   const cards = [ddCard('All devices', s.devices, !any, 'ddClearFilters()'),
                  ddCard('Stale', s.stale, ddView.stale, 'ddSetFilter({stale: true})', 'danger')];
   Object.entries(s.by_fleet).forEach(([f, n]) => cards.push(
@@ -22201,6 +22351,7 @@ function ddRenderControls(s) {
     + fleets.map(f => `<option value="${xfEsc(f)}">${xfEsc(f)}</option>`).join('');
   fleetSel.value = ddView.fleet;
   document.getElementById('dd-f-state').value = ddView.state;
+  document.getElementById('dd-f-capture').value = ddView.capture || '';
   document.getElementById('dd-f-stale').checked = ddView.stale;
 }
 async function ddDevices() {
@@ -22217,19 +22368,20 @@ async function ddDevices() {
   const s = d.summary;
   ddRenderControls(s);
   if (d.next_cursor) ddView.cursors[ddView.page + 1] = d.next_cursor;
-  const any = ddView.fleet || ddView.state || ddView.stale || ddView.q;
+  const any = ddView.fleet || ddView.state || ddView.capture || ddView.stale || ddView.q;
   document.getElementById('dd-list').innerHTML = !d.devices.length
     ? `<div class="muted">${!s.devices ? 'No devices yet. Create an enrollment token under Enrollment and add it to your MDM install profile.'
         : any ? (d.next_cursor ? 'No matching devices on this page; try Next.' : 'No devices match these filters.') : 'No devices on this page.'}</div>`
     : `<table style="width:100%;border-collapse:collapse;"><thead><tr style="text-align:left;color:var(--text-dim);">
-        <th style="${DD_TD}">Device</th><th style="${DD_TD}">Fleet</th><th style="${DD_TD}">OS</th><th style="${DD_TD}">Agent</th><th style="${DD_TD}">Last seen</th><th style="${DD_TD}">State</th><th style="${DD_TD}">Mode</th><th style="${DD_TD}">Model</th><th style="${DD_TD}"></th></tr></thead>
+        <th style="${DD_TD}">Device</th><th style="${DD_TD}">Fleet</th><th style="${DD_TD}">OS</th><th style="${DD_TD}">Agent</th><th style="${DD_TD}">Last seen</th><th style="${DD_TD}">State</th><th style="${DD_TD}" title="Whether the laptop's proxy setting still points at the agent">Capture</th><th style="${DD_TD}">Mode</th><th style="${DD_TD}">Model</th><th style="${DD_TD}"></th></tr></thead>
       <tbody>${d.devices.map(r => `<tr>
         <td style="${DD_TD}"><b>${xfEsc(r.hostname)}</b><div class="muted" style="font-size:11px;"><code>${xfEsc(r.device_id)}</code></div></td>
         <td style="${DD_TD}">${xfEsc(r.fleet)}</td>
         <td style="${DD_TD}">${xfEsc(r.os)} ${xfEsc(r.os_version)}</td>
-        <td style="${DD_TD}">${xfEsc(r.agent_version)}</td>
+        <td style="${DD_TD}">${xfEsc(r.agent_version)}${r.detectors_schema == null && r.last_seen ? '<div class="muted" style="font-size:11px;" title="This agent build does not run the built-in financial detectors. Upgrade the agent.">no built-in detectors</div>' : ''}</td>
         <td style="${DD_TD}">${r.stale ? '<span class="badge badge-danger">stale</span> ' : ''}${xfEsc(ddAgo(r.last_seen))}</td>
         <td style="${DD_TD}"><span class="badge ${r.state === 'ok' ? '' : 'badge-warn'}">${xfEsc(r.state)}</span></td>
+        <td style="${DD_TD}">${ddCapture(r.capture)}</td>
         <td style="${DD_TD}">${xfEsc(r.mode || '-')}</td>
         <td style="${DD_TD}">${r.model_ok === null ? '-' : r.model_ok ? 'as pinned' : '<span class="badge badge-danger">digest differs</span>'}</td>
         <td style="${DD_TD}"><button class="small danger" data-id="${xfEsc(r.device_id)}" data-host="${xfEsc(r.hostname)}" onclick="ddRevoke(this.dataset.id, this.dataset.host)">Revoke</button></td></tr>`).join('')}</tbody></table>`;
@@ -22271,6 +22423,46 @@ async function ddRevoke(id, host) {
   try { await ddApi(`/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }); ddDevices(); }
   catch (e) { xfMsg('dd-list', xfErrors(e), 'error'); }
 }
+// Built-in financial detectors (docs/specs/builtin-financial-patterns-decoded-pii.md).
+// Controls over the policy's optional `builtin_detectors` section: a change
+// writes the section into the JSON below; Save applies it. An untouched policy
+// gets no section, so its hash and every laptop's bundle stay as they are.
+const DD_DETECTORS = [['card_number', 'Card numbers (Luhn checked)'], ['iban', 'IBAN'],
+  ['aba_routing', 'US routing numbers (with "routing" nearby)'], ['swift_bic', 'SWIFT / BIC (after its label)'],
+  ['bank_account', 'Bank account numbers (with "account number" nearby)'], ['us_ssn', 'US Social Security numbers']];
+const DD_DET_DEFAULT = Object.assign({ decode: true, ignore_test_values: false },
+  ...DD_DETECTORS.map(([id]) => ({ [id]: 'monitor' })));
+function ddDetectorSettings() {
+  let pol = {};
+  try { pol = JSON.parse(document.getElementById('dd-policy').value || '{}'); } catch (e) { return null; }
+  return Object.assign({}, DD_DET_DEFAULT, pol.builtin_detectors || {});
+}
+function ddRenderDetectors() {
+  const st = ddDetectorSettings();
+  const box = document.getElementById('dd-detectors');
+  if (!st) { box.innerHTML = ''; return; }
+  const opt = (id) => ['off', 'monitor', 'redact', 'block'].map(a =>
+    `<option value="${a}" ${st[id] === a ? 'selected' : ''}>${a}</option>`).join('');
+  box.innerHTML = `<div style="border:1px solid var(--border);border-radius:8px;padding:0.75rem;">
+    <div style="font-weight:600;margin-bottom:0.25rem;">Built-in detectors</div>
+    <div class="muted" style="font-size:12px;margin-bottom:0.5rem;">Validated financial identifiers and SSNs, also when spaced out or base64, hex or URL encoded. Monitor records findings and changes nothing; block and redact act in fleets set to enforce. For a POC, set card numbers and IBAN to block. The web gateway cannot rewrite requests, so redact there needs block.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:0.4rem 1rem;">
+      ${DD_DETECTORS.map(([id, label]) => `<label style="display:flex;justify-content:space-between;gap:0.5rem;align-items:center;font-size:13px;">
+        <span>${xfEsc(label)}</span><select data-config-write onchange="ddSetDetector('${id}', this.value)">${opt(id)}</select></label>`).join('')}
+    </div>
+    <div style="display:flex;gap:1.25rem;flex-wrap:wrap;margin-top:0.5rem;font-size:13px;">
+      <label><input type="checkbox" data-config-write ${st.decode ? 'checked' : ''} onchange="ddSetDetector('decode', this.checked)"> Decode base64, hex and URL encoding first</label>
+      <label><input type="checkbox" data-config-write ${st.ignore_test_values ? 'checked' : ''} onchange="ddSetDetector('ignore_test_values', this.checked)"> Ignore published test values (4111..., 123-45-6789)</label>
+    </div></div>`;
+}
+function ddSetDetector(key, value) {
+  let pol;
+  try { pol = JSON.parse(document.getElementById('dd-policy').value || '{}'); }
+  catch (e) { return xfMsg('dd-msg', 'Fix the policy JSON first: ' + xfEsc(e.message), 'error'); }
+  pol.builtin_detectors = Object.assign({}, DD_DET_DEFAULT, pol.builtin_detectors || {}, { [key]: value });
+  document.getElementById('dd-policy').value = JSON.stringify(pol, null, 2);
+  xfMsg('dd-msg', 'Changed built-in detectors. Save the policy to apply it.');
+}
 function ddEditor() {
   try { return JSON.parse(document.getElementById('dd-policy').value); }
   catch (e) { throw Object.assign(new Error('Policy is not valid JSON: ' + e.message), { errors: [] }); }
@@ -22286,6 +22478,7 @@ async function ddSave() {
   try {
     const r = await ddApi('/dlp-policy', { method: 'PUT', body: JSON.stringify(ddEditor()) });
     document.getElementById('dd-policy').value = JSON.stringify(r.policy, null, 2);
+    ddRenderDetectors();
     xfMsg('dd-msg', `Saved (${xfEsc(r.hash.slice(0, 12))}). Laptops pick it up on their next bundle poll.`, 'ok');
   } catch (e) { xfMsg('dd-msg', xfErrors(e), 'error'); }
 }

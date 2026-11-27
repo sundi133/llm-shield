@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -622,6 +623,38 @@ OS_EVENT_STATES = ("active", "off", "missing", "no_permission", "error")
 OS_EVENT_COLLECTORS = ("osquery", "sysmon", "osquery+sysmon", "none")
 
 
+#: The capture self-check's report (docs/specs/device-agent-vpn-validation.md).
+CAPTURE_STATES = ("ok", "overridden", "missing", "unknown")
+CAPTURE_KINDS = ("pac", "manual_proxy", "none")
+#: What GET /v1/tenant/me/devices?capture= filters on: a state, or a device
+#: whose agent does not report one.
+CAPTURE_FILTERS = CAPTURE_STATES + ("not_reported",)
+
+
+def _capture_state(v) -> dict:
+    """The heartbeat's `capture` object: a known state and kind, `effective`
+    truncated, nothing else accepted."""
+    if not isinstance(v, dict) or v.get("state") not in CAPTURE_STATES:
+        raise DeviceError(f"capture.state: one of {', '.join(CAPTURE_STATES)}")
+    extra = set(v) - {"state", "kind", "effective", "since"}
+    if extra:
+        raise DeviceError(f"capture: unknown field(s) {', '.join(sorted(extra))}")
+    kind = v.get("kind", "none")
+    if kind not in CAPTURE_KINDS:
+        raise DeviceError(f"capture.kind: one of {', '.join(CAPTURE_KINDS)}")
+    eff = v.get("effective", "")
+    if not isinstance(eff, str):
+        raise DeviceError("capture.effective: text")
+    since = v.get("since", 0)
+    if isinstance(since, bool) or not isinstance(since, int) or since < 0:
+        raise DeviceError("capture.since: a non-negative integer")
+    return {"state": v["state"], "kind": kind, "effective": eff[:200], "since": since}
+
+
+def capture_filter_value(row: dict) -> str:
+    return (row.get("capture") or {}).get("state") or "not_reported"
+
+
 def _os_events_state(v) -> dict:
     """The device agent's report on its OS event collectors
     (docs/specs/agent-os-events.md section 3)."""
@@ -710,14 +743,50 @@ def heartbeat(tenant_id: str, device_id: str, body: dict, record: Optional[dict]
     oe = body.get("os_events")
     if oe is not None:
         seen["os_events"] = _os_events_state(oe)
+    cap = body.get("capture")
+    if cap is not None:
+        seen["capture"] = _capture_state(cap)
+    # Agent health (docs/specs/device-block-and-stop-alerts.md): durations from
+    # the agent, turned into server-clock times here, so no clock agreement is
+    # needed. Bad values are dropped, never a reason to refuse the heartbeat.
+    for field, out_key in (("agent_uptime_s", "agent_started_at"), ("system_uptime_s", "booted_at")):
+        v = body.get(field)
+        if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 10 * 365 * 86400:
+            seen[out_key] = seen["at"] - v
+    sl = body.get("slept_s")
+    if isinstance(sl, int) and not isinstance(sl, bool) and sl >= 0:
+        seen["slept_s"] = sl
+    lc = body.get("lifecycle")
+    if isinstance(lc, dict) and lc.get("event") == "stop":
+        seen["last_stop"] = {"at": seen["at"], "reason": str(lc.get("reason") or "")[:20]}
     av = body.get("agent_version")
     if isinstance(av, str) and 0 < len(av) <= 40:
         seen["agent_version"] = av
-    # The previous heartbeat, read only when the index needs the state it
-    # moves the device from.
-    prev = _hget(_seen_key(tenant_id), device_id) if device_index.enabled() else None
+    ds = body.get("detectors_schema")
+    # The built-in detector schema the agent runs (docs/specs/builtin-financial-
+    # patterns-decoded-pii.md). Optional: older agents omit it; a bad value is
+    # dropped, never a reason to refuse the heartbeat.
+    if isinstance(ds, int) and not isinstance(ds, bool) and 0 <= ds <= 1000:
+        seen["detectors_schema"] = ds
+    # The previous heartbeat: the state the index moves the device from, and
+    # what the health check compares this one with.
+    prev = _hget(_seen_key(tenant_id), device_id)
+    alerts: list = []
+    try:
+        from core.dlp import device_alerts
+        policy_alerts = {}
+        try:
+            from core.dlp import device_store
+            policy_alerts = device_store.get_policy(tenant_id).get("alerts") or {}
+        except Exception:
+            pass
+        alerts = device_alerts.classify_heartbeat(device_id, record or {}, prev, seen, policy_alerts)
+    except Exception:
+        logging.getLogger("votal.devices").warning("device health check skipped", exc_info=True)
     _hset(_seen_key(tenant_id), device_id, seen)
     device_index.note_heartbeat(tenant_id, device_id, record, device_state(prev), state, seen["at"])
+    if alerts:
+        seen = {**seen, "_alerts": alerts}       # for the route to deliver; not stored
     return seen
 
 
@@ -753,10 +822,16 @@ def _row(did: str, d: dict, s: Optional[dict], now: int, limit: int,
            "counters": s.get("counters", {})}
     if s.get("agent_version"):
         row["agent_version"] = s["agent_version"]
+    if "detectors_schema" in s:
+        row["detectors_schema"] = s["detectors_schema"]
     if s.get("agent_hooks"):
         row["agent_hooks"] = s["agent_hooks"]
     if s.get("os_events"):
         row["os_events"] = s["os_events"]
+    if s.get("capture"):
+        row["capture"] = s["capture"]
+    if s.get("health"):
+        row["health"] = s["health"]
     row["model_ok"] = (None if not (expected_digest and row["model_digest"])
                        else row["model_digest"] == expected_digest)
     return row

@@ -1,0 +1,10 @@
+## Firefox
+
+Firefox keeps its own proxy setting and its own certificate store, so the
+system proxy setting and the root certificate do not reach it. This kit
+includes Firefox's enterprise policy: it makes Firefox trust the root
+certificate in the system store, turns off HTTP/3 (which would go around the
+proxy), and, when the kit includes the proxy setting, sends AI services to the
+agent. On a Mac it is part of the profile; on Windows it is in the platform
+script. Nothing changes until Firefox is installed and started, and other
+browsing keeps its current route.
