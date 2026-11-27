@@ -55,6 +55,17 @@ BUILTIN_FALLBACK = {
          "action": "redact", "severity": "critical"},
     ],
     "blocklists": [],
+    # Built-in financial detectors, monitor only: with no bundle the laptop
+    # records findings but changes no traffic
+    # (docs/specs/builtin-financial-patterns-decoded-pii.md).
+    "detectors": {"schema": 1, "decode": True, "ignore_test_values": False, "items": [
+        {"id": "card_number", "action": "monitor", "severity": "high"},
+        {"id": "iban", "action": "monitor", "severity": "high"},
+        {"id": "aba_routing", "action": "monitor", "severity": "medium"},
+        {"id": "swift_bic", "action": "monitor", "severity": "low"},
+        {"id": "bank_account", "action": "monitor", "severity": "medium"},
+        {"id": "us_ssn", "action": "monitor", "severity": "high"},
+    ]},
     "fail_mode": "allow",
 }
 

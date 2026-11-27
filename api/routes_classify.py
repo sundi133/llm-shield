@@ -49,6 +49,8 @@ _NAME_MAP = {
     "rate_limiter": "rate_limiter",
     "system-prompt-leak": "system_prompt_leak",
     "system_prompt_leak": "system_prompt_leak",
+    "sensitive-identifiers": "sensitive_identifiers",
+    "sensitive_identifiers": "sensitive_identifiers",
     "toxicity": "toxicity",
     "toxicity-detection": "toxicity",
     "input-toxicity": "toxicity",
@@ -172,6 +174,12 @@ def _translate_settings(guardrail_name: str, raw: dict) -> dict:
             settings["max_requests"] = raw["max_requests"]
         if "window_seconds" in raw:
             settings["window_seconds"] = raw["window_seconds"]
+
+    elif guardrail_name == "sensitive_identifiers":
+        src = raw.get("settings") if isinstance(raw.get("settings"), dict) else raw
+        for k in ("detectors", "decode", "ignore_test_values"):
+            if k in src:
+                settings[k] = src[k]
 
     elif guardrail_name == "system_prompt_leak":
         if "extra_patterns" in raw:
