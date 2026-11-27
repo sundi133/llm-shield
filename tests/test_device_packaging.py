@@ -406,7 +406,7 @@ def test_ci_builds_both_installers():
 def test_macos_jobs_use_a_supported_runner_and_check_the_minimum_os():
     """GitHub retired macos-14 (and 13): the job was cancelled in one second
     on every PR, and the release's Publish step waits on it. Building on a newer
-    image must not raise the macOS the agent needs above 13 (the docs' floor)."""
+    image must not raise the macOS the agent needs above 14 (the docs' floor)."""
     import re
     for name in ("device-agent-installers.yml", "device-agent-release.yml"):
         wf = (Path(ROOT) / ".github" / "workflows" / name).read_text()
@@ -418,4 +418,49 @@ def test_macos_jobs_use_a_supported_runner_and_check_the_minimum_os():
         assert "check_minos.sh" in wf, name
     script = PACKAGING / "macos" / "check_minos.sh"
     assert os.access(script, os.X_OK)
-    assert 'MAX="${2:-13.0}"' in script.read_text()
+    assert 'MAX="${2:-14.0}"' in script.read_text()
+
+
+def _preinstall(tmp_path, version):
+    """Run the pkg's preinstall against a fake sw_vers printing `version`."""
+    fake = tmp_path / "sw_vers"
+    fake.write_text(f"#!/bin/sh\nprintf '%s\\n' '{version}'\n")
+    fake.chmod(0o755)
+    env = {**os.environ, "VOTAL_SW_VERS": str(fake)}
+    return subprocess.run(["sh", str(PACKAGING / "macos" / "scripts" / "preinstall")],
+                          env=env, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("version", ["13.6.1", "12.7", "11.0"])
+def test_preinstall_refuses_macos_older_than_14(tmp_path, version):
+    r = _preinstall(tmp_path, version)
+    assert r.returncode == 1
+    assert f"needs macOS 14 or later; this Mac runs macOS {version}" in r.stderr
+
+
+@pytest.mark.parametrize("version", ["14.0", "15.4.1", "26.1", ""])
+def test_preinstall_allows_macos_14_and_later_and_an_unreadable_version(tmp_path, version):
+    """An unreadable version never blocks the install on our own check."""
+    assert _preinstall(tmp_path, version).returncode == 0
+
+
+def test_mac_bundle_leaves_out_ollamas_macos_26_backend():
+    """Ollama 0.35's mlx_metal_v4 libraries need macOS 26.2, so the first
+    release run failed check_minos.sh at the macOS 14 floor. They run MLX
+    models only; the agent's GGUF model uses the ggml runners."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("fetch_ollama_t", PACKAGING / "fetch_ollama.py")
+    fo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fo)
+    mac = json.loads((PACKAGING / "ollama.lock").read_text())["assets"]["macos"]
+    assert "mlx_metal_v4/*" in mac["exclude"] and mac["exclude_why"]
+    assert fo._excluded("mlx_metal_v4/libmlx.dylib", mac["exclude"])
+    assert fo._excluded("./mlx_metal_v4/libjaccl.dylib", mac["exclude"])
+    for kept in ("ollama", "libggml-base.0.24.0.dylib", "libggml-cpu-x64.so", "llama-server"):
+        assert not fo._excluded(kept, mac["exclude"]), kept
+
+
+def test_docs_floor_matches_the_checks():
+    doc = (Path(ROOT) / "docs" / "device-dlp-agent.md").read_text()
+    assert "macOS 14 or later" in doc and "macOS 13 or later" not in doc
+    assert "MIN=14" in (PACKAGING / "macos" / "scripts" / "preinstall").read_text()

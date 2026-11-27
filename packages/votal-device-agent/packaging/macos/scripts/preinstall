@@ -1,4 +1,20 @@
 #!/bin/sh
+# Refuse macOS older than 14: the bundled model server needs it
+# (check_minos.sh enforces the same floor on every binary at build time).
+# Checked before anything is stopped, so a refused upgrade leaves the running
+# agent alone. VOTAL_SW_VERS exists for tests only.
+MIN=14
+VER=$("${VOTAL_SW_VERS:-/usr/bin/sw_vers}" -productVersion 2>/dev/null)
+MAJOR=${VER%%.*}
+case "$MAJOR" in
+  ''|*[!0-9]*) ;;   # unreadable: do not block the install on our own check
+  *)
+    if [ "$MAJOR" -lt "$MIN" ]; then
+      echo "Votal device agent needs macOS $MIN or later; this Mac runs macOS $VER." >&2
+      exit 1
+    fi
+    ;;
+esac
 # Stop a running agent before its files are replaced (upgrades).
 /bin/launchctl bootout system/ai.votal.device-agent 2>/dev/null || true
 exit 0
