@@ -28,8 +28,8 @@ jobs:
         include:
           - { os: ubuntu-latest,    target: linux-x64 }
           - { os: ubuntu-24.04-arm, target: linux-arm64 }
-          - { os: macos-13,         target: macos-x64 }
-          - { os: macos-14,         target: macos-arm64 }
+          - { os: macos-15-intel,   target: macos-x64 }
+          - { os: macos-15,         target: macos-arm64 }
           - { os: windows-latest,   target: windows-x64, ext: ".exe" }
     defaults:
       run:
@@ -45,7 +45,9 @@ jobs:
       - name: Install package + PyInstaller
         run: |
           python -m pip install --upgrade pip pyinstaller
-          pip install .
+          # mcp[cli]: --collect-all mcp imports mcp.cli, which exits when
+          # typer is missing, and that fails the freeze. Build-time only.
+          pip install . "mcp[cli]"
 
       - name: Freeze single-file binary
         run: |
@@ -58,7 +60,8 @@ jobs:
         run: |
           BIN="dist/shield-mcp${{ matrix.ext }}"
           "$BIN" scan --help
-          "$BIN" scan "ftp://nope" ; test $? -eq 4  # usage error exit code intact
+          # usage error exit code intact (captured: the shell runs with -e)
+          rc=0; "$BIN" scan "ftp://nope" || rc=$?; test "$rc" -eq 4
 
       - name: Stage asset
         run: |
