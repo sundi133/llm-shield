@@ -171,7 +171,8 @@ def test_capture_off_reports_missing_and_a_failing_reader_is_unknown(tmp_path):
 
 
 def test_the_proxy_gets_the_upstream_bundle(tmp_path, monkeypatch):
-    import votal_device_agent.proxy as vproxy
+    # A stand-in module: the real one needs mitmproxy, which CI does not install.
+    import types
     seen = {}
 
     class FakeProxy:
@@ -180,7 +181,8 @@ def test_the_proxy_gets_the_upstream_bundle(tmp_path, monkeypatch):
 
         def start(self):
             return 47824
-    monkeypatch.setattr(vproxy, "LocalProxy", FakeProxy)
+    monkeypatch.setitem(sys.modules, "votal_device_agent.proxy",
+                        types.SimpleNamespace(LocalProxy=FakeProxy))
     agent = _agent(tmp_path, upstream_trust="system")
     monkeypatch.setattr(upstream_trust, "os_roots",
                         lambda os_name, run=None: [_roots(1)[:-1] + str(i).encode() + b"\n" for i in range(60)])
