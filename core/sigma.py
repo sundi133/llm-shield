@@ -529,6 +529,24 @@ def _has_wildcard(value: str) -> bool:
     return "*" in value or "?" in value
 
 
+# The prefilter may only skip a rule when it is certain the rule cannot match,
+# so its fold must be at least as coarse as every matcher's notion of "same
+# letter". Literal values compare str.casefold() on both sides, but wildcard
+# values run through `regex` with IGNORECASE, whose case tables are not
+# Python's: it treats I/ı and İ/i as equal (casefold keeps them apart) and it
+# can ship a newer Unicode version than unicodedata (new case pairs Python
+# does not know). Hence (1) the prefilter fold also merges the Turkic i forms,
+# and (2) a case-insensitive wildcard value only contributes ASCII runs as its
+# necessary literal. Both maps are per character, so a substring of the
+# matcher's view stays a substring of the prefilter's view.
+_PREFILTER_FOLD = {0x0131: "i", 0x0307: None}   # dotless ı -> i; drop the dot of İ (i + U+0307)
+_NON_ASCII = regex.compile(r"[^\x00-\x7F]+")
+
+
+def _prefilter_fold(text: str) -> str:
+    return text.casefold().translate(_PREFILTER_FOLD)
+
+
 def _folded(text: str, cache: dict) -> str:
     f = cache.get(text)
     if f is None:
@@ -537,8 +555,8 @@ def _folded(text: str, cache: dict) -> str:
 
 
 class _ValueMatcher:
-    """One rule value, compiled. `necessary` is a casefolded substring the
-    (casefolded) text must contain for a match, or None when unknown."""
+    """One rule value, compiled. `necessary` is a substring the text must
+    contain, after _prefilter_fold on both sides, for a match; None when unknown."""
 
     __slots__ = ("kind", "pattern", "literal", "mode", "cased", "necessary")
 
@@ -594,11 +612,13 @@ def _compile_value(expected: Any, mods: list[str]) -> Optional[_ValueMatcher]:
         mode = ("contains" if lead and trail else "endswith" if lead
                 else "startswith" if trail else "equals")
         return _ValueMatcher("literal", literal=core if cased else core.casefold(), mode=mode,
-                             cased=cased, necessary=core.casefold() or None)
+                             cased=cased, necessary=_prefilter_fold(core) or None)
 
     flags = regex.DOTALL | (0 if cased else regex.IGNORECASE)
     pieces = _literal_pieces(exp)
-    longest = max(pieces, key=len).casefold() if pieces else None
+    if not cased:  # see _PREFILTER_FOLD: regex's case-insensitive classes beyond ASCII are not casefold's
+        pieces = [run for p in pieces for run in _NON_ASCII.split(p) if run]
+    longest = _prefilter_fold(max(pieces, key=len)) if pieces else None
     return _ValueMatcher("wild", pattern=regex.compile(_wildcard_regex(exp), flags),
                          necessary=longest or None)
 
@@ -854,7 +874,7 @@ def evaluate_rules(rules: list[dict], event: dict, *, rule_timeout_s: float | No
         message = event.get("message")
         if isinstance(message, str):
             literals = frozenset().union(*(c.literals for c in compiled if c is not None))
-            present = _present_literals(literals, message.casefold())
+            present = _present_literals(literals, _prefilter_fold(message))
 
     cache: dict = {}
     for i, cr in enumerate(compiled):
