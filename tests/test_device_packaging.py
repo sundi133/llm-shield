@@ -401,3 +401,21 @@ def test_ci_builds_both_installers():
     wf = (Path(ROOT) / ".github" / "workflows" / "device-agent-installers.yml").read_text()
     assert "build_pkg.sh" in wf and "build_msi.ps1" in wf and "native-host" in wf
     assert "MAC_INSTALLER_IDENTITY" not in wf and "SIGN_CERT_THUMBPRINT" not in wf  # unsigned in CI
+
+
+def test_macos_jobs_use_a_supported_runner_and_check_the_minimum_os():
+    """GitHub retired macos-14 (and 13): the job was cancelled in one second
+    on every PR, and the release's Publish step waits on it. Building on a newer
+    image must not raise the macOS the agent needs above 13 (the docs' floor)."""
+    import re
+    for name in ("device-agent-installers.yml", "device-agent-release.yml"):
+        wf = (Path(ROOT) / ".github" / "workflows" / name).read_text()
+        labels = re.findall(r"runs-on:\s*(macos-\S+)", wf)
+        assert labels, name
+        for label in labels:
+            m = re.fullmatch(r"macos-(\d+)(-.*)?", label)
+            assert m and int(m.group(1)) >= 15, (name, label)
+        assert "check_minos.sh" in wf, name
+    script = PACKAGING / "macos" / "check_minos.sh"
+    assert os.access(script, os.X_OK)
+    assert 'MAX="${2:-13.0}"' in script.read_text()
