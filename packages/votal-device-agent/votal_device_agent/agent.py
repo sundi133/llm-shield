@@ -91,6 +91,23 @@ def _hook_urllib(method: str, url: str, headers: dict, body) -> tuple:
         return e.code, dict(e.headers or {}), b""
 
 
+
+def system_uptime_s() -> Optional[int]:
+    """Seconds since the machine booted, or None when it cannot be read."""
+    try:
+        if platform.system() == "Darwin":
+            out = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.boottime"], capture_output=True,
+                                 text=True, timeout=2).stdout
+            sec = int(out.split("sec =")[1].split(",")[0])
+            return max(0, int(time.time()) - sec)
+        if platform.system() == "Windows":
+            import ctypes
+            ctypes.windll.kernel32.GetTickCount64.restype = ctypes.c_ulonglong
+            return int(ctypes.windll.kernel32.GetTickCount64() // 1000)
+    except Exception:
+        return None
+    return None
+
 class Agent:
     def __init__(self, cfg: sync.AgentConfig, *, http: sync.Http = sync._urllib,
                  model_http: Optional[model_mod.Http] = None, credentials=None,
@@ -133,6 +150,14 @@ class Agent:
         # system proxy still our PAC? proxy_reader is injected by tests.
         self.capture = capture_check.CaptureState()
         self.proxy_reader = None
+        # Block alerts (docs/specs/device-block-and-stop-alerts.md): a block is
+        # uploaded within seconds, not at the next 300 s sync; and the
+        # heartbeat says how long the agent and the machine have been up, so
+        # Shield can tell a stopped agent from a laptop that slept.
+        self._push_soon = threading.Event()
+        self._push_lock = threading.Lock()
+        self._t0_wall, self._t0_mono = time.time(), time.monotonic()
+        self.engine.on_record = self._on_decision
         # Called with the CA certificate path when a new CA is issued; the
         # installer (task 6) sets it to add the CA to the system trust store.
         self.on_ca_rotated = None
@@ -350,7 +375,8 @@ class Agent:
             self.reload()                   # an expiry or grace boundary may have passed
         if self.cfg.capture == "proxy" and self.cfg.ca_mode == "tenant":
             self._ensure_tenant_ca(restart=self.local_api is not None)
-        out["audit"] = sync.push_audit(self.cfg, self.creds, self.audit, http=self.http)
+        with self._push_lock:
+            out["audit"] = sync.push_audit(self.cfg, self.creds, self.audit, http=self.http)
         payload = self.heartbeat_payload()
         out["heartbeat"] = sync.heartbeat(self.cfg, self.creds, payload, self.store, http=self.http)
         if out["heartbeat"] == 204 and "ai_inventory" in payload:
@@ -360,6 +386,58 @@ class Agent:
                         or out["heartbeat"] == 401)
         self.last = {**out, "at": int(time.time())}
         return out
+
+    PUSH_DEBOUNCE_S = 5.0
+
+    def _on_decision(self, d) -> None:
+        if getattr(d, "action", "") == "block":
+            self._push_soon.set()
+
+    def push_blocks_now(self) -> int:
+        """Upload the audit log ahead of the sync (a block just happened)."""
+        if self.creds is None:
+            return 0
+        with self._push_lock:
+            return sync.push_audit(self.cfg, self.creds, self.audit, http=self.http)
+
+    def _push_loop(self) -> None:
+        while not self._stop.is_set():
+            if not self._push_soon.wait(timeout=1.0):
+                continue
+            # Collect a burst, then one upload: within seconds of the first block.
+            self._stop.wait(self.PUSH_DEBOUNCE_S)
+            self._push_soon.clear()
+            try:
+                self.push_blocks_now()
+            except Exception:
+                pass
+
+    def lifecycle(self) -> dict:
+        """Durations, not clock times, so the server needs no clock agreement."""
+        wall = time.time() - self._t0_wall
+        mono = time.monotonic() - self._t0_mono
+        out = {"agent_uptime_s": int(max(0.0, mono)),
+               # macOS's monotonic clock stops while the Mac sleeps; wall time does not.
+               "slept_s": int(max(0.0, wall - mono))}
+        up = system_uptime_s()
+        if up is not None:
+            out["system_uptime_s"] = up
+        return out
+
+    def send_stop(self, reason: str = "signal", timeout_s: float = 3.0) -> bool:
+        """Tell Shield the agent is stopping (a clean stop, not tampering is
+        unknown here; the server decides). Never holds the exit past timeout_s."""
+        if self.creds is None:
+            return False
+        payload = {**self.heartbeat_payload(), "lifecycle": {"event": "stop", "reason": reason}}
+        done = []
+
+        def send():
+            done.append(sync.heartbeat(self.cfg, self.creds, payload, self.store, http=self.http))
+        t = threading.Thread(target=send, daemon=True)
+        t.start()
+        t.join(timeout_s)
+        return bool(done and done[0] == 204)
 
     def check_capture(self) -> dict:
         """Classify the effective system proxy; keep `since` across checks."""
@@ -395,9 +473,15 @@ class Agent:
             t = threading.Thread(target=loop, args=(every, fn), daemon=True)
             t.start()
             self._threads.append(t)
+        t = threading.Thread(target=self._push_loop, daemon=True)
+        t.start()
+        self._threads.append(t)
         return port
 
     def stop(self) -> None:
+        if self.local_api is not None and self.creds is not None:
+            # A clean stop tells Shield first, so it is not mistaken for silence.
+            self.send_stop("service" if platform.system() == "Windows" else "signal")
         self._stop.set()
         if self.proxy:
             self.proxy.stop()
@@ -430,6 +514,7 @@ class Agent:
         # Optional top-level key: an older server ignores it (a new `state`
         # value would be refused and break the heartbeat).
         out["capture"] = dict(self.capture.current or self.check_capture())
+        out.update(self.lifecycle())
         if self.hooks.report:
             out["agent_hooks"] = self.hooks.report
         inventory = self.ai_inventory()

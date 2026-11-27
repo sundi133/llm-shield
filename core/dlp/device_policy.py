@@ -275,6 +275,31 @@ def detectors_bundle(policy: Optional[dict]) -> Optional[dict]:
             "ignore_test_values": bool(st["ignore_test_values"]), "items": items}
 
 
+SILENT_MIN_S, SILENT_MAX_S = 900, 30 * 86400
+
+
+def _alerts(raw: Any, errors: list[str]) -> dict:
+    """Device alerts: dlp_blocks and tamper (default on), silent_after_s (0 =
+    no silence alerts, the default: laptops sleep every night)."""
+    out = {"dlp_blocks": True, "tamper": True, "silent_after_s": 0}
+    if not isinstance(raw, dict):
+        errors.append("alerts: an object")
+        return out
+    _unknown(raw, set(out), "alerts.", errors)
+    for k in ("dlp_blocks", "tamper"):
+        if k in raw:
+            if not isinstance(raw[k], bool):
+                errors.append(f"alerts.{k}: true or false")
+            else:
+                out[k] = raw[k]
+    s = raw.get("silent_after_s", 0)
+    if isinstance(s, bool) or not isinstance(s, int) or not (s == 0 or SILENT_MIN_S <= s <= SILENT_MAX_S):
+        errors.append(f"alerts.silent_after_s: 0, or {SILENT_MIN_S} to {SILENT_MAX_S} seconds")
+    else:
+        out["silent_after_s"] = s
+    return out
+
+
 MAX_ALLOWED_PACS = 10
 _PAC_URL = re.compile(r"^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\s?#]*)?$")
 
@@ -309,7 +334,7 @@ def validate_policy(raw: Any) -> dict:
     # agent_hooks is optional and stored only when set (core/dlp/agent_hooks.py),
     # so tenants that never use it keep their policy hash and bundles.
     _unknown(raw, {*DEFAULT_POLICY, "agent_hooks", "agent_os_events", "discovery",
-                   "builtin_detectors", "capture"}, "", errors)
+                   "builtin_detectors", "capture", "alerts"}, "", errors)
     p = {**default_policy(), **copy.deepcopy(raw)}
     if "agent_hooks" in p:
         from core.dlp import agent_hooks
@@ -324,6 +349,10 @@ def validate_policy(raw: Any) -> dict:
     if "capture" in p:
         # Optional, stored only when set (docs/specs/device-agent-vpn-validation.md).
         p["capture"] = _capture(p["capture"], errors)
+
+    if "alerts" in p:
+        # Optional, stored only when set (docs/specs/device-block-and-stop-alerts.md).
+        p["alerts"] = _alerts(p["alerts"], errors)
 
     if "discovery" in p:
         # Optional, stored only when set (core/discovery/policy.py).
