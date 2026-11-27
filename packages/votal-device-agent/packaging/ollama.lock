@@ -7,7 +7,8 @@
       "name": "ollama-darwin.tgz",
       "sha256": "2608dbb0a0f0136a198db9d48b4f74ece55f452314a39452fca35b7cf20c2589",
       "binary": "ollama",
-      "exclude": []
+      "exclude": ["mlx_metal_v4/*"],
+      "exclude_why": "The MLX Metal v4 backend needs macOS 26.2 (check_minos.sh) and runs MLX models only; the agent's GGUF model runs on the ggml Metal and CPU runners, which need macOS 14."
     },
     "windows": {
       "name": "ollama-windows-amd64.zip",
