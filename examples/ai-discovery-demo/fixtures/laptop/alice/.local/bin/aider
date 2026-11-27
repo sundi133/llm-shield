@@ -1,0 +1,3 @@
+#!/bin/sh
+# demo fixture: an empty stand-in for the aider CLI
+exit 0

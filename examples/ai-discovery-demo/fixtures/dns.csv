@@ -1,0 +1,7 @@
+timestamp,client_ip,query
+2026-11-25T10:00:01Z,10.0.4.17,bedrock-runtime.us-east-1.amazonaws.com
+2026-11-25T10:00:05Z,10.0.4.17,www.google.com
+2026-11-25T10:02:11Z,10.0.9.40,api.openai.com
+2026-11-25T10:03:42Z,10.0.9.41,api.anthropic.com
+2026-11-25T10:04:00Z,10.0.9.41,slack.com
+2026-11-25T10:05:13Z,10.0.12.8,api.deepseek.com

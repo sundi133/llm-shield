@@ -1,0 +1,7 @@
+# Demo fixture for the AI discovery scan: never installed. The scan reads
+# package names only, so no versions are pinned (a pinned old release here
+# is reported by dependency scanners as a vulnerable dependency).
+openai
+langchain
+anthropic
+boto3
