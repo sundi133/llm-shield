@@ -477,6 +477,12 @@ class Engine:
                 self.audit.record(d)
             except Exception:
                 self._count("audit_error")
+        hook = getattr(self, "on_record", None)
+        if hook is not None:
+            try:
+                hook(d)
+            except Exception:
+                pass
 
     def _notice(self, d: Decision) -> str:
         if d.action == "block":
