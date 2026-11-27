@@ -1,0 +1,5 @@
+# The device agent load test (docs/specs/device-agent-load-test.md). Repo only:
+# the installers do not ship it and no plane imports it.
+-r ../requirements.txt     # the agent itself, including mitmproxy
+psutil>=5.9                # CPU and memory of the agent and Ollama processes
+websockets>=13.0           # the WebSocket client and the fake service's echo
