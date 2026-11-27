@@ -59,7 +59,7 @@ def test_the_list_is_paged_with_the_parameters_the_route_accepts():
 
     query = _fn("ddQuery")
     sent = set(re.findall(r"p\.set\('([a-z]+)'", query)) | {"limit"}
-    assert sent == {"limit", "fleet", "state", "stale", "q", "cursor"}
+    assert sent == {"limit", "fleet", "state", "stale", "q", "cursor", "capture"}
     accepted = set(dix.parse_page_params.__code__.co_consts) & sent
     assert accepted == sent
     assert "ddApi(`/devices?${ddQuery()}`)" in _fn("ddDevices")

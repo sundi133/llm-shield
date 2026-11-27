@@ -58,6 +58,10 @@ class AgentConfig:
     ca_mode: str = "device"
     fallback_path: str = ""
     model_inline: str = "auto"            # auto | always | never
+    # What the local proxy trusts upstream (upstream_trust.py): "" = mitmproxy's
+    # default, "system" = the OS root store; upstream_ca = a PEM added to the default.
+    upstream_trust: str = ""
+    upstream_ca: str = ""
 
     @classmethod
     def load(cls, path: str | Path) -> "AgentConfig":
@@ -72,6 +76,8 @@ class AgentConfig:
             raise ValueError("capture: proxy or off")
         if cfg.ca_mode not in ("device", "tenant"):
             raise ValueError("ca_mode: device or tenant")
+        if cfg.upstream_trust not in ("", "system"):
+            raise ValueError("upstream_trust: empty or system")
         cfg.pinned_public_key = key
         return cfg
 
