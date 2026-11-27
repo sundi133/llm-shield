@@ -228,6 +228,31 @@ def _questions(q: Any, errors: list[str]) -> dict:
     return out
 
 
+MAX_ALLOWED_PACS = 10
+_PAC_URL = re.compile(r"^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\s?#]*)?$")
+
+
+def _capture(raw: Any, errors: list[str]) -> dict:
+    """`capture.allowed_pac_urls`: PAC files that count as the agent's own for
+    the capture self-check, typically a VPN's PAC that chains AI hosts to the
+    agent. At most 10 http(s) URLs, no query."""
+    if not isinstance(raw, dict):
+        errors.append("capture: an object")
+        return {"allowed_pac_urls": []}
+    _unknown(raw, {"allowed_pac_urls"}, "capture.", errors)
+    urls = raw.get("allowed_pac_urls") or []
+    if not isinstance(urls, list) or len(urls) > MAX_ALLOWED_PACS:
+        errors.append(f"capture.allowed_pac_urls: a list of at most {MAX_ALLOWED_PACS} URLs")
+        return {"allowed_pac_urls": []}
+    clean = []
+    for i, u in enumerate(urls):
+        if not isinstance(u, str) or not _PAC_URL.match(u.strip()):
+            errors.append(f"capture.allowed_pac_urls[{i}]: an http(s) URL without a query")
+            continue
+        clean.append(u.strip())
+    return {"allowed_pac_urls": clean}
+
+
 def validate_policy(raw: Any) -> dict:
     """The normalized policy, with every omitted field at its default. Raises
     PolicyError listing every problem, not just the first."""
@@ -236,7 +261,8 @@ def validate_policy(raw: Any) -> dict:
     errors: list[str] = []
     # agent_hooks is optional and stored only when set (core/dlp/agent_hooks.py),
     # so tenants that never use it keep their policy hash and bundles.
-    _unknown(raw, {*DEFAULT_POLICY, "agent_hooks", "agent_os_events", "discovery"}, "", errors)
+    _unknown(raw, {*DEFAULT_POLICY, "agent_hooks", "agent_os_events", "discovery", "capture"},
+             "", errors)
     p = {**default_policy(), **copy.deepcopy(raw)}
     if "agent_hooks" in p:
         from core.dlp import agent_hooks
@@ -247,6 +273,10 @@ def validate_policy(raw: Any) -> dict:
         from core.dlp import agent_os_events
         p["agent_os_events"] = agent_os_events.validate(
             p["agent_os_events"], errors, valid_fleet=valid_fleet, max_fleets=MAX_FLEETS)
+
+    if "capture" in p:
+        # Optional, stored only when set (docs/specs/device-agent-vpn-validation.md).
+        p["capture"] = _capture(p["capture"], errors)
 
     if "discovery" in p:
         # Optional, stored only when set (core/discovery/policy.py).

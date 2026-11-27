@@ -622,6 +622,38 @@ OS_EVENT_STATES = ("active", "off", "missing", "no_permission", "error")
 OS_EVENT_COLLECTORS = ("osquery", "sysmon", "osquery+sysmon", "none")
 
 
+#: The capture self-check's report (docs/specs/device-agent-vpn-validation.md).
+CAPTURE_STATES = ("ok", "overridden", "missing", "unknown")
+CAPTURE_KINDS = ("pac", "manual_proxy", "none")
+#: What GET /v1/tenant/me/devices?capture= filters on: a state, or a device
+#: whose agent does not report one.
+CAPTURE_FILTERS = CAPTURE_STATES + ("not_reported",)
+
+
+def _capture_state(v) -> dict:
+    """The heartbeat's `capture` object: a known state and kind, `effective`
+    truncated, nothing else accepted."""
+    if not isinstance(v, dict) or v.get("state") not in CAPTURE_STATES:
+        raise DeviceError(f"capture.state: one of {', '.join(CAPTURE_STATES)}")
+    extra = set(v) - {"state", "kind", "effective", "since"}
+    if extra:
+        raise DeviceError(f"capture: unknown field(s) {', '.join(sorted(extra))}")
+    kind = v.get("kind", "none")
+    if kind not in CAPTURE_KINDS:
+        raise DeviceError(f"capture.kind: one of {', '.join(CAPTURE_KINDS)}")
+    eff = v.get("effective", "")
+    if not isinstance(eff, str):
+        raise DeviceError("capture.effective: text")
+    since = v.get("since", 0)
+    if isinstance(since, bool) or not isinstance(since, int) or since < 0:
+        raise DeviceError("capture.since: a non-negative integer")
+    return {"state": v["state"], "kind": kind, "effective": eff[:200], "since": since}
+
+
+def capture_filter_value(row: dict) -> str:
+    return (row.get("capture") or {}).get("state") or "not_reported"
+
+
 def _os_events_state(v) -> dict:
     """The device agent's report on its OS event collectors
     (docs/specs/agent-os-events.md section 3)."""
@@ -710,6 +742,9 @@ def heartbeat(tenant_id: str, device_id: str, body: dict, record: Optional[dict]
     oe = body.get("os_events")
     if oe is not None:
         seen["os_events"] = _os_events_state(oe)
+    cap = body.get("capture")
+    if cap is not None:
+        seen["capture"] = _capture_state(cap)
     av = body.get("agent_version")
     if isinstance(av, str) and 0 < len(av) <= 40:
         seen["agent_version"] = av
@@ -757,6 +792,8 @@ def _row(did: str, d: dict, s: Optional[dict], now: int, limit: int,
         row["agent_hooks"] = s["agent_hooks"]
     if s.get("os_events"):
         row["os_events"] = s["os_events"]
+    if s.get("capture"):
+        row["capture"] = s["capture"]
     row["model_ok"] = (None if not (expected_digest and row["model_digest"])
                        else row["model_digest"] == expected_digest)
     return row

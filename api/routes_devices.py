@@ -354,7 +354,7 @@ async def revoke_rollout_kit(kit_id: str, request: Request):
     return {"tenant_id": tenant_id, "kit_id": kit_id, "revoked": True}
 
 
-_PAGE_PARAMS = ("limit", "cursor", "fleet", "state", "stale", "q")
+_PAGE_PARAMS = ("limit", "cursor", "fleet", "state", "stale", "q", "capture")
 
 
 @tenant_router.get("")
