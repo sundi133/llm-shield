@@ -72,6 +72,9 @@ VALID_EVENTS = [
     # A device DLP agent blocked a prompt. At most one per device and category
     # per 5 minutes; never the prompt. Spec: docs/specs/device-block-and-stop-alerts.md
     "device_dlp_blocked",
+    # A device agent was stopped, restarted without a reboot, lost the system
+    # proxy setting, or went silent (opt-in); and 'returned' when healthy again.
+    "device_agent_alert",
 ]
 
 

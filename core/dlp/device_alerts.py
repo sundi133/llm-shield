@@ -126,3 +126,102 @@ async def on_device_events(tenant_id: str, device_id: str, events: list[dict]) -
     await asyncio.gather(*(dispatch_event(tenant_id, EVENT_BLOCK, p) for p in ps),
                          return_exceptions=True)
     return len(ps)
+
+
+# ── agent health (task 3) ─────────────────────────────────────────────
+#
+# device_agent_alert {device_id, hostname, fleet, reason, since, last_seen, detail}
+#   restarted_without_reboot  the agent started again, the machine did not
+#                             reboot, and it never said it was stopping (killed)
+#   stopped                   it said it was stopping, the machine kept running,
+#                             and it was down longer than the grace period
+#   capture_disabled          the system proxy no longer points at the agent
+#   silent                    opt-in: no heartbeat for alerts.silent_after_s
+#   returned                  the device is healthy again after stopped,
+#                             capture_disabled or silent
+#
+# Decided when a heartbeat arrives (comparing it with the previous one), never
+# while the device is quiet: a laptop shut down for the night also says it is
+# stopping and then goes quiet, and only its next heartbeat shows the reboot.
+# The open episode is kept on the device's last-heartbeat record as `health`,
+# so the fleet view shows it with no extra read.
+
+EVENT_HEALTH = "device_agent_alert"
+SAME_BOOT_S = 120          # booted_at from two heartbeats within this: same boot
+NEW_START_S = 60           # agent_started_at moved by more than this: a new start
+
+
+def stop_grace_s() -> int:
+    return _int_env("SHIELD_DEVICE_STOP_GRACE_S", 900, 60, 86400)
+
+
+def _was_stop(s: Optional[dict]) -> bool:
+    ls = (s or {}).get("last_stop") or {}
+    return bool(ls) and ls.get("at") == (s or {}).get("at")
+
+
+def _same_boot(a: dict, b: dict) -> bool:
+    return (a.get("booted_at") is not None and b.get("booted_at") is not None
+            and abs(int(a["booted_at"]) - int(b["booted_at"])) <= SAME_BOOT_S)
+
+
+def health_payload(device_id: str, record: dict, reason: str, since: int, last_seen: int,
+                   detail: str = "") -> dict:
+    return {"device_id": device_id, "hostname": (record or {}).get("hostname", ""),
+            "fleet": (record or {}).get("fleet", ""), "reason": reason, "since": int(since),
+            "last_seen": int(last_seen), "detail": detail[:200]}
+
+
+def classify_heartbeat(device_id: str, record: dict, prev: Optional[dict], seen: dict,
+                       policy_alerts: Optional[dict] = None) -> list[dict]:
+    """Compare this heartbeat with the previous one. Sets seen["health"] (the
+    open episode, or None) and returns the alerts to send."""
+    pa = policy_alerts or {}
+    tamper = pa.get("tamper", True) is not False
+    prev = prev or {}
+    now = int(seen["at"])
+    health = prev.get("health")
+    out: list[dict] = []
+
+    def alert(reason, since, detail=""):
+        if tamper or reason == "returned":
+            out.append(health_payload(device_id, record, reason, since, prev.get("at", now), detail))
+
+    if _was_stop(seen):                       # this heartbeat says it is stopping: decide on return
+        seen["health"] = health
+        return out
+    if prev.get("at"):
+        new_start = (prev.get("agent_started_at") is not None and seen.get("agent_started_at") is not None
+                     and int(seen["agent_started_at"]) - int(prev["agent_started_at"]) > NEW_START_S)
+        same_boot = _same_boot(prev, seen)
+        same_version = prev.get("agent_version") == seen.get("agent_version")
+        if new_start and same_boot:
+            if _was_stop(prev):
+                down = int(seen["agent_started_at"]) - int(prev["at"])
+                if down > stop_grace_s() and same_version:
+                    alert("stopped", prev["at"], f"agent down {down} s while the machine kept running")
+                    if tamper:
+                        alert("returned", now, "after stopped")
+            elif same_version:
+                alert("restarted_without_reboot", prev.get("at", now),
+                      "the agent started again without saying it was stopping; the machine did not reboot")
+    cap_now = (seen.get("capture") or {}).get("state")
+    cap_prev = (prev.get("capture") or {}).get("state")
+    if health is None and cap_prev == "ok" and cap_now in ("missing", "overridden"):
+        eff = (seen.get("capture") or {}).get("effective", "")
+        health = {"reason": "capture_disabled", "since": now}
+        alert("capture_disabled", now, f"proxy setting {cap_now}" + (f": {eff}" if eff else ""))
+    elif health and (health.get("reason") != "capture_disabled" or cap_now in ("ok", None)):
+        alert("returned", now, f"after {health.get('reason')}")
+        health = None
+    seen["health"] = health
+    return out
+
+
+async def deliver(tenant_id: str, event: str, payloads: list[dict]) -> int:
+    if not payloads or not enabled():
+        return 0
+    from core.webhook_dispatcher import dispatch_event
+    await asyncio.gather(*(dispatch_event(tenant_id, event, p) for p in payloads),
+                         return_exceptions=True)
+    return len(payloads)

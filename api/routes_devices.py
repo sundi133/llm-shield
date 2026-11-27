@@ -115,9 +115,16 @@ async def device_heartbeat(request: Request, body: dict = Body(...)):
         if caller is None:
             raise dv.DeviceError("heartbeats come from a device key", status=403)
         tenant_id, device_id, record = caller
-        dv.heartbeat(tenant_id, device_id, body, record)
+        seen = dv.heartbeat(tenant_id, device_id, body, record)
     except dv.DeviceError as e:
         raise _http(e)
+    if seen and seen.get("_alerts"):
+        # Agent health alerts (docs/specs/device-block-and-stop-alerts.md),
+        # delivered without holding the heartbeat's response.
+        import asyncio
+        from core.dlp import device_alerts
+        asyncio.get_running_loop().create_task(
+            device_alerts.deliver(tenant_id, device_alerts.EVENT_HEALTH, seen["_alerts"]))
     events = _ai_inventory(tenant_id, device_id, record, body.get("ai_inventory"))
     if events:
         try:

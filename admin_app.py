@@ -2118,6 +2118,13 @@ def create_admin_app() -> FastAPI:
             warn_if_allow_unbound_is_inert()
         except Exception:
             pass
+        # Opt-in silence alerts for device agents (docs/specs/device-block-
+        # and-stop-alerts.md): one sweep a minute across replicas.
+        try:
+            from core.dlp import device_watch
+            device_watch.start()
+        except Exception:
+            pass
 
     return app
 

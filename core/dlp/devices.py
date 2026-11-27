@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import secrets
@@ -745,14 +746,41 @@ def heartbeat(tenant_id: str, device_id: str, body: dict, record: Optional[dict]
     cap = body.get("capture")
     if cap is not None:
         seen["capture"] = _capture_state(cap)
+    # Agent health (docs/specs/device-block-and-stop-alerts.md): durations from
+    # the agent, turned into server-clock times here, so no clock agreement is
+    # needed. Bad values are dropped, never a reason to refuse the heartbeat.
+    for field, out_key in (("agent_uptime_s", "agent_started_at"), ("system_uptime_s", "booted_at")):
+        v = body.get(field)
+        if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 10 * 365 * 86400:
+            seen[out_key] = seen["at"] - v
+    sl = body.get("slept_s")
+    if isinstance(sl, int) and not isinstance(sl, bool) and sl >= 0:
+        seen["slept_s"] = sl
+    lc = body.get("lifecycle")
+    if isinstance(lc, dict) and lc.get("event") == "stop":
+        seen["last_stop"] = {"at": seen["at"], "reason": str(lc.get("reason") or "")[:20]}
     av = body.get("agent_version")
     if isinstance(av, str) and 0 < len(av) <= 40:
         seen["agent_version"] = av
-    # The previous heartbeat, read only when the index needs the state it
-    # moves the device from.
-    prev = _hget(_seen_key(tenant_id), device_id) if device_index.enabled() else None
+    # The previous heartbeat: the state the index moves the device from, and
+    # what the health check compares this one with.
+    prev = _hget(_seen_key(tenant_id), device_id)
+    alerts: list = []
+    try:
+        from core.dlp import device_alerts
+        policy_alerts = {}
+        try:
+            from core.dlp import device_store
+            policy_alerts = device_store.get_policy(tenant_id).get("alerts") or {}
+        except Exception:
+            pass
+        alerts = device_alerts.classify_heartbeat(device_id, record or {}, prev, seen, policy_alerts)
+    except Exception:
+        logging.getLogger("votal.devices").warning("device health check skipped", exc_info=True)
     _hset(_seen_key(tenant_id), device_id, seen)
     device_index.note_heartbeat(tenant_id, device_id, record, device_state(prev), state, seen["at"])
+    if alerts:
+        seen = {**seen, "_alerts": alerts}       # for the route to deliver; not stored
     return seen
 
 
@@ -794,6 +822,8 @@ def _row(did: str, d: dict, s: Optional[dict], now: int, limit: int,
         row["os_events"] = s["os_events"]
     if s.get("capture"):
         row["capture"] = s["capture"]
+    if s.get("health"):
+        row["health"] = s["health"]
     row["model_ok"] = (None if not (expected_digest and row["model_digest"])
                        else row["model_digest"] == expected_digest)
     return row
