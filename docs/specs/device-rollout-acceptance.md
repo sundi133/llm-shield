@@ -70,6 +70,19 @@ Rules for the run:
 | C.4 | Add an AI host to the policy; download a new kit | The root is reissued; the old kit is marked out of date; the new profile covers the host | |
 | C.5 | Uninstall on the Mac (`uninstall.sh`) and Windows (Intune uninstall) | Agent gone; its certificate and key removed; the device goes stale in the portal after an hour | |
 
+## D. Firefox and terminals
+
+Build the kit with **Include Firefox** and **Cover terminals and SDKs**.
+
+| # | Step | Expected | Result |
+|---|---|---|---|
+| D.1 | In Firefox on the Mac and on Windows, repeat A.9 | Recorded under Devices; `about:policies` lists the Votal policy | |
+| D.2 | Open a new terminal; `curl https://api.openai.com/v1/models -H "Authorization: Bearer test"` | An entry in the decision audit; curl gets the provider's 401, not a certificate error | |
+| D.3 | In the same terminal, a prompt through the Python OpenAI SDK | Recorded under Devices; no certificate error | |
+| D.4 | `git clone` a public repository and `pip install requests` in the same terminal | Both work; the sites' certificates are their own | |
+| D.5 | Stop the agent; open a new terminal; repeat D.4 | Both work (the terminal goes direct) | |
+| D.6 | `verify` | "Firefox policy" and "terminal coverage" ok | |
+
 ## Record
 
 | Field | Value |

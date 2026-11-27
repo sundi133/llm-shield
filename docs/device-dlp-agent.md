@@ -170,17 +170,46 @@ Windows needs none of this: the agent trusts its own certificate on the laptop.
 Apps that refuse the certificate are handled by the policy's
 `pinned_host_action`: logged and passed through (the default), or blocked.
 
+## Firefox
+
+Firefox keeps its own proxy setting and its own certificate store, so the
+system proxy setting and the root certificate do not reach it. Rollout kits
+include Firefox's enterprise policy by default (**Include Firefox** in the
+portal, `include_firefox` in the API). It sends AI services to the agent,
+trusts the root certificate from the system store, and turns off HTTP/3, which
+would go around the proxy. On a Mac it is part of the profile; on Windows it is
+in `set-pac.ps1` (or `firefox-policy.ps1` when the kit leaves out the proxy
+setting). `verify` reports "Firefox policy".
+
 ## Command-line tools and SDKs
 
-CLIs and SDKs honour `HTTPS_PROXY` rather than the PAC file, and many use their
-own certificate list. To cover them:
+CLIs, SDKs and command-line agents (curl, Python, Node, the OpenAI and
+Anthropic SDKs, Codex) cannot read the PAC file and mostly keep their own
+certificate list. Build the kit with **Cover terminals and SDKs**
+(`terminal_coverage: true`). It sets the `TerminalCoverage` setting (in the Mac
+profile, or `TERMINALCOVERAGE=1` in the Windows install command), and the agent
+then:
 
-- Set `HTTPS_PROXY=http://127.0.0.1:47824`.
-- Point `NODE_EXTRA_CA_CERTS` (Node, including Claude Code) or `SSL_CERT_FILE`
-  (Python) at a bundle that includes the agent's certificate.
+- writes `trust/ca-bundle.pem` (the system's own roots plus the agent's
+  certificate) and `trust/device-ca.pem` next to its state folder;
+- points `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` and `CURL_CA_BUNDLE` at the
+  bundle, and `NODE_EXTRA_CA_CERTS` at the agent's certificate. Those first
+  three replace a program's own certificate list, so they never point at the
+  agent's certificate alone, and are left unset if the system roots cannot be
+  exported;
+- sets `HTTPS_PROXY` and `HTTP_PROXY` to `http://127.0.0.1:47824` for new
+  terminals.
+
+Terminals never wait on the agent. On a Mac the settings are a marked block in
+`/etc/zshenv` and `/etc/profile` that applies only while the agent answers, so
+a terminal opened while it is down goes direct. On Windows they are machine
+environment variables, removed when the service stops. A proxy or certificate
+bundle your company already sets is kept, and `verify` reports it. An employee
+can opt out in a terminal with `export VOTAL_TERMINAL_PROXY=off` (Mac): this is
+a default, not a control. Only egress rules make the agent unavoidable.
 
 Traffic to other sites goes through the agent untouched and is never
-decrypted.
+decrypted. Java, WSL, Docker containers and the fish shell are not covered.
 
 ## Uninstall
 
@@ -213,6 +242,8 @@ reason for any failure:
 | device CA trusted | On a Mac, the profile with the root certificate is missing or out of date: upload the one from a current kit. |
 | browser extension host | The extension ids in the kit do not match the installed extension. |
 | audit chain | The local decision log was altered. Report it: this is a tamper signal. |
+| Firefox policy | Firefox is installed but its policy is missing, so prompts typed in Firefox are not checked. Build a kit with Firefox included and upload the new profile (Mac) or `set-pac.ps1` (Windows). |
+| terminal coverage | Only checked when the kit turns terminal coverage on. "no CA bundle": the system root store could not be exported, so the CA bundle variables are not set (proxy and Node still work). "no block": a shell startup file could not be written. "set by another tool": a variable was already set and the agent left it alone. |
 
 ## Privacy
 

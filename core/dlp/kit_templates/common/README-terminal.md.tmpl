@@ -1,0 +1,19 @@
+## Terminals and SDKs
+
+This kit turns on terminal coverage. Command-line tools, SDKs and command-line
+agents (curl, Python, Node, the OpenAI and Anthropic SDKs, Codex) cannot read
+the proxy (PAC) file and mostly keep their own certificate list, so the agent
+sets them up itself:
+
+- It writes a certificate bundle (the system's own roots plus the agent's
+  certificate) and points `REQUESTS_CA_BUNDLE`, `SSL_CERT_FILE` and
+  `CURL_CA_BUNDLE` at it, and `NODE_EXTRA_CA_CERTS` at the agent's certificate.
+- It sets `HTTPS_PROXY` to the agent for new terminals. Sites other than AI
+  services pass through the agent untouched and are never decrypted.
+- Terminals never wait on the agent: on a Mac, a new terminal goes direct while
+  the agent is down; on Windows, the settings are removed when the agent stops.
+- A value your company already sets (a proxy or a certificate bundle) is kept.
+  An employee can opt out in a terminal with `export VOTAL_TERMINAL_PROXY=off`
+  (Mac); this is a default, not a control.
+
+`votal-device-agent verify` reports "terminal coverage" on each laptop.

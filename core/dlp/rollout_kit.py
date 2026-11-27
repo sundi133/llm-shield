@@ -80,6 +80,8 @@ class KitRequest:
     ai_hosts: list = field(default_factory=list)
     platforms: tuple = ()
     include_proxy: bool = True
+    include_firefox: bool = True      # Firefox policy: its own proxy and trust store
+    terminal_coverage: bool = False   # CLIs and SDKs through the agent (agent's terminal.py)
     extension_ids: list = field(default_factory=list)
     extension_update_url: str = VOTAL_EXTENSION_UPDATE_URL
     root_pem: str = ""                # the tenant root (macOS)
@@ -163,6 +165,8 @@ def _values(req: KitRequest) -> dict:
         "host_count": len(hosts),
         "profile_contents": _profile_contents(req),
         "windows_scripts_step": _windows_scripts_step(req),
+        "firefox_policy_ps": _firefox_policy_ps(req),
+        "terminal_property": " TERMINALCOVERAGE=1" if req.terminal_coverage else "",
     }
 
 
@@ -175,6 +179,9 @@ def _profile_contents(req: KitRequest) -> str:
     parts = ["the agent's settings", "the root certificate"]
     if req.include_proxy:
         parts.append("the AI proxy setting")
+    if req.include_firefox:
+        parts.append("the Firefox policy (" + ("proxy and " if req.include_proxy else "")
+                     + "trust in the root certificate)")
     if req.extension_ids:
         parts.append("the browser extension")
     parts.append("a managed login item (so employees cannot turn the agent off). It "
@@ -187,7 +194,10 @@ def _windows_scripts_step(req: KitRequest) -> str:
     scripts, does = [], []
     if req.include_proxy:
         scripts.append("`windows/set-pac.ps1`")
-        does.append("send AI services to the agent")
+        does.append("send AI services to the agent" + (" (Firefox too)" if req.include_firefox else ""))
+    elif req.include_firefox:
+        scripts.append("`windows/firefox-policy.ps1`")
+        does.append("make Firefox trust the agent's certificate")
     if req.extension_ids:
         scripts.append("`windows/browser-extensions.ps1`")
         does.append("install the browser extension")
@@ -198,6 +208,42 @@ def _windows_scripts_step(req: KitRequest) -> str:
     return (f"2. **The scripts.** Add {_join(scripts)} as {noun} (Devices, Scripts and "
             f"remediations, Platform scripts; run as system, 64-bit). "
             f"{'It' if len(scripts) == 1 else 'They'} {_join(does)}.")
+
+
+# Firefox keeps its own proxy setting and trust store, so the system PAC and the
+# OS root store do not reach it. Its enterprise policy fixes both:
+# ImportEnterpriseRoots trusts the roots in the OS store (the tenant root on
+# macOS, the device CA in LocalMachine\Root on Windows), Proxy points it at the
+# agent's PAC, and HTTP/3 is locked off so it cannot go around the proxy.
+FIREFOX_HTTP3_PREF = "network.http.http3.enable"
+
+
+def firefox_policy(req: KitRequest) -> dict:
+    """The Firefox enterprise policy (macOS managed preferences shape)."""
+    pol = {"EnterprisePoliciesEnabled": True,
+           "Certificates": {"ImportEnterpriseRoots": True},
+           "Preferences": {FIREFOX_HTTP3_PREF: {"Value": False, "Status": "locked"}}}
+    if req.include_proxy:
+        pol["Proxy"] = {"Mode": "autoConfig", "AutoConfigURL": PAC_URL, "Locked": True}
+    return pol
+
+
+def _firefox_policy_ps(req: KitRequest) -> str:
+    """The same policy as Windows registry writes (HKLM, Firefox's policy key)."""
+    if not req.include_firefox:
+        return "# Firefox policy: left out of this kit."
+    lines = ['$Firefox = "HKLM:\\SOFTWARE\\Policies\\Mozilla\\Firefox"',
+             'New-Item -Path "$Firefox\\Certificates" -Force | Out-Null',
+             'Set-ItemProperty -Path "$Firefox\\Certificates" -Name "ImportEnterpriseRoots" -Type DWord -Value 1']
+    if req.include_proxy:
+        lines += ['New-Item -Path "$Firefox\\Proxy" -Force | Out-Null',
+                  'Set-ItemProperty -Path "$Firefox\\Proxy" -Name "Mode" -Value "autoConfig"',
+                  f'Set-ItemProperty -Path "$Firefox\\Proxy" -Name "AutoConfigURL" -Value "{PAC_URL}"',
+                  'Set-ItemProperty -Path "$Firefox\\Proxy" -Name "Locked" -Type DWord -Value 1']
+    lines += ['# HTTP/3 off, locked, so Firefox cannot go around the proxy over QUIC.',
+              f'Set-ItemProperty -Path $Firefox -Name "Preferences" -Type MultiString -Value \'{{"{FIREFOX_HTTP3_PREF}": {{"Value": false, "Status": "locked"}} }}\'',
+              'Write-Output "Firefox policy set"']
+    return "\n".join(lines)
 
 
 def _date(ts: int) -> str:
@@ -239,6 +285,8 @@ def mac_profile(req: KitRequest) -> bytes:
                 "CAMode": "tenant"}
     if req.extension_ids:
         settings["ExtensionIDs"] = list(req.extension_ids)
+    if req.terminal_coverage:
+        settings["TerminalCoverage"] = True
     content = [payload("ai.votal.device-agent", "settings", settings)]
     der = x509.load_pem_x509_certificate(req.root_pem.encode()).public_bytes(
         serialization.Encoding.DER)
@@ -250,6 +298,11 @@ def mac_profile(req: KitRequest) -> bytes:
             "_display": "Votal: AI services through the device agent",
             "Proxies": {"ProxyAutoConfigEnable": 1, "ProxyAutoConfigURLString": PAC_URL,
                         "FallBackAllowed": 1, "ProxyCaptiveLoginAllowed": 1}}))
+    if req.include_firefox:
+        # A profile, not policies.json inside Firefox.app: a Firefox update
+        # replaces the app bundle and would delete that file.
+        content.append(payload("org.mozilla.firefox", "firefox", {
+            "_display": "Firefox: AI services through the device agent", **firefox_policy(req)}))
     if req.extension_ids:
         forcelist = [f"{i};{req.extension_update_url}" for i in req.extension_ids]
         content.append(payload("com.google.Chrome", "chrome", {
@@ -298,6 +351,10 @@ def files(req: KitRequest) -> dict[str, bytes]:
         out["windows/detect.ps1"] = render("windows/detect.ps1", v).encode()
         if req.include_proxy:
             out["windows/set-pac.ps1"] = render("windows/set-pac.ps1", v).encode()
+        elif req.include_firefox:
+            # No set-pac.ps1 to carry it (the customer has their own PAC), so
+            # Firefox's trust in the device CA gets a script of its own.
+            out["windows/firefox-policy.ps1"] = render("windows/firefox-policy.ps1", v).encode()
         if req.extension_ids:
             out["windows/browser-extensions.ps1"] = render("windows/browser-extensions.ps1",
                                                            v).encode()
@@ -317,6 +374,12 @@ def readme(req: KitRequest, v: dict) -> str:
         parts.append(render("windows/README-intune.md", v))
     if not req.include_proxy:
         parts.append(render("common/README-own-pac.md", v))
+        if req.include_firefox:
+            parts.append(render("common/README-own-pac-firefox.md", v))
+    if req.include_firefox:
+        parts.append(render("common/README-firefox.md", v))
+    if req.terminal_coverage:
+        parts.append(render("common/README-terminal.md", v))
     if not req.extension_ids:
         parts.append(render("common/README-no-extension.md", v))
     parts.append(render("common/README-tail.md", v))
@@ -328,6 +391,7 @@ def manifest(req: KitRequest) -> dict:
     return {"kit_id": req.kit_id, "tenant_id": req.tenant_id, "fleet": req.fleet,
             "mdm": req.mdm, "platforms": list(req.resolved_platforms()),
             "agent_version": req.agent_version, "include_proxy": req.include_proxy,
+            "include_firefox": req.include_firefox, "terminal_coverage": req.terminal_coverage,
             "extension_ids": list(req.extension_ids),
             "extension_update_url": req.extension_update_url, "shield_url": req.shield_url,
             "root_fingerprint_sha256": req.root_fingerprint, "token_id": req.token_id,
