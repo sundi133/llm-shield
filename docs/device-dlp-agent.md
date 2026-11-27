@@ -123,6 +123,45 @@ By default, even in enforce mode:
 | Blocked | The AI tool shows an error: "Blocked by your company's AI data policy", with the reason. |
 | Reason needed | The browser extension asks for a reason. Other apps show a link to a page on the laptop where the user gives one. The same prompt is then allowed once, within a minute. |
 
+## Alerts
+
+Shield can tell your webhooks, and through them your SOC, when a laptop blocks
+a prompt or when its agent is stopped. Subscribe a webhook (Settings, Webhooks)
+to:
+
+- **`device_dlp_blocked`**: a laptop blocked a prompt. It arrives within about a
+  minute when the laptop is online, or when it reconnects (marked `delayed`). At
+  most one per laptop and category every 5 minutes; the rest are counted. It
+  names the laptop, the AI service, the category and the rules, never the prompt.
+- **`device_agent_alert`**, with a `reason`:
+  - `restarted_without_reboot`: the agent started again without saying it was
+    stopping, and the machine did not reboot (it was killed and relaunched);
+  - `stopped`: the agent was stopped while the machine kept running, for more
+    than 15 minutes (reported when it comes back);
+  - `capture_disabled`: the laptop's proxy setting no longer points at the agent;
+  - `silent`: no heartbeat for longer than you chose (off unless you set it);
+  - `returned`: healthy again.
+
+Sleep, reboots, shutdowns and agent upgrades never raise an alert.
+
+Settings, in the device DLP policy's optional `alerts` section:
+
+```json
+"alerts": {"dlp_blocks": true, "tamper": true, "silent_after_s": 0}
+```
+
+`silent_after_s` is off (0) by default because laptops sleep every night. Set
+it to 900 seconds or more to be told when a laptop stops reporting.
+
+**For a POC fleet:** subscribe a webhook to both events, set `fail_mode` to
+`block` (so AI services are not reached directly when the agent is down), and
+test with users who are not local administrators.
+
+**What this cannot catch:** an administrator who stops the agent and never
+lets it run again. That laptop shows as stale in the fleet view, and as
+`silent` if you turned silence alerts on. Making the agent impossible to stop
+is an operating system and MDM control, not something the agent can do.
+
 ## Keeping it current
 
 - **A new kit:** download one whenever you need it, for example when the token
