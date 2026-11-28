@@ -310,6 +310,36 @@ locations:
 - **`web-ext lint` 10.8.0:** 0 errors. Without `data_collection_permissions`
   it warns, and that key needs Firefox 140 or later.
 
+## 11. Task 2 findings (2026-11-28)
+
+- **Built:**
+  - `site_access.js` (pure): the targets come from the manifest's
+    content-script matches, minus loopback, plus the Shield origin without its
+    port. A failing permission check is never reported as missing.
+  - The background checks on start, on `permissions.onAdded`/`onRemoved`, on a
+    `shieldUrl` change and when the popup opens. It sets the `!` badge and
+    title.
+  - The popup shows the gap with an **Allow access** button
+    (`permissions.request` from the click). Test connection appends the same
+    lines.
+  - Extension version 1.4.2.
+- **Firefox 161:**
+  - With everything granted: no badge, no popup box, and a card prompt is
+    blocked.
+  - `permissions.remove(chatgpt.com + the test origin)` leaves the page
+    unscreened (the card was sent, no banner), which is the silent gap. The
+    badge shows `!` "no access to chatgpt.com", and the popup and Test
+    connection say "Not screened on chatgpt.com".
+  - Clicking Allow access granted chatgpt.com again
+    (`extensions.webextOptionalPermissionPrompts=false` in the test profile).
+- **Chromium:**
+  - With everything granted: no badge, no box.
+  - Chrome refuses `permissions.remove` on required host permissions, so the
+    withdrawn state cannot be scripted there. A user withholds it from the
+    Site access menu, and the same `permissions.contains` check then reports
+    it (not exercised by a test).
+  - The e2e is unchanged.
+
 ## Open questions (defaults in brackets)
 
 1. Add-on ID: [`{6080efd5-81dd-480f-af95-2d1b30ea020b}`], a GUID: the name@domain form tripped DLP tools as an email address (task 1). It can never change once customers force-install it.

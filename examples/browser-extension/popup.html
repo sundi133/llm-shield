@@ -11,10 +11,13 @@
     a { color: #4f46e5; cursor: pointer; }
     #result { margin-top: 10px; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
     .ok { color: #16a34a; } .bad { color: #b91c1c; }
+    #access { display: none; margin: 0 0 10px; padding: 8px; border-radius: 6px; background: #fef2f2; color: #991b1b; font-size: 12px; }
+    #access button { margin-top: 6px; background: #b91c1c; }
   </style>
 </head>
 <body>
   <h1>VotalAI Guardrails</h1>
+  <div id="access"><div id="access-text"></div><button id="access-fix">Allow access</button></div>
   <div class="row">
     <span>Mode</span>
     <select id="mode">
@@ -27,6 +30,7 @@
     <a id="opts">Settings</a>
   </div>
   <div id="result"></div>
+  <script src="site_access.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
