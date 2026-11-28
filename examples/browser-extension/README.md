@@ -40,8 +40,11 @@ chance of working.
 - **If Shield is unreachable or slow** (45s timeout for text, `timeoutMs`;
   files get 2s more per MB, up to 18s more): in **monitor** mode the content
   sends unscreened with a banner saying so; in **enforce** mode it is blocked
-  ("guardrails unavailable"), unless managed policy sets `failOpen: true`.
-  A timeout is not an approval. Attachments over **10 MB**
+  ("Not sent. Shield could not be reached"), unless managed policy sets
+  `failOpen: true`. A timeout is not an approval. The same applies when
+  Shield answers with an HTTP error (a wrong key, a rate limit, an outage).
+  Before 1.4.1 enforce mode sent the content unscreened in all these cases;
+  set `failOpen: true` by policy to keep that. Attachments over **10 MB**
   are not screened (banner notes it); size cap is `SHIELD_FILE_MAX_BYTES`
   server-side.
 

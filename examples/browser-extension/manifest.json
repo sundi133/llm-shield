@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "VotalAI Guardrails",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Screens prompts and file attachments to Claude, ChatGPT, Gemini and Copilot through your organization's Votal Shield guardrails, or the Votal device agent on managed laptops.",
   "permissions": [
     "storage",
@@ -32,6 +32,7 @@
         "https://copilot.microsoft.com/*"
       ],
       "js": [
+        "fail_policy.js",
         "content.js"
       ],
       "run_at": "document_idle"

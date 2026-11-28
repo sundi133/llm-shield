@@ -346,8 +346,10 @@
       return { allow: true };
     }
     if (v.error) {
-      banner("warn", { title: "Shield unreachable.", detail: "Sent without screening (" + v.error + ")." });
-      return { allow: true }; // fail-open
+      // No verdict: held in enforce mode, sent with a note in monitor mode.
+      const n = unavailableNotice(v, "");
+      banner(n.kind, { title: n.title, detail: n.detail });
+      return { allow: n.allow };
     }
     if (v.block) {
       blockBanner(text, v);
@@ -402,8 +404,9 @@
   // ── file attachment screening ─────────────────────────────────────────────
   // Same capture-screen-replay idea as the send interceptors above, applied to
   // the three ways a file reaches the composer: picker (<input type=file>
-  // change), drag-and-drop, and paste. Fail-open: screening problems show a
-  // banner but never eat the file.
+  // change), drag-and-drop, and paste. When Shield gives no verdict the file
+  // is held in enforce mode and sent with a note in monitor mode
+  // (fail_policy.js); a file the extension itself cannot read is sent.
 
   const FILE_MAX_BYTES = 10 * 1024 * 1024; // mirror of background's cap
 
@@ -472,6 +475,11 @@
     const verdicts = await Promise.all(list.map(screenOneFile));
     for (let i = 0; i < list.length; i++) {
       const f = list[i], v = verdicts[i];
+      if (v.block && v.error) {
+        const n = unavailableNotice(v, f.name);
+        banner(n.kind, { title: n.title, detail: n.detail });
+        return { allow: false };
+      }
       if (v.block) {
         banner("block", { title: "Blocked by Shield.", detail: "Attachment '" + f.name + "': " + sentence(v.reason || "policy violation") });
         return { allow: false };
@@ -480,7 +488,8 @@
     for (let i = 0; i < list.length; i++) {
       const f = list[i], v = verdicts[i];
       if (v.error) {
-        banner("warn", { title: "Shield unreachable.", detail: "Attachment '" + f.name + "' sent without screening (" + v.error + ")." });
+        const n = unavailableNotice(v, f.name);
+        banner(n.kind, { title: n.title, detail: n.detail });
       } else if (v.note === "too large to screen") {
         banner("warn", { title: "Attachment not screened.", detail: "'" + f.name + "' is too large to screen and was sent without screening." });
       } else if (v.note && !v.warn) {
