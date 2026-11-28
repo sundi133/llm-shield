@@ -8,6 +8,8 @@
 importScripts("agent_client.js");
 // Turns a verdict into the line the user reads (verdict_text.js).
 importScripts("verdict_text.js");
+// What happens when Shield gives no verdict (fail closed in enforce mode).
+importScripts("fail_policy.js");
 // Exception requests and the grant that releases an approved prompt once.
 importScripts("exception_client.js");
 
@@ -129,7 +131,7 @@ async function screen(text, origin) {
   // tenant's signed policy: the prompt does not leave the laptop to be judged.
   const local = await agentScreen(text, origin);
   if (local) return { ...local, identity };
-  if (!cfg.shieldUrl) return { block: false, warn: false, reason: "", error: "no shieldUrl configured", mode: cfg.mode, identity };
+  if (!cfg.shieldUrl) return unavailableVerdict(cfg, "no shieldUrl configured", identity);
 
   // Attribution: X-Agent-Key drives the Telemetry "agent" column; device and
   // destination (the AI site being sent to) are carried alongside for audit.
@@ -150,10 +152,10 @@ async function screen(text, origin) {
 
   try {
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), resolveTimeoutMs(cfg)); // fail-open on slow/cold worker
+    const t = setTimeout(() => ctrl.abort(), resolveTimeoutMs(cfg)); // no verdict: see fail_policy.js
     const resp = await fetch(url, { method: "POST", headers, body, signal: ctrl.signal });
     clearTimeout(t);
-    if (!resp.ok) return { block: false, warn: false, reason: "", error: "HTTP " + resp.status, mode: cfg.mode, identity };
+    if (!resp.ok) return unavailableVerdict(cfg, "HTTP " + resp.status, identity);
     const data = await resp.json();
     const flagged = data.safe === false || data.action === "block";
     // `reason` is what the banner shows: the policy and why. `blocked_by`
@@ -176,16 +178,8 @@ async function screen(text, origin) {
     const secs = Math.round(resolveTimeoutMs(cfg) / 1000);
     const error = timedOut
       ? `Shield did not respond within ${secs}s`
-      : `Could not reach Shield: ${e && e.message ? e.message : String(e)}`;
-    const failOpen = cfg.failOpen === true || cfg.mode === "monitor";
-    return {
-      block: !failOpen,
-      warn: failOpen && cfg.mode === "monitor",
-      reason: failOpen ? "" : "guardrails unavailable",
-      error,
-      mode: cfg.mode,
-      identity,
-    };
+      : (e && e.message ? e.message : String(e));
+    return unavailableVerdict(cfg, error, identity);
   }
 }
 
@@ -209,7 +203,7 @@ function b64ToBlob(b64, type) {
 async function screenFile(meta) {
   const cfg = await getConfig();
   const identity = await resolveIdentity();
-  if (!cfg.shieldUrl) return { block: false, warn: false, reason: "", error: "no shieldUrl configured", mode: cfg.mode, identity };
+  if (!cfg.shieldUrl) return unavailableVerdict(cfg, "no shieldUrl configured", identity);
   if (meta.size > FILE_MAX_BYTES) {
     // fail-open above the cap — the server would 413 anyway; skip the upload
     return { block: false, warn: false, reason: "", note: "too large to screen", mode: cfg.mode, identity };
@@ -234,7 +228,7 @@ async function screenFile(meta) {
     const t = setTimeout(() => ctrl.abort(), fileTimeoutMs(meta.size, resolveTimeoutMs(cfg)));
     const resp = await fetch(url, { method: "POST", headers, body: form, signal: ctrl.signal });
     clearTimeout(t);
-    if (!resp.ok) return { block: false, warn: false, reason: "", error: "HTTP " + resp.status, mode: cfg.mode, identity };
+    if (!resp.ok) return unavailableVerdict(cfg, "HTTP " + resp.status, identity);
     const data = await resp.json();
     const flagged = data.safe === false || data.action === "block";
     // `reason` is what the banner shows: the policy and why. `blocked_by`
@@ -244,7 +238,8 @@ async function screenFile(meta) {
     if (cfg.mode === "monitor") return { block: false, warn: flagged, reason, blocked_by, note, mode: "monitor", identity };
     return { block: flagged, warn: false, reason, blocked_by, note, mode: "enforce", identity };
   } catch (e) {
-    return { block: false, warn: false, reason: "", error: String(e), mode: cfg.mode, identity };
+    const timedOut = e && (e.name === "AbortError" || String(e).includes("aborted"));
+    return unavailableVerdict(cfg, timedOut ? "Shield did not respond in time" : String(e), identity);
   }
 }
 
