@@ -53,7 +53,9 @@ EXCLUDE_DIRS = {"test", "node_modules", ".git"}
 EXCLUDE_FILES = {"README.md", ".DS_Store"}
 NAME = "votalai-guardrails"
 #: The Firefox add-on id. Customers force-install by it: never change it.
-GECKO_ID = "guardrails@votal.ai"
+#: A GUID rather than the name@domain form, which DLP tools read as an email
+#: address in customers' policy files.
+GECKO_ID = "{6080efd5-81dd-480f-af95-2d1b30ea020b}"
 #: Oldest Firefox the build is checked on: the oldest supported ESR (153 on
 #: 2026-11-28). Never below 140, the first release that reads
 #: data_collection_permissions.

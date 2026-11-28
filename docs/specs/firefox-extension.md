@@ -89,7 +89,7 @@ namespace with callbacks: `runtime.sendMessage`, `onMessage`,
   `tenantKey`, `proxyToken`, `mode`, `timeoutMs`, `installId`, exception
   records; `chrome.storage.managed`: the `managed_schema.json` keys).
 - New manifest fields in the Firefox build only:
-  `browser_specific_settings.gecko.id = "guardrails@votal.ai"`,
+  `browser_specific_settings.gecko.id = "{6080efd5-81dd-480f-af95-2d1b30ea020b}"`,
   `strict_min_version: "153.0"` (the oldest supported ESR on 2026-11-28, task 1),
   `data_collection_permissions: {"required": ["personalCommunications",
   "websiteActivity"]}` (Firefox shows what leaves the browser at install;
@@ -139,13 +139,13 @@ same modules arrive first through `background.scripts`. No other change.
 **Policy (docs and NDML kit scripts).** Same keys as Chrome, Firefox's
 locations:
 
-- Windows: `HKLM\SOFTWARE\Policies\Mozilla\Firefox\3rdparty\Extensions\guardrails@votal.ai`
+- Windows: `HKLM\SOFTWARE\Policies\Mozilla\Firefox\3rdparty\Extensions\{6080efd5-81dd-480f-af95-2d1b30ea020b}`
   with string values `userId`, `deviceId`, and so on.
 - macOS: a profile payload for the `org.mozilla.firefox` domain with
   `EnterprisePoliciesEnabled = true` and
-  `3rdparty.Extensions["guardrails@votal.ai"]`.
+  `3rdparty.Extensions["{6080efd5-81dd-480f-af95-2d1b30ea020b}"]`.
 - `policies.json`: the same under `policies.3rdparty.Extensions`.
-- Force install: `ExtensionSettings["guardrails@votal.ai"]` with
+- Force install: `ExtensionSettings["{6080efd5-81dd-480f-af95-2d1b30ea020b}"]` with
   `installation_mode: "force_installed"` and `install_url` pointing at the
   hosted signed `.xpi`.
 
@@ -158,7 +158,7 @@ locations:
 - **No default changes.** The Firefox build applies the same modes, the same
   `failOpen` rule (enforce holds when there is no verdict) and the same
   45-second timeout.
-- **Fixed Firefox ID.** `guardrails@votal.ai` is public by design, as Chrome
+- **Fixed Firefox ID.** `{6080efd5-81dd-480f-af95-2d1b30ea020b}` is public by design, as Chrome
   extension IDs are. Only a Mozilla-signed package with that ID installs
   permanently, and signing needs our AMO account. Anyone can load a
   *temporary* add-on with the same ID in their own browser, but that gives
@@ -312,7 +312,7 @@ locations:
 
 ## Open questions (defaults in brackets)
 
-1. Add-on ID: [`guardrails@votal.ai`]. It can never change once customers
+1. Add-on ID: [`{6080efd5-81dd-480f-af95-2d1b30ea020b}`], a GUID: the name@domain form tripped DLP tools as an email address (task 1). It can never change once customers force-install it.
    force-install it.
 2. Distribution: [signed unlisted `.xpi`, self-hosted next to the CRX], rather
    than a listed AMO add-on.
