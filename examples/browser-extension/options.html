@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>VotalAI Guardrails — Settings</title>
+  <title>VotalAI Guardrails: Settings</title>
   <style>
     body { font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; max-width: 520px; margin: 24px auto; padding: 0 16px; color: #111; }
     h1 { font-size: 18px; }
@@ -14,28 +14,28 @@
   </style>
 </head>
 <body>
-  <h1>VotalAI Guardrails — Settings</h1>
+  <h1>VotalAI Guardrails: Settings</h1>
 
   <label>Shield URL</label>
   <input id="shieldUrl" placeholder="https://api.guardrails.votal.ai" />
   <div class="hint">Base URL of your Shield data plane (default: <code>https://api.guardrails.votal.ai</code>). The extension appends <code>/guardrails/input</code>.</div>
 
   <label>Tenant API key (X-API-Key)</label>
-  <input id="tenantKey" placeholder="bank-co-key" />
+  <input id="tenantKey" placeholder="your tenant API key" />
 
-  <label>Proxy bearer token (Authorization: Bearer) — optional</label>
+  <label>Proxy bearer token (Authorization: Bearer), optional</label>
   <input id="proxyToken" type="password" />
   <div class="hint">Only needed if your endpoint sits behind a gateway that requires a bearer. Stored in local extension storage.</div>
 
   <label>Mode</label>
   <select id="mode">
-    <option value="monitor">monitor — flag but never block (recommended to start)</option>
-    <option value="enforce">enforce — block on a Shield block verdict</option>
+    <option value="monitor">monitor: flag but never block (recommended to start)</option>
+    <option value="enforce">enforce: block on a Shield block verdict</option>
   </select>
 
   <label>Screening timeout (ms)</label>
   <input id="timeoutMs" type="number" placeholder="45000" min="1000" max="120000" />
-  <div class="hint">How long to wait for Shield before giving up. Default 45000 (45s) — a screen against the cloud data plane measures 14-20s, so a shorter deadline aborts ordinary requests. File screens add 2s per MB on top. Clamped to 1000-120000.</div>
+  <div class="hint">How long to wait for Shield before giving up. Default 45000 (45s). A much shorter deadline can abort ordinary screens, because custom policies are checked by a model. File screens add 2s per MB on top. Clamped to 1000-120000.</div>
 
   <label>If Shield cannot be reached</label>
   <select id="failOpen">

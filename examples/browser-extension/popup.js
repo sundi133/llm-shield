@@ -31,8 +31,8 @@ document.getElementById("test").addEventListener("click", () => {
     if (r.error) {
       // r.block tells us what actually happened, rather than assuming.
       result.textContent = "✗ " + r.error +
-        (r.block ? "\n(prompt would be BLOCKED — fail closed)"
-                 : "\n(prompt would send UNSCREENED — fail open)") + idLine;
+        (r.block ? "\n(prompt would be BLOCKED: fail closed)"
+                 : "\n(prompt would send UNSCREENED: fail open)") + idLine;
       result.className = "bad";
     } else {
       result.textContent =
