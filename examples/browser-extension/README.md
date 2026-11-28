@@ -2,7 +2,7 @@
 
 A minimal Chrome MV3 extension that screens prompts on **public AI tools**
 through Votal Shield's `/guardrails/input` **before** they are sent. Best-effort
-client-side shadow-AI DLP / visibility — **not** a security boundary (a user can
+client-side shadow-AI DLP and visibility, **not** a security boundary (a user can
 disable it).
 
 ## Supported sites
@@ -37,47 +37,49 @@ chance of working.
   banner. An approval lets that exact prompt through once, for that user and
   that site, when they send it again. Reviewers see the prompt; the form says
   so before anything is sent.
-- **Fail-open**: if Shield is unreachable/slow (12s timeout for text; 12s +
-  2s/MB up to 30s for files) the content sends unscreened with a "Shield
-  unreachable" banner — it never traps your chat. Attachments over **10 MB**
+- **If Shield is unreachable or slow** (45s timeout for text, `timeoutMs`;
+  files get 2s more per MB, up to 18s more): in **monitor** mode the content
+  sends unscreened with a banner saying so; in **enforce** mode it is blocked
+  ("guardrails unavailable"), unless managed policy sets `failOpen: true`.
+  A timeout is not an approval. Attachments over **10 MB**
   are not screened (banner notes it); size cap is `SHIELD_FILE_MAX_BYTES`
   server-side.
 
 ## Install (Load unpacked)
 1. Chrome → `chrome://extensions` → toggle **Developer mode** (top right).
-2. **Load unpacked** → select this `shield-prompt-guard/` folder.
+2. **Load unpacked** → select this `examples/browser-extension/` folder.
 3. Click the extension icon → **Settings**, fill in:
-   - **Shield URL** — default `https://api.guardrails.votal.ai`
-   - **Tenant API key** — e.g. `bank-co-key`
-   - **Proxy bearer token** — optional, only if behind a gateway
-   - **Mode** — start on `monitor`.
+   - **Shield URL**: default `https://api.guardrails.votal.ai`
+   - **Tenant API key**: the key for your tenant (a runtime-scope key is enough)
+   - **Proxy bearer token**: optional, only if behind a gateway
+   - **Mode**: start on `monitor`.
 4. Extension popup → **Test connection** → expect `✓ Reached Shield`.
-5. Open claude.ai, type a prompt, hit Enter — watch for the banner. Try a
+5. Open claude.ai, type a prompt, hit Enter, and watch for the banner. Try a
    jailbreak-style prompt in `enforce` mode to see a block.
 
 ## Verify it reached Shield
 The screened prompts appear in your Shield **Telemetry**, endpoint
-`/guardrails/input` — same pipe as the Claude Code hook. With attribution
+`/guardrails/input`, the same pipe as the Claude Code hook. With attribution
 configured (below) the **agent column shows the policy-pushed user id** instead
 of `unknown-agent`.
 
 ## Attribution (who + which device)
-The extension itself collects **no PII** and needs no `identity` permission —
+The extension itself collects **no PII** and needs no `identity` permission:
 identity is whatever the org's MDM policy injects via `storage.managed`:
-- **`X-Agent-Key`** = policy `userId` (employee id, AD account, or email — the
+- **`X-Agent-Key`** = policy `userId` (employee id, AD account, or email, the
   org's choice), falling back to the device id.
 - **`X-Device-Id`** = policy `deviceId` (machine name / asset tag), falling
   back to a stable per-install UUID.
 - Both are also included in the request body (`user_id`, `device_id`) for audit.
 
-Unmanaged installs therefore report only an anonymous install id — attribution
+Unmanaged installs therefore report only an anonymous install id; attribution
 to a person is a deployment decision made by IT policy, not by the extension.
 
 A true hardware serial is **not** available to a normal extension (browser
 sandbox). On **ChromeOS managed devices** only, `chrome.enterprise.deviceAttributes`
-can provide the real serial/asset id — not available on Windows/macOS.
+can provide the real serial/asset id (not available on Windows/macOS).
 
-> Attribution is employee monitoring — deploy via corporate policy with notice.
+> Attribution is employee monitoring: deploy via corporate policy with notice.
 
 ## Known limits (by design)
 - **Brittle**: depends on each site's DOM. If a site's composer/send markup
@@ -94,7 +96,7 @@ can provide the real serial/asset id — not available on Windows/macOS.
   (plaintext-ish). For fleet rollout push keys via managed policy instead.
 
 ## Fleet rollout (Chrome Enterprise)
-Force-install and configure via **managed policy** — no per-user setup. For
+Force-install and configure via **managed policy**, with no per-user setup. For
 the full no-store path (self-hosted signed `.crx` + `update.xml` +
 `ExtensionInstallForcelist`, per-platform policy delivery, rollout
 verification), see [`docs/enterprise-install.md`](../../docs/enterprise-install.md).
@@ -105,7 +107,7 @@ The config schema is in `managed_schema.json`; admins push values under
 ```json
 {
   "shieldUrl":  "https://api.guardrails.votal.ai",
-  "tenantKey":  "altayer-retail-key",
+  "tenantKey":  "<your tenant API key>",
   "deviceId":   "${machine_name}",
   "userId":     "jane.doe@yourco.com",
   "mode":       "enforce"
