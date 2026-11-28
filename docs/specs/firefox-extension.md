@@ -1,6 +1,6 @@
 # Spec: Firefox support for the VotalAI Guardrails browser extension
 
-Status: **draft, awaiting approval** (2026-11-28). Branch `spec/firefox-extension`.
+Status: **approved 2026-11-28** (open questions resolved with the defaults). Task 1 built on `feat/firefox-extension`; findings in section 10.
 
 Builds on `examples/browser-extension` (MV3, version 1.4.1), its packager
 `scripts/pack_extension.py` (signed CRX3 + `update.xml` for Chrome and Edge),
@@ -89,9 +89,12 @@ namespace with callbacks: `runtime.sendMessage`, `onMessage`,
   `tenantKey`, `proxyToken`, `mode`, `timeoutMs`, `installId`, exception
   records; `chrome.storage.managed`: the `managed_schema.json` keys).
 - New manifest fields in the Firefox build only:
-  `browser_specific_settings.gecko.id = "guardrails@votal.ai"` and
-  `strict_min_version` (set in task 1 to the oldest ESR the build passes on;
-  expected `128.0`), plus `gecko.update_url` when packed with `--base-url`.
+  `browser_specific_settings.gecko.id = "guardrails@votal.ai"`,
+  `strict_min_version: "153.0"` (the oldest supported ESR on 2026-11-28, task 1),
+  `data_collection_permissions: {"required": ["personalCommunications",
+  "websiteActivity"]}` (Firefox shows what leaves the browser at install;
+  Mozilla's linter requires it), plus `gecko.update_url` when packed with
+  `--base-url`.
 - Tenant scoping unchanged: the tenant comes from the key, as today.
 
 ## 4. API / interface
@@ -275,10 +278,42 @@ locations:
    - The opt-in e2e test, the test-only manifest variant and a fake Shield.
    - A CI job with Firefox ESR and release, and the Selenium test dependency.
 
+## 10. Task 1 findings (2026-11-28)
+
+- **Checked in real Firefox:** 161.0 (release) and 153.8.0esr (the only
+  supported ESR; 140 is no longer offered), on macOS, with geckodriver 0.37.1.
+  - The build was loaded as a temporary add-on and configured through
+    `distribution/policies.json` (`3rdparty`), so `storage.managed` works.
+  - Screening went to the real ndml-poc tenant, on a stand-in chat page on
+    localhost (a test-only manifest variant). Both versions gave identical
+    results.
+- **Passed:**
+  - enforce blocks with the policy banner, for the send button and Enter;
+  - pass sends;
+  - monitor flags and sends;
+  - no verdict holds in enforce and sends in monitor;
+  - the file picker blocks a card file and passes a clean one;
+  - drop blocks a card file and passes a clean one.
+- **Fixed in task 1:**
+  - **Allowed drop arrived empty in Firefox.** A DataTransfer built in the
+    content script reaches the page with its files hidden (Xray wrappers).
+    `content.js` now builds replayed drop and paste events from the page's
+    constructors (`window.wrappedJSObject`) when they exist.
+  - **Replays recognised by a flag.** The extension's own replay is now
+    recognised by a flag that is set only during the synchronous dispatch,
+    not by object identity, which does not hold across the wrapper.
+  - Chrome takes the old path; the Chromium run is unchanged.
+- **Not testable by script in Firefox: paste.** Firefox ignores
+  `clipboardData` on a script-made `ClipboardEvent`, so the page sees no file
+  even without the extension. The paste replay shares the drop code; confirm
+  it with a real clipboard in the manual release check (section 8).
+- **`web-ext lint` 10.8.0:** 0 errors. Without `data_collection_permissions`
+  it warns, and that key needs Firefox 140 or later.
+
 ## Open questions (defaults in brackets)
 
 1. Add-on ID: [`guardrails@votal.ai`]. It can never change once customers
    force-install it.
 2. Distribution: [signed unlisted `.xpi`, self-hosted next to the CRX], rather
    than a listed AMO add-on.
-3. Minimum Firefox: [the oldest supported ESR, expected 128], pinned in task 1.
+3. Minimum Firefox: [the oldest supported ESR], pinned in task 1 to 153.0.

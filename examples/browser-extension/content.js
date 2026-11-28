@@ -427,10 +427,10 @@
   refreshShieldMode();
   try { chrome.storage.onChanged.addListener(refreshShieldMode); } catch (_) {}
 
-  // Approved synthetic events are marked directly (not via a global flag) so
-  // an unrelated event of the same type can never consume the approval while
-  // a screen is in flight.
-  const approvedEvents = new WeakSet();
+  // An approved replay is recognised by `replaying`, which is true only inside
+  // the synchronous dispatchEvent of that replay (dispatchReplay), never across
+  // an await. So an unrelated event of the same type can never consume the
+  // approval while a screen is in flight.
 
   function readAsB64(file) {
     return new Promise((resolve, reject) => {
@@ -515,13 +515,34 @@
     return out;
   }
 
-  function rebuildDataTransfer(files, stringItems) {
-    const dt = new DataTransfer();
+  // Firefox runs content scripts behind Xray wrappers: a DataTransfer or event
+  // built here reaches the page's own handlers with its files hidden, so an
+  // allowed drop or paste would arrive empty. There, build them with the
+  // page's constructors (window.wrappedJSObject). Chrome and Edge have no
+  // wrappedJSObject and take the plain path, as before.
+  const pageWin = (typeof window.wrappedJSObject === "object" && window.wrappedJSObject) || null;
+  // True while our own replay is being dispatched (dispatchEvent is
+  // synchronous). In Firefox the event our listener sees is not the object we
+  // made, so it is recognised by this flag rather than by identity.
+  let replaying = false;
+
+  function replayTransferEvent(ctorName, type, transferKey, files, stringItems) {
+    const W = pageWin || window;
+    const dt = new W.DataTransfer();
     for (const f of files) dt.items.add(f);
-    for (const [type, value] of stringItems || []) {
-      try { dt.setData(type, value); } catch (_) {}
+    for (const [t, value] of stringItems || []) {
+      try { dt.setData(t, value); } catch (_) {}
     }
-    return dt;
+    const init = pageWin ? new pageWin.Object() : {};
+    init.bubbles = true;
+    init.cancelable = true;
+    init[transferKey] = dt;
+    return new W[ctorName](type, init);
+  }
+
+  function dispatchReplay(target, ev) {
+    replaying = true;
+    try { target.dispatchEvent(ev); } finally { replaying = false; }
   }
 
   // 1. File picker: <input type="file"> change
@@ -530,16 +551,14 @@
     async (e) => {
       const input = e.target;
       if (!input || input.type !== "file" || !input.files || !input.files.length) return;
-      if (approvedEvents.has(e)) return;
+      if (replaying) return; // our approved replay
       e.stopImmediatePropagation(); // hold the site's handler until screened
       const { allow } = await guardFiles(input.files);
       if (!allow) {
         input.value = ""; // clear the selection so the site never sees it
         return;
       }
-      const replay = new Event("change", { bubbles: true });
-      approvedEvents.add(replay);
-      input.dispatchEvent(replay);
+      dispatchReplay(input, new Event("change", { bubbles: true }));
     },
     true
   );
@@ -550,7 +569,7 @@
     async (e) => {
       const files = e.dataTransfer && e.dataTransfer.files;
       if (!files || !files.length) return; // text drags pass through
-      if (approvedEvents.has(e)) return;
+      if (replaying) return; // our approved replay
       e.preventDefault();
       e.stopImmediatePropagation();
       const target = e.target;
@@ -559,12 +578,7 @@
       const { allow } = await guardFiles(kept);
       if (!allow) return;
       try {
-        const replay = new DragEvent("drop", {
-          bubbles: true, cancelable: true,
-          dataTransfer: rebuildDataTransfer(kept, strings),
-        });
-        approvedEvents.add(replay);
-        target.dispatchEvent(replay);
+        dispatchReplay(target, replayTransferEvent("DragEvent", "drop", "dataTransfer", kept, strings));
       } catch (_) {
         banner("ok", { title: "Attachment allowed.", detail: "Drop it again to attach it." });
       }
@@ -578,7 +592,7 @@
     async (e) => {
       const files = e.clipboardData && e.clipboardData.files;
       if (!files || !files.length) return; // plain text paste passes through
-      if (approvedEvents.has(e)) return;
+      if (replaying) return; // our approved replay
       e.preventDefault();
       e.stopImmediatePropagation();
       const target = e.target;
@@ -587,12 +601,7 @@
       const { allow } = await guardFiles(kept);
       if (!allow) return;
       try {
-        const replay = new ClipboardEvent("paste", {
-          bubbles: true, cancelable: true,
-          clipboardData: rebuildDataTransfer(kept, strings),
-        });
-        approvedEvents.add(replay);
-        target.dispatchEvent(replay);
+        dispatchReplay(target, replayTransferEvent("ClipboardEvent", "paste", "clipboardData", kept, strings));
       } catch (_) {
         banner("ok", { title: "Attachment allowed.", detail: "Paste it again to attach it." });
       }
