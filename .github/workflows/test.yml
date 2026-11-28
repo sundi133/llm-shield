@@ -227,6 +227,13 @@ jobs:
           node --test extension/test/*.mjs
       - name: Browser extension (VotalAI Guardrails) unit tests
         run: node --test examples/browser-extension/test/*.test.js
+      # docs/specs/firefox-extension.md: the Firefox build must pass Mozilla's
+      # linter (errors fail; the Firefox for Android warning is out of scope).
+      - name: Browser extension Firefox build + web-ext lint
+        run: |
+          python3 scripts/pack_extension.py --target firefox --out dist/extension-firefox
+          npx --yes web-ext@10.8.0 lint --self-hosted \
+            --source-dir "$(ls -d dist/extension-firefox/votalai-guardrails-*/)"
 
   mcp-scan-npm:
     name: mcp-scan npm wrapper (node)

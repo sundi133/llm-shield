@@ -4,14 +4,21 @@
 // tenant X-API-Key, and identity/attribution headers. Content script talks to
 // it via sendMessage.
 
-// The on-laptop Votal device agent, when present, decides first (agent_client.js).
-importScripts("agent_client.js");
-// Turns a verdict into the line the user reads (verdict_text.js).
-importScripts("verdict_text.js");
-// What happens when Shield gives no verdict (fail closed in enforce mode).
-importScripts("fail_policy.js");
-// Exception requests and the grant that releases an approved prompt once.
-importScripts("exception_client.js");
+// Chrome and Edge run this file as a service worker, which loads its modules
+// here. Firefox runs it as a background page (no importScripts): the Firefox
+// manifest, built by `scripts/pack_extension.py --target firefox`, lists the
+// same modules in the same order before this file. The packager reads this
+// list, so add a module here and both builds get it.
+if (typeof importScripts === "function") {
+  // The on-laptop Votal device agent, when present, decides first (agent_client.js).
+  importScripts("agent_client.js");
+  // Turns a verdict into the line the user reads (verdict_text.js).
+  importScripts("verdict_text.js");
+  // What happens when Shield gives no verdict (fail closed in enforce mode).
+  importScripts("fail_policy.js");
+  // Exception requests and the grant that releases an approved prompt once.
+  importScripts("exception_client.js");
+}
 
 const DEFAULTS = {
   shieldUrl: "https://api.guardrails.votal.ai",
