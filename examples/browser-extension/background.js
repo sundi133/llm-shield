@@ -18,6 +18,8 @@ if (typeof importScripts === "function") {
   importScripts("fail_policy.js");
   // Exception requests and the grant that releases an approved prompt once.
   importScripts("exception_client.js");
+  // Which AI sites the user has withdrawn access to (site_access.js).
+  importScripts("site_access.js");
 }
 
 const DEFAULTS = {
@@ -279,14 +281,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .then((granted) => sendResponse({ granted }), () => sendResponse({ granted: false }));
     return true;
   }
+  if (msg && msg.type === "shield-site-access") {
+    refreshSiteAccess().then(sendResponse, () => sendResponse(null));
+    return true;
+  }
   if (msg && msg.type === "shield-test") {
     // Report the settings actually in effect. The last round of this bug was
     // invisible because the popup showed a verdict but never the timeout or
     // mode it used.
     getConfig().then((cfg) =>
-      screen("Shield connection test from browser extension").then((r) =>
+      Promise.all([screen("Shield connection test from browser extension"),
+                   refreshSiteAccess().catch(() => null)]).then(([r, access]) =>
         sendResponse({
           ...r,
+          access,
           effective: {
             timeoutMs: resolveTimeoutMs(cfg),
             mode: cfg.mode,
@@ -299,3 +307,40 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 });
+
+// ── site access (docs/specs/firefox-extension.md, task 2) ───────────────────
+// Checked when the worker starts, when permissions or the Shield URL change,
+// and when the popup opens: never per prompt. The badge shows "!" while an AI
+// site or Shield is out of reach.
+function permissionContains(origin) {
+  return new Promise((resolve) => {
+    try {
+      chrome.permissions.contains({ origins: [origin] }, (ok) => {
+        resolve(chrome.runtime.lastError ? true : !!ok);
+      });
+    } catch (_) {
+      resolve(true);
+    }
+  });
+}
+
+async function refreshSiteAccess() {
+  const cfg = await getConfig();
+  const state = await checkSiteAccess(permissionContains, chrome.runtime.getManifest(), cfg.shieldUrl);
+  const badge = accessBadge(state);
+  try {
+    chrome.action.setBadgeText({ text: badge.text });
+    if (badge.text) chrome.action.setBadgeBackgroundColor({ color: badge.color });
+    chrome.action.setTitle({ title: badge.title });
+  } catch (_) {}
+  return { ...state, mode: cfg.mode };
+}
+
+try {
+  chrome.permissions.onAdded.addListener(() => { refreshSiteAccess().catch(() => {}); });
+  chrome.permissions.onRemoved.addListener(() => { refreshSiteAccess().catch(() => {}); });
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.shieldUrl) refreshSiteAccess().catch(() => {});
+  });
+} catch (_) {}
+refreshSiteAccess().catch(() => {});

@@ -89,6 +89,13 @@ can provide the real serial/asset id (not available on Windows/macOS).
   changes, update that site's entry in the `SITES` map in `content.js`.
 - **Bypassable**: disabling the extension or using the API directly evades it.
   It's a nudge/visibility layer, not enforcement.
+- **Site access can be withdrawn**: the user can turn off the extension's
+  access to one site (Firefox: the add-on's Permissions tab; Chrome and Edge:
+  its "Site access" menu). Nothing on that site is screened then. No policy
+  can lock this, so the extension reports it instead: the toolbar icon shows
+  `!`, the popup names the sites with an **Allow access** button, and Test
+  connection lists them. Losing access to Shield itself is reported too; in
+  enforce mode prompts are then held, not sent.
 - **Output is post-hoc**: only prompts are screened here; model responses stream
   into the DOM and would need separate (after-the-fact) redaction.
 - **Attachments**: images/scans are not OCR'd (filename-only screening);

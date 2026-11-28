@@ -13,6 +13,26 @@ document.getElementById("opts").addEventListener("click", () =>
   chrome.runtime.openOptionsPage()
 );
 
+// Sites the user has withdrawn this extension's access to (site_access.js).
+const accessBox = document.getElementById("access");
+let accessState = null;
+function renderAccess(state) {
+  accessState = state;
+  const lines = state ? accessLines(state, state.mode) : [];
+  document.getElementById("access-text").textContent = lines.join("\n");
+  accessBox.style.display = lines.length ? "block" : "none";
+}
+function loadAccess() {
+  chrome.runtime.sendMessage({ type: "shield-site-access" }, (s) => renderAccess(s || null));
+}
+document.getElementById("access-fix").addEventListener("click", () => {
+  const origins = originsToRequest(accessState);
+  if (!origins.length) return;
+  // A click is the user gesture both browsers need to ask again.
+  chrome.permissions.request({ origins }, () => loadAccess());
+});
+loadAccess();
+
 document.getElementById("test").addEventListener("click", () => {
   result.textContent = "Testing…";
   result.className = "";
@@ -26,8 +46,11 @@ document.getElementById("test").addEventListener("click", () => {
       ? "\ntimeout: " + Math.round(eff.timeoutMs / 1000) + "s · mode: " + eff.mode +
         " · on error: " + (eff.failOpen ? "send unscreened" : "block")
       : "";
+    const accessNote = r.access ? accessLines(r.access, r.access.mode) : [];
+    if (r.access) renderAccess(r.access);
     const idLine = effLine +
-      "\nas: " + (id.userId || "(no policy userId)") + "\ndevice: " + (id.deviceId || "(none)");
+      "\nas: " + (id.userId || "(no policy userId)") + "\ndevice: " + (id.deviceId || "(none)") +
+      (accessNote.length ? "\n" + accessNote.join("\n") : "");
     if (r.error) {
       // r.block tells us what actually happened, rather than assuming.
       result.textContent = "✗ " + r.error +
